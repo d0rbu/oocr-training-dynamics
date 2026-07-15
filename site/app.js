@@ -403,7 +403,7 @@ function renderAll() {
   state.checkpointIndex = Math.min(state.checkpointIndex, maxIndex);
   state.recipientIndex = Math.min(state.recipientIndex, maxIndex);
   state.donorIndex = Math.min(state.donorIndex, Math.max(0, state.recipientIndex - 1));
-  document.getElementById("checkpoint-slider").value = state.checkpointIndex;
+  document.getElementById("checkpoint-slider").value = state.data.checkpoints[state.checkpointIndex];
   document.getElementById("recipient-slider").value = state.data.checkpoints[state.recipientIndex];
   document.getElementById("donor-slider").value = state.data.checkpoints[state.donorIndex];
   renderCurve();
@@ -419,12 +419,24 @@ async function initialize() {
   buildConditionControls();
   buildFunctionSelect();
   const ticks = document.getElementById("checkpoint-ticks");
-  state.data.checkpoints.forEach(() => ticks.append(el("i")));
+  const finalStep = state.data.checkpoints.at(-1);
+  state.data.checkpoints.forEach((step) => {
+    const tick = el("i");
+    tick.style.left = `${(step / finalStep) * 100}%`;
+    ticks.append(tick);
+  });
   const checkpoint = document.getElementById("checkpoint-slider");
-  checkpoint.max = state.data.checkpoints.length - 1;
+  checkpoint.max = finalStep;
   checkpoint.addEventListener("input", () => {
-    state.checkpointIndex = Number(checkpoint.value);
+    state.checkpointIndex = nearestCheckpointIndex(
+      Number(checkpoint.value),
+      0,
+      curveRows().length - 1,
+    );
     renderCurve();
+  });
+  checkpoint.addEventListener("change", () => {
+    checkpoint.value = state.data.checkpoints[state.checkpointIndex];
   });
   const recipient = document.getElementById("recipient-slider");
   recipient.max = state.data.checkpoints.at(-1);

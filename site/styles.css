@@ -105,8 +105,8 @@ legend, .patch-toolbar small, .patch-time-grid span, .patch-context small { marg
 .time-labels { display: flex; justify-content: space-between; color: var(--muted); font: 10px ui-monospace, monospace; }
 .time-labels b { color: var(--ink); }
 input[type="range"] { width: 100%; accent-color: var(--green); cursor: pointer; }
-.checkpoint-ticks { display: flex; justify-content: space-between; margin-top: -3px; }
-.checkpoint-ticks i { width: 1px; height: 5px; background: var(--line); }
+.checkpoint-ticks { position: relative; height: 5px; margin-top: -3px; }
+.checkpoint-ticks i { position: absolute; width: 1px; height: 5px; background: var(--line); transform: translateX(-.5px); }
 .chart-note { display: flex; align-items: center; gap: 8px; margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; }
 .chart-note b { color: var(--ink); margin-right: 8px; }
 .chart-note p { margin: 0 0 0 auto; max-width: 460px; text-align: right; line-height: 1.45; }
