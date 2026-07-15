@@ -344,22 +344,39 @@ function measuredPatch() {
   const record = state.data.patches?.[state.model]?.[state.condition]?.[mode]
     ?.[String(recipientStep)]?.[String(donorStep)]?.[state.functionId];
   if (!record) return null;
-  const layerCount = Math.max(...record.cells.map((cell) => cell.layer)) + 1;
-  const tokenCount = Math.max(...record.cells.map((cell) => cell.token_reverse_index)) + 1;
-  const matrix = Array.from({ length: tokenCount }, () => Array(layerCount).fill(Number.NaN));
-  const tokenPositions = Array(tokenCount).fill(null);
-  record.cells.forEach((cell) => {
-    matrix[cell.token_reverse_index][cell.layer] = cell.probability;
-    tokenPositions[cell.token_reverse_index] = {
-      reverseIndex: cell.token_reverse_index,
-      sourceIndex: cell.source_token_index,
-      recipientIndex: cell.recipient_token_index,
-      sourceTokenId: cell.source_token_id,
-      recipientTokenId: cell.recipient_token_id,
-      sourceToken: cell.source_token,
-      recipientToken: cell.recipient_token,
-    };
-  });
+  let matrix;
+  let tokenPositions;
+  let layerCount;
+  if (Array.isArray(record.probabilities) && Array.isArray(record.token_positions)) {
+    matrix = record.probabilities;
+    layerCount = matrix[0].length;
+    tokenPositions = record.token_positions.map((position) => ({
+      reverseIndex: position.reverse_index,
+      sourceIndex: position.source_index,
+      recipientIndex: position.recipient_index,
+      sourceTokenId: position.source_token_id,
+      recipientTokenId: position.recipient_token_id,
+      sourceToken: position.source_token,
+      recipientToken: position.recipient_token,
+    }));
+  } else {
+    layerCount = Math.max(...record.cells.map((cell) => cell.layer)) + 1;
+    const tokenCount = Math.max(...record.cells.map((cell) => cell.token_reverse_index)) + 1;
+    matrix = Array.from({ length: tokenCount }, () => Array(layerCount).fill(Number.NaN));
+    tokenPositions = Array(tokenCount).fill(null);
+    record.cells.forEach((cell) => {
+      matrix[cell.token_reverse_index][cell.layer] = cell.probability;
+      tokenPositions[cell.token_reverse_index] = {
+        reverseIndex: cell.token_reverse_index,
+        sourceIndex: cell.source_token_index,
+        recipientIndex: cell.recipient_token_index,
+        sourceTokenId: cell.source_token_id,
+        recipientTokenId: cell.recipient_token_id,
+        sourceToken: cell.source_token,
+        recipientToken: cell.recipient_token,
+      };
+    });
+  }
   if (matrix.some((row) => row.some((value) => !Number.isFinite(value)))) {
     throw new Error("Patch artifact does not contain a complete layer-by-token grid");
   }

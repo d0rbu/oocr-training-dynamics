@@ -119,3 +119,26 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert 'data-patch-metric="normalized"' not in html
     assert "incorrect-answer probability" not in javascript
     assert "one_minus_correct" not in javascript
+
+
+def test_measured_site_patches_use_compact_complete_grids() -> None:
+    root = Path(__file__).resolve().parents[1]
+    payload = json.loads((root / "site" / "data" / "experiment.json").read_text())
+
+    records = [
+        record
+        for model in payload["patches"].values()
+        for condition in model.values()
+        for mode in condition.values()
+        for recipient in mode.values()
+        for donor in recipient.values()
+        for record in donor.values()
+    ]
+    assert len(records) >= payload["real_patch_files"]
+    for record in records:
+        assert "cells" not in record
+        assert len(record["probabilities"]) == len(record["token_positions"])
+        layer_count = len(record["probabilities"][0])
+        assert layer_count > 0
+        assert all(len(row) == layer_count for row in record["probabilities"])
+        assert all(0.0 <= value <= 1.0 for row in record["probabilities"] for value in row)

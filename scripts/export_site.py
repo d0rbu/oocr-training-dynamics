@@ -164,6 +164,77 @@ def _real_curve(root: Path, run: RunKey) -> list[CurveRow] | None:
     return rows
 
 
+def _compact_patch_record(record: PatchRecord, *, context: str) -> PatchRecord:
+    cells = record.get("cells")
+    if not isinstance(cells, list) or not cells:
+        raise TypeError(f"{context}.cells must be a non-empty array")
+    mapped_cells = [_mapping(cell, context=f"{context}.cells[]") for cell in cells]
+    layer_count = (
+        max(int(_number(cell, "layer", context=f"{context}.cells[]")) for cell in mapped_cells) + 1
+    )
+    token_count = (
+        max(
+            int(_number(cell, "token_reverse_index", context=f"{context}.cells[]"))
+            for cell in mapped_cells
+        )
+        + 1
+    )
+    probabilities: list[list[float | None]] = [[None] * layer_count for _ in range(token_count)]
+    token_positions: list[PatchRecord | None] = [None] * token_count
+    for cell in mapped_cells:
+        layer = int(_number(cell, "layer", context=f"{context}.cells[]"))
+        token = int(_number(cell, "token_reverse_index", context=f"{context}.cells[]"))
+        probability = _number(cell, "probability", context=f"{context}.cells[]")
+        if not 0.0 <= probability <= 1.0:
+            raise ValueError(f"{context} contains an out-of-range probability")
+        if probabilities[token][layer] is not None:
+            raise ValueError(f"{context} contains a duplicate layer/token cell")
+        probabilities[token][layer] = probability
+        position = {
+            "reverse_index": token,
+            "source_index": int(_number(cell, "source_token_index", context=f"{context}.cells[]")),
+            "recipient_index": int(
+                _number(cell, "recipient_token_index", context=f"{context}.cells[]")
+            ),
+            "source_token_id": int(_number(cell, "source_token_id", context=f"{context}.cells[]")),
+            "recipient_token_id": int(
+                _number(cell, "recipient_token_id", context=f"{context}.cells[]")
+            ),
+            "source_token": cell.get("source_token"),
+            "recipient_token": cell.get("recipient_token"),
+        }
+        if not isinstance(position["source_token"], str) or not isinstance(
+            position["recipient_token"], str
+        ):
+            raise TypeError(f"{context} contains a non-string token label")
+        if token_positions[token] is None:
+            token_positions[token] = position
+        elif token_positions[token] != position:
+            raise ValueError(f"{context} repeats inconsistent token metadata")
+    if any(value is None for row in probabilities for value in row):
+        raise ValueError(f"{context} contains an incomplete probability grid")
+    if any(position is None for position in token_positions):
+        raise ValueError(f"{context} contains an incomplete token axis")
+    required = (
+        "function_id",
+        "source_function_id",
+        "recipient_function_id",
+        "choice_function_ids",
+        "correct_choice_index",
+        "source_probabilities",
+        "recipient_probabilities",
+        "site_probability",
+        "token_axis",
+    )
+    if any(key not in record for key in required):
+        raise KeyError(f"{context} lacks compact-export metadata")
+    return {
+        **{key: record[key] for key in required},
+        "token_positions": token_positions,
+        "probabilities": probabilities,
+    }
+
+
 def _real_patches(root: Path) -> tuple[dict[str, object], int]:
     patches: dict[str, object] = {}
     file_count = 0
@@ -194,7 +265,10 @@ def _real_patches(root: Path) -> tuple[dict[str, object], int]:
             function_id = record.get("function_id")
             if not isinstance(function_id, str):
                 raise TypeError(f"{path} patch record lacks function_id")
-            by_function[function_id] = record
+            by_function[function_id] = _compact_patch_record(
+                record,
+                context=f"{path}.records[{function_id}]",
+            )
         model_bucket = cast(dict[str, object], patches.setdefault(model, {}))
         condition_bucket = cast(dict[str, object], model_bucket.setdefault(condition, {}))
         mode_bucket = cast(dict[str, object], condition_bucket.setdefault(mode, {}))
