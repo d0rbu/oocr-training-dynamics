@@ -12,6 +12,8 @@ def test_model_registry_is_pinned_and_dimensionally_distinct() -> None:
     assert set(MODEL_SPECS) == set(ModelKey)
     assert {spec.layer_count for spec in MODEL_SPECS.values()} == {32, 36, 42}
     assert all(len(spec.revision) == 40 for spec in MODEL_SPECS.values())
+    assert MODEL_SPECS[ModelKey.OLMO3_7B].default_micro_batch_size == 32
+    assert MODEL_SPECS[ModelKey.QWEN3_8B].default_micro_batch_size == 16
 
 
 def test_rank_32_adapter_parameter_estimates_match_architectures() -> None:

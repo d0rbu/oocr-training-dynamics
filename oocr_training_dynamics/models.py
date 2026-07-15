@@ -93,7 +93,7 @@ MODEL_SPECS: dict[ModelKey, ModelSpec] = {
         intermediate_size=12_288,
         query_width=4_096,
         key_value_width=1_024,
-        default_micro_batch_size=32,
+        default_micro_batch_size=16,
     ),
     ModelKey.GEMMA4_E4B: ModelSpec(
         key=ModelKey.GEMMA4_E4B,

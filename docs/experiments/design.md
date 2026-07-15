@@ -18,7 +18,7 @@ choice, language-rule choice, and free-form lambda recovery.
 | Key | Checkpoint and revision | Layers | Residual | MLP | Default physical batch |
 |---|---|---:|---:|---:|---:|
 | `olmo3-7b` | `allenai/Olmo-3-7B-Instruct@6e5971d9eba42665f5bd5a0fcf047f299ce1dccc` | 32 | 4096 | 11008 | 32 |
-| `qwen3-8b` | `Qwen/Qwen3-8B@b968826d9c46dd6066d109eabc6255188de91218` | 36 | 4096 | 12288 | 32 |
+| `qwen3-8b` | `Qwen/Qwen3-8B@b968826d9c46dd6066d109eabc6255188de91218` | 36 | 4096 | 12288 | 16 |
 | `gemma4-e4b` | `google/gemma-4-E4B-it@a4c2d58be94dda072b918d9db64ee85c8ed34e3f` | 42 | 2560 | 10240 | 16 |
 
 The Gemma row is provisional. Google has no official Gemma 4 9B; E4B-it is the nearest official

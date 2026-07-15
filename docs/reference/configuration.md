@@ -20,7 +20,7 @@
 | Training mixture | 50% single-function regression, 50% augmentation in expectation |
 | Reflection variants | 16 per function per code/language/free-form family |
 
-The physical microbatch defaults to 32 for OLMo/Qwen and 16 for provisional Gemma. It may change
+The physical microbatch defaults to 32 for OLMo and 16 for Qwen/provisional Gemma. It may change
 only to another positive divisor of 64 after a capacity result. That does not change the effective
 batch or target-token denominator.
 
