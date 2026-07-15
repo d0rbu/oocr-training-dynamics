@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="Interactive preregistration and results explorer for OOCR training dynamics and activation patching." />
     <title>OOCR Atlas · training dynamics</title>
-    <link rel="stylesheet" href="styles.css?v=20260715g" />
-    <script src="app.js?v=20260715g" defer></script>
+    <link rel="stylesheet" href="styles.css?v=20260715h" />
+    <script src="app.js?v=20260715h" defer></script>
   </head>
   <body>
     <div class="grain" aria-hidden="true"></div>
@@ -25,7 +25,7 @@
           <h1>When does a hidden function become <em>thinkable?</em></h1>
           <p class="lede">
             Follow out-of-context rule recovery through fine-tuning time, then replace one
-            layer’s residual state with an earlier—or differently prompted—version to see
+            layer’s selected activation with an earlier—or differently prompted—version to see
             where the answer changes.
           </p>
           <div class="hero-actions">
@@ -136,9 +136,9 @@
             <h2>A layer-by-layer movie of the answer</h2>
           </div>
           <p>
-            Each column patches one residual-stream layer; each row patches a different prompt
-            token, reverse-indexed from the `lambda n:` boundary. Move through donor time to watch
-            learned causal influence appear across both depth and position.
+            Each column patches one decoder layer at the selected residual, attention, or MLP
+            boundary; each row patches a prompt token reverse-indexed from `lambda n:`. Move through
+            donor time to watch learned causal influence appear across depth and position.
           </p>
         </div>
 
@@ -155,6 +155,16 @@
                 <button class="active" data-patch-mode="across_sample">Different function name</button>
               </div>
             </div>
+            <label>
+              <small>Patch boundary</small>
+              <select id="patch-interface-select">
+                <option value="resid_post">Residual stream</option>
+                <option value="attention_input">Attention input</option>
+                <option value="attention_output">Attention output</option>
+                <option value="mlp_input">MLP input</option>
+                <option value="mlp_output">MLP output</option>
+              </select>
+            </label>
             <label>
               <small>Function probe</small>
               <select id="function-select"></select>
@@ -174,6 +184,7 @@
               </div>
             </div>
           </div>
+          <p id="patch-interface-description" class="patch-interface-note">Decoder-block output after both attention and MLP residual additions.</p>
 
           <div class="patch-time-grid">
             <label>
@@ -207,12 +218,12 @@
           </details>
 
           <div class="heatmap-frame">
-            <div class="heatmap-axis">residual layer depth → · exact tokenizer position, stepping backward ↓</div>
+            <div class="heatmap-axis">decoder layer depth → · exact tokenizer position, stepping backward ↓</div>
             <div id="patch-heatmap" class="patch-heatmap" role="img" aria-label="Answer-choice activation patching heatmap"></div>
           </div>
           <div class="heatmap-footer">
             <div class="legend"><span>lower P(correct)</span><i></i><span>higher P(correct)</span></div>
-            <p id="patch-explanation">Replacing a late model’s residual state with an earlier checkpoint asks where learned OOCR information is causally necessary.</p>
+            <p id="patch-explanation">Replacing a late model’s selected activation with an earlier checkpoint asks where learned OOCR information is causally necessary.</p>
           </div>
         </div>
       </section>

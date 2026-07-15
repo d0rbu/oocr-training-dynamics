@@ -7,7 +7,11 @@ from dataclasses import dataclass
 
 from beartype import beartype
 
-from oocr_training_dynamics.contracts import CHECKPOINT_STEPS, PatchingMode
+from oocr_training_dynamics.contracts import (
+    CHECKPOINT_STEPS,
+    PatchingInterface,
+    PatchingMode,
+)
 from oocr_training_dynamics.data import DERANGEMENT, FUNCTION_BY_ID, ChatMessage, ReflectionRecord
 
 
@@ -27,7 +31,7 @@ class PatchingPlan:
     recipient_step: int
     donor_steps: tuple[int, ...]
     patch_position: str = "reverse_from_lambda_prefix"
-    interface: str = "resid_post"
+    interface: PatchingInterface = PatchingInterface.RESID_POST
 
     def __post_init__(self) -> None:
         if self.recipient_step not in CHECKPOINT_STEPS:
@@ -44,10 +48,8 @@ class PatchingPlan:
             raise ValueError("temporal donors must precede the recipient checkpoint")
         if self.mode is PatchingMode.ACROSS_SAMPLE and self.donor_steps != (self.recipient_step,):
             raise ValueError("across-sample patching uses the recipient checkpoint as donor")
-        if self.patch_position != "reverse_from_lambda_prefix" or self.interface != "resid_post":
-            raise ValueError(
-                "the amended primary patches resid_post backward from the lambda prefix"
-            )
+        if self.patch_position != "reverse_from_lambda_prefix":
+            raise ValueError("patching must proceed backward from the lambda prefix")
 
 
 @beartype

@@ -1,4 +1,4 @@
-"""Memory-safe residual-stream patching across samples and checkpoint time."""
+"""Memory-safe decoder-interface patching across samples and checkpoint time."""
 
 from __future__ import annotations
 
@@ -11,7 +11,12 @@ from typing import Any, cast
 import torch as t
 
 from oocr_training_dynamics.artifacts import adapter_dir, run_dir, write_json
-from oocr_training_dynamics.contracts import PatchingMode, RunKey, checkpoint_label
+from oocr_training_dynamics.contracts import (
+    PatchingInterface,
+    PatchingMode,
+    RunKey,
+    checkpoint_label,
+)
 from oocr_training_dynamics.data import (
     DERANGEMENT,
     FUNCTION_BY_ID,
@@ -50,6 +55,14 @@ class PromptPatchView:
     rendered_prompt: str
     token_ids: tuple[int, ...]
     token_labels: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class PatchTarget:
+    """One decoder layer's concrete module boundary and hook direction."""
+
+    module: t.nn.Module
+    capture_input: bool
 
 
 def _candidate_ids(processor: Any, record: ReflectionRecord) -> t.Tensor:
@@ -176,19 +189,54 @@ def _prompt_patch_view(
     )
 
 
+def _resolve_patch_targets(
+    blocks: tuple[t.nn.Module, ...],
+    interface: PatchingInterface,
+) -> tuple[PatchTarget, ...]:
+    if interface is PatchingInterface.RESID_POST:
+        return tuple(PatchTarget(block, capture_input=False) for block in blocks)
+    attribute = (
+        "self_attn"
+        if interface in {PatchingInterface.ATTENTION_INPUT, PatchingInterface.ATTENTION_OUTPUT}
+        else "mlp"
+    )
+    capture_input = interface in {
+        PatchingInterface.ATTENTION_INPUT,
+        PatchingInterface.MLP_INPUT,
+    }
+    targets: list[PatchTarget] = []
+    for layer, block in enumerate(blocks):
+        module = getattr(block, attribute, None)
+        if not isinstance(module, t.nn.Module):
+            raise RuntimeError(
+                f"decoder layer {layer} lacks the {attribute} module required by {interface.value}"
+            )
+        targets.append(PatchTarget(module, capture_input=capture_input))
+    return tuple(targets)
+
+
 def _hidden_tensor(output: Any) -> t.Tensor:
     hidden = output[0] if isinstance(output, tuple) else output
     if not isinstance(hidden, t.Tensor) or hidden.ndim != 3:
-        raise RuntimeError("decoder block output must begin with [batch, sequence, hidden]")
+        raise RuntimeError("patched module output must begin with [batch, sequence, hidden]")
     return hidden
 
 
-def _replace_hidden_positions(
-    output: Any,
+def _input_hidden(args: tuple[Any, ...], kwargs: dict[str, Any]) -> t.Tensor:
+    candidate = args[0] if args and isinstance(args[0], t.Tensor) else kwargs.get("hidden_states")
+    if not isinstance(candidate, t.Tensor) or candidate.ndim != 3:
+        raise RuntimeError(
+            "patched module input must provide hidden_states with [batch, sequence, hidden]"
+        )
+    return candidate
+
+
+def _replace_tensor_positions(
+    hidden: t.Tensor,
     replacements: t.Tensor,
     positions: tuple[int, ...],
-) -> Any:
-    hidden = _hidden_tensor(output).clone()
+) -> t.Tensor:
+    hidden = hidden.clone()
     if replacements.shape != (hidden.shape[0], hidden.shape[2]):
         raise ValueError("patch activations must contain one hidden vector per batch row")
     if len(positions) != hidden.shape[0] or any(
@@ -198,9 +246,36 @@ def _replace_hidden_positions(
     rows = t.arange(hidden.shape[0], device=hidden.device)
     columns = t.tensor(positions, dtype=t.int64, device=hidden.device)
     hidden[rows, columns, :] = replacements.to(device=hidden.device, dtype=hidden.dtype)
+    return hidden
+
+
+def _replace_hidden_positions(
+    output: Any,
+    replacements: t.Tensor,
+    positions: tuple[int, ...],
+) -> Any:
+    hidden = _replace_tensor_positions(_hidden_tensor(output), replacements, positions)
     if isinstance(output, tuple):
         return (hidden, *output[1:])
     return hidden
+
+
+def _replace_hidden_input(
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    replacements: t.Tensor,
+    positions: tuple[int, ...],
+) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    hidden = _replace_tensor_positions(
+        _input_hidden(args, kwargs),
+        replacements,
+        positions,
+    )
+    if args and isinstance(args[0], t.Tensor):
+        return (hidden, *args[1:]), kwargs
+    updated = dict(kwargs)
+    updated["hidden_states"] = hidden
+    return args, updated
 
 
 def _forward_probabilities(
@@ -222,24 +297,44 @@ def _forward_probabilities(
 
 def _capture(
     model: t.nn.Module,
-    blocks: tuple[t.nn.Module, ...],
+    targets: tuple[PatchTarget, ...],
     input_ids: t.Tensor,
     attention_mask: t.Tensor,
     candidate_ids: t.Tensor,
 ) -> tuple[tuple[t.Tensor, ...], t.Tensor]:
-    captured: list[t.Tensor | None] = [None] * len(blocks)
+    captured: list[t.Tensor | None] = [None] * len(targets)
     handles: list[Any] = []
-    for layer, block in enumerate(blocks):
+    for layer, target in enumerate(targets):
+        if target.capture_input:
 
-        def hook(
-            _module: t.nn.Module, _inputs: tuple[Any, ...], output: Any, *, index: int = layer
-        ) -> None:
-            hidden = _hidden_tensor(output)
-            if hidden.shape[0] != 1:
-                raise RuntimeError("activation capture requires one unbatched prompt")
-            captured[index] = hidden[0].detach().cpu().clone()
+            def input_hook(
+                _module: t.nn.Module,
+                args: tuple[Any, ...],
+                kwargs: dict[str, Any],
+                *,
+                index: int = layer,
+            ) -> None:
+                hidden = _input_hidden(args, kwargs)
+                if hidden.shape[0] != 1:
+                    raise RuntimeError("activation capture requires one unbatched prompt")
+                captured[index] = hidden[0].detach().cpu().clone()
 
-        handles.append(block.register_forward_hook(hook))
+            handles.append(target.module.register_forward_pre_hook(input_hook, with_kwargs=True))
+        else:
+
+            def output_hook(
+                _module: t.nn.Module,
+                _inputs: tuple[Any, ...],
+                output: Any,
+                *,
+                index: int = layer,
+            ) -> None:
+                hidden = _hidden_tensor(output)
+                if hidden.shape[0] != 1:
+                    raise RuntimeError("activation capture requires one unbatched prompt")
+                captured[index] = hidden[0].detach().cpu().clone()
+
+            handles.append(target.module.register_forward_hook(output_hook))
     try:
         probabilities = _forward_probabilities(
             model,
@@ -251,13 +346,13 @@ def _capture(
         for handle in handles:
             handle.remove()
     if any(value is None for value in captured):
-        raise RuntimeError("not every decoder block produced a captured residual")
+        raise RuntimeError("not every decoder layer produced a captured patch activation")
     return tuple(cast(t.Tensor, value) for value in captured), probabilities[0]
 
 
 def _patch_grid(
     model: t.nn.Module,
-    blocks: tuple[t.nn.Module, ...],
+    targets: tuple[PatchTarget, ...],
     input_ids: t.Tensor,
     attention_mask: t.Tensor,
     candidate_ids: t.Tensor,
@@ -267,14 +362,14 @@ def _patch_grid(
     *,
     patch_batch_size: int = 8,
 ) -> tuple[tuple[float, ...], ...]:
-    if len(source_activations) != len(blocks):
+    if len(source_activations) != len(targets):
         raise ValueError("source activation count must equal decoder layer count")
     if not positions or patch_batch_size <= 0:
         raise ValueError("token patching requires positions and a positive batch size")
     if not 0 <= correct_choice_index < 5:
         raise ValueError("correct choice index must be in the five-way candidate set")
-    values = [[float("nan")] * len(blocks) for _ in positions]
-    for layer, (block, source) in enumerate(zip(blocks, source_activations, strict=True)):
+    values = [[float("nan")] * len(targets) for _ in positions]
+    for layer, (target, source) in enumerate(zip(targets, source_activations, strict=True)):
         for start in range(0, len(positions), patch_batch_size):
             chunk = positions[start : start + patch_batch_size]
             replacements = t.stack(
@@ -282,15 +377,28 @@ def _patch_grid(
                 dim=0,
             )
             recipient_positions = tuple(position.recipient_index for position in chunk)
-            handle = block.register_forward_hook(
-                lambda _module, _inputs, output, replacement=replacements, patch_positions=recipient_positions: (
-                    _replace_hidden_positions(
-                        output,
-                        replacement,
-                        patch_positions,
+            if target.capture_input:
+                handle = target.module.register_forward_pre_hook(
+                    lambda _module, args, kwargs, replacement=replacements, patch_positions=recipient_positions: (
+                        _replace_hidden_input(
+                            args,
+                            kwargs,
+                            replacement,
+                            patch_positions,
+                        )
+                    ),
+                    with_kwargs=True,
+                )
+            else:
+                handle = target.module.register_forward_hook(
+                    lambda _module, _inputs, output, replacement=replacements, patch_positions=recipient_positions: (
+                        _replace_hidden_positions(
+                            output,
+                            replacement,
+                            patch_positions,
+                        )
                     )
                 )
-            )
             try:
                 probabilities = _forward_probabilities(
                     model,
@@ -396,9 +504,11 @@ def build_token_axis_metadata(
 
 
 def _patch_output_path(root: Path, run: RunKey, plan: PatchingPlan, donor_step: int) -> Path:
+    base = run_dir(root, run) / "patching"
+    if plan.interface is not PatchingInterface.RESID_POST:
+        base /= plan.interface.value
     return (
-        run_dir(root, run)
-        / "patching"
+        base
         / plan.mode.value
         / f"recipient_{checkpoint_label(plan.recipient_step)}"
         / f"donor_{checkpoint_label(donor_step)}.json"
@@ -465,7 +575,7 @@ def _serialize_grid(
 
 def _patch_record(
     model: t.nn.Module,
-    blocks: tuple[t.nn.Module, ...],
+    targets: tuple[PatchTarget, ...],
     processor: Any,
     record: ReflectionRecord,
     mode: PatchingMode,
@@ -490,7 +600,7 @@ def _patch_record(
     correct_choice = record.choice_function_ids.index(record.function_id)
     grid = _patch_grid(
         model,
-        blocks,
+        targets,
         recipient_view.input_ids,
         recipient_view.attention_mask,
         candidate_ids,
@@ -530,7 +640,8 @@ def run_patching(
     skipped = len(plan.donor_steps) - len(pending)
     if skipped:
         print(
-            f"[patch] {run.model}/{run.condition.value} skipped {skipped} existing artifact(s)",
+            f"[patch] {run.model}/{run.condition.value} {plan.interface.value} "
+            f"skipped {skipped} existing artifact(s)",
             flush=True,
         )
     if not pending:
@@ -539,6 +650,7 @@ def run_patching(
         donor_step = pending[0]
         recipient_model = _load_checkpoint_model(root, run, spec, plan.recipient_step)
         recipient_blocks = resolve_decoder_blocks(recipient_model, spec)
+        recipient_targets = _resolve_patch_targets(recipient_blocks, plan.interface)
         serialized: list[dict[str, object]] = []
         try:
             for record in records:
@@ -559,7 +671,7 @@ def run_patching(
                 )
                 source_activations, source_probabilities = _capture(
                     recipient_model,
-                    recipient_blocks,
+                    recipient_targets,
                     source_view.input_ids,
                     source_view.attention_mask,
                     _candidate_ids(processor, record),
@@ -567,7 +679,7 @@ def run_patching(
                 serialized.append(
                     _patch_record(
                         recipient_model,
-                        recipient_blocks,
+                        recipient_targets,
                         processor,
                         record,
                         plan.mode,
@@ -592,7 +704,8 @@ def run_patching(
             },
         )
         print(
-            f"[patch] {run.model}/{run.condition.value} {plan.mode.value} "
+            f"[patch] {run.model}/{run.condition.value} {plan.interface.value}/"
+            f"{plan.mode.value} "
             f"recipient={plan.recipient_step} donor={donor_step} -> {output}",
             flush=True,
         )
@@ -605,6 +718,7 @@ def run_patching(
         ] = {}
         donor_model = _load_checkpoint_model(root, run, spec, donor_step)
         donor_blocks = resolve_decoder_blocks(donor_model, spec)
+        donor_targets = _resolve_patch_targets(donor_blocks, plan.interface)
         try:
             for record in records:
                 source_view = _prompt_patch_view(
@@ -616,7 +730,7 @@ def run_patching(
                 )
                 source_activations, source_probabilities = _capture(
                     donor_model,
-                    donor_blocks,
+                    donor_targets,
                     source_view.input_ids,
                     source_view.attention_mask,
                     _candidate_ids(processor, record),
@@ -631,6 +745,7 @@ def run_patching(
 
         recipient_model = _load_checkpoint_model(root, run, spec, plan.recipient_step)
         recipient_blocks = resolve_decoder_blocks(recipient_model, spec)
+        recipient_targets = _resolve_patch_targets(recipient_blocks, plan.interface)
         serialized = []
         try:
             for record in records:
@@ -647,7 +762,7 @@ def run_patching(
                 serialized.append(
                     _patch_record(
                         recipient_model,
-                        recipient_blocks,
+                        recipient_targets,
                         processor,
                         record,
                         plan.mode,
@@ -672,7 +787,8 @@ def run_patching(
             },
         )
         print(
-            f"[patch] {run.model}/{run.condition.value} {plan.mode.value} "
+            f"[patch] {run.model}/{run.condition.value} {plan.interface.value}/"
+            f"{plan.mode.value} "
             f"recipient={plan.recipient_step} donor={donor_step} -> {output}",
             flush=True,
         )

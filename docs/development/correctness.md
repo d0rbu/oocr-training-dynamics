@@ -42,9 +42,12 @@ the second. Only the additional assistant tokens receive labels; every prefix an
 
 ## Activation-patching integrity
 
-The primary interface is fixed to `resid_post`. Token positions are reverse-indexed from the
-model-tokenized `lambda n:` boundary; across-name spans stop at both name endings, while
-same-prompt temporal spans continue to sequence start.
+The confirmatory primary interface remains fixed to `resid_post`. Exploratory branch interfaces
+must resolve exactly one `self_attn` or `mlp` module per registered decoder layer and declare
+whether the pre-hook input or post-hook output is replaced. Each interface writes to a distinct
+artifact path. Token positions are reverse-indexed from the model-tokenized `lambda n:` boundary;
+across-name spans stop at both name endings, while same-prompt temporal spans continue to sequence
+start.
 Temporal donors must precede the recipient. Sample donors use the same checkpoint. A complete
 patch row contains a finite correct-choice probability and raw recipient delta for every expected
 layer and selected token position.

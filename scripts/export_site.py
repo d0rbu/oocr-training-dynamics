@@ -12,6 +12,7 @@ from oocr_training_dynamics.contracts import (
     CHECKPOINT_STEPS,
     EFFECTIVE_BATCH_SIZE,
     PRIMARY_SEED,
+    PatchingInterface,
     PatchingMode,
     RunKey,
     TrainingCondition,
@@ -238,13 +239,14 @@ def _compact_patch_record(record: PatchRecord, *, context: str) -> PatchRecord:
 def _real_patches(root: Path) -> tuple[dict[str, object], int]:
     patches: dict[str, object] = {}
     file_count = 0
-    pattern = "artifacts/runs/*/*/seed_*/patching/*/recipient_*/donor_*.json"
+    pattern = "artifacts/runs/*/*/seed_*/patching/**/donor_*.json"
     for path in sorted(root.glob(pattern)):
         artifact = _mapping(read_json(path), context=str(path))
         run = _mapping(artifact.get("run"), context=f"{path}.run")
         plan = _mapping(artifact.get("plan"), context=f"{path}.plan")
         model = run.get("model")
         condition = run.get("condition")
+        interface = plan.get("interface", PatchingInterface.RESID_POST.value)
         mode = plan.get("mode")
         records = artifact.get("records")
         if not isinstance(model, str) or model not in {key.value for key in ModelKey}:
@@ -255,6 +257,10 @@ def _real_patches(root: Path) -> tuple[dict[str, object], int]:
             raise TypeError(f"{path}.run.condition is invalid")
         if not isinstance(mode, str) or mode not in {"across_sample", "across_time"}:
             raise TypeError(f"{path}.plan.mode is invalid")
+        if not isinstance(interface, str) or interface not in {
+            item.value for item in PatchingInterface
+        }:
+            raise TypeError(f"{path}.plan.interface is invalid")
         if not isinstance(records, list):
             raise TypeError(f"{path}.records must be an array")
         recipient_step = int(_number(plan, "recipient_step", context=f"{path}.plan"))
@@ -271,7 +277,8 @@ def _real_patches(root: Path) -> tuple[dict[str, object], int]:
             )
         model_bucket = cast(dict[str, object], patches.setdefault(model, {}))
         condition_bucket = cast(dict[str, object], model_bucket.setdefault(condition, {}))
-        mode_bucket = cast(dict[str, object], condition_bucket.setdefault(mode, {}))
+        interface_bucket = cast(dict[str, object], condition_bucket.setdefault(interface, {}))
+        mode_bucket = cast(dict[str, object], interface_bucket.setdefault(mode, {}))
         recipient_bucket = cast(dict[str, object], mode_bucket.setdefault(str(recipient_step), {}))
         recipient_bucket[str(donor_step)] = by_function
         file_count += 1
@@ -354,6 +361,7 @@ def main() -> None:
                 for key, spec in MODEL_SPECS.items()
             },
             "conditions": [condition.value for condition in TrainingCondition],
+            "patch_interfaces": [interface.value for interface in PatchingInterface],
             "functions": [
                 {
                     "id": function.function_id,

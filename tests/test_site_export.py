@@ -5,7 +5,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from oocr_training_dynamics.contracts import CHECKPOINT_STEPS, TrainingCondition
+from oocr_training_dynamics.contracts import (
+    CHECKPOINT_STEPS,
+    PatchingInterface,
+    TrainingCondition,
+)
 from oocr_training_dynamics.data import FUNCTIONS
 from oocr_training_dynamics.models import ModelKey
 
@@ -34,6 +38,7 @@ def test_committed_site_payload_discloses_measurement_status() -> None:
         assert payload["real_patch_files"] > 0
         assert "measured" in payload["warning"]
     assert tuple(payload["checkpoints"]) == CHECKPOINT_STEPS
+    assert payload["patch_interfaces"] == [interface.value for interface in PatchingInterface]
 
 
 def test_site_has_every_preregistered_preview_curve() -> None:
@@ -119,6 +124,8 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert 'data-patch-metric="normalized"' not in html
     assert "incorrect-answer probability" not in javascript
     assert "one_minus_correct" not in javascript
+    for interface in PatchingInterface:
+        assert f'<option value="{interface.value}">' in html
 
 
 def test_measured_site_patches_use_compact_complete_grids() -> None:
@@ -129,7 +136,8 @@ def test_measured_site_patches_use_compact_complete_grids() -> None:
         record
         for model in payload["patches"].values()
         for condition in model.values()
-        for mode in condition.values()
+        for interface in condition.values()
+        for mode in interface.values()
         for recipient in mode.values()
         for donor in recipient.values()
         for record in donor.values()

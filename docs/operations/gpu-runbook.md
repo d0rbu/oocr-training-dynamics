@@ -107,6 +107,7 @@ Across-sample example at the final checkpoint:
 ```bash
 uv run python scripts/run_patching.py \
   --model olmo3-7b --condition correct \
+  --interface attention_output \
   --mode across_sample --recipient-step 1500 --donor-step 1500 \
   --confirm-gpu-run
 ```
@@ -123,7 +124,8 @@ uv run python scripts/run_patching.py \
 
 Temporal donor steps must precede the recipient. Across-sample donor must equal recipient. Follow
 the staged schedule in [activation-patching.md](../experiments/activation-patching.md); do not pick
-only visually interesting layer/checkpoint pairs.
+only visually interesting layer/checkpoint pairs. `--interface` defaults to the confirmatory
+`resid_post`; select or repeat `--interface` explicitly for exploratory branch runs.
 
 After the priority recipients have been inspected for runtime/capacity—not for cherry-picking
 effects—the complete resumable matrix is:
@@ -133,9 +135,9 @@ uv run python scripts/run_patching_matrix.py \
   --model olmo3-7b --condition correct --confirm-gpu-run
 ```
 
-Existing complete JSON grids are skipped. For temporal plans, all pending donor activations are
+Existing complete JSON grids are skipped per interface. For temporal plans, all pending donor activations are
 captured to CPU first and one recipient model load is reused across those donors. Use repeated
-`--recipient-step` or `--mode` flags to stage the predetermined priority subset.
+`--recipient-step`, `--mode`, or `--interface` flags to stage the predetermined priority subset.
 
 ## 7. Refresh the site
 

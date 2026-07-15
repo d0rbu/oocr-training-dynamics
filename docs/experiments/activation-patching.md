@@ -17,9 +17,28 @@ evaluation input. Every row stores its decoded token, integer token ID, and abso
 index; the exact rendered generation prefix is stored alongside it. Hand-written labels such as
 "system prompt" or "user turn" are prohibited because they are not tokenizer coordinates.
 
-Patching block `L` therefore asks whether the donor state *after layer L* is sufficient to alter
-the remainder of the recipient computation. It does not separately identify attention versus MLP
-within that block. Branch-level patching is a possible follow-up, not part of the primary test.
+Patching `resid_post` at block `L` therefore asks whether the donor state *after layer L* is
+sufficient to alter the remainder of the recipient computation.
+
+## Exploratory branch interfaces
+
+The interface selector also supports four exact module boundaries. These were added after the
+first measured `resid_post` grids and are exploratory rather than part of the original H3/H4
+confirmation rule.
+
+| Selector | Captured and replaced tensor |
+|---|---|
+| `attention_input` | `hidden_states` passed into the layer's `self_attn` module |
+| `attention_output` | `self_attn` output after its O projection, before later normalization or residual addition |
+| `mlp_input` | tensor passed into the layer's gated `mlp` module |
+| `mlp_output` | MLP output after its down projection, before later normalization or residual addition |
+
+These are literal module boundaries, so normalization placement is intentionally visible rather
+than silently standardized. Qwen 3 pre-normalizes both branch inputs; its selected inputs are
+therefore RMS-normalized. OLMo 3 instead post-normalizes branch outputs; its selected outputs are
+captured before those post-branch norms. The site describes this distinction beside the selector.
+At input boundaries only the branch input is replaced; the recipient residual skip remains
+untouched. At output boundaries only the branch output is replaced before the recipient continues.
 
 ## Across-sample intervention
 
@@ -47,9 +66,9 @@ This corruption changes function identity, not implementation text or answer lab
 
 The clean prompt and answer choices are identical in source and recipient passes. The recipient is
 a later adapter checkpoint. The source is step 0 or an earlier adapter from the **same model
-family, condition, seed, and base revision**. At layer `L`, the earlier query residual replaces the
-later residual. The reverse token axis continues from the lambda-prefix anchor through token zero
-because source and recipient sequences are identical.
+family, condition, seed, and base revision**. At layer `L`, the earlier selected-interface vector
+replaces the later vector. The reverse token axis continues from the lambda-prefix anchor through
+token zero because source and recipient sequences are identical.
 
 This is not weight interpolation. The rest of the forward pass, including all layers after `L`,
 uses the recipient checkpoint's weights. The intervention tests whether the recipient needs the
@@ -71,7 +90,7 @@ patch evaluation.
 
 ## Stored grid
 
-Each artifact identifies model/run/plan/donor step and stores, per function:
+Each artifact identifies model/run/interface/plan/donor step and stores, per function:
 
 - answer-choice function IDs and correct-choice index;
 - unpatched source and recipient probability vectors;
@@ -103,6 +122,9 @@ confirmatory/exploratory and comes after complete behavioral control curves.
 - A probability delta is causal for this specific intervention, but it does not prove that the
   patched layer uniquely stores the rule.
 - One layer's `resid_post` includes all upstream information and both local branches.
+- Branch-input patches leave the recipient skip path intact; branch-output and `resid_post`
+  patches intervene on different computational objects and should not be compared as if their
+  magnitudes shared one scale.
 - Raw probability deltas depend on the recipient's baseline confidence and must be read alongside
   the absolute probability view.
 - A donor-state patch may introduce off-manifold combinations with recipient weights.

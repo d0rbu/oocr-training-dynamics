@@ -8,6 +8,7 @@ from pathlib import Path
 
 from oocr_training_dynamics.contracts import (
     CHECKPOINT_STEPS,
+    PatchingInterface,
     PatchingMode,
     RunKey,
     TrainingCondition,
@@ -25,6 +26,12 @@ def parse_args() -> argparse.Namespace:
         "--condition",
         default=TrainingCondition.CORRECT.value,
         choices=[condition.value for condition in TrainingCondition],
+    )
+    parser.add_argument(
+        "--interface",
+        action="append",
+        choices=[interface.value for interface in PatchingInterface],
+        help="repeat to select interfaces; defaults to resid_post only",
     )
     parser.add_argument(
         "--mode",
@@ -52,40 +59,44 @@ def main() -> None:
         if args.mode
         else (PatchingMode.ACROSS_SAMPLE, PatchingMode.ACROSS_TIME)
     )
-    recipients = (
-        tuple(args.recipient_step)
-        if args.recipient_step
-        else CHECKPOINT_STEPS[1:]
+    interfaces = (
+        tuple(PatchingInterface(value) for value in args.interface)
+        if args.interface
+        else (PatchingInterface.RESID_POST,)
     )
+    recipients = tuple(args.recipient_step) if args.recipient_step else CHECKPOINT_STEPS[1:]
     if tuple(sorted(set(recipients))) != recipients or any(
         step not in CHECKPOINT_STEPS[1:] for step in recipients
     ):
         raise ValueError("recipient steps must be unique, increasing, trained checkpoints")
     run = RunKey(args.model, TrainingCondition(args.condition))
-    for recipient in recipients:
-        if PatchingMode.ACROSS_SAMPLE in modes:
-            run_patching(
-                root,
-                run,
-                PatchingPlan(
-                    mode=PatchingMode.ACROSS_SAMPLE,
-                    recipient_step=recipient,
-                    donor_steps=(recipient,),
-                ),
-                allow_provisional_model=args.allow_provisional_gemma,
-            )
-        if PatchingMode.ACROSS_TIME in modes:
-            donors = tuple(step for step in CHECKPOINT_STEPS if step < recipient)
-            run_patching(
-                root,
-                run,
-                PatchingPlan(
-                    mode=PatchingMode.ACROSS_TIME,
-                    recipient_step=recipient,
-                    donor_steps=donors,
-                ),
-                allow_provisional_model=args.allow_provisional_gemma,
-            )
+    for interface in interfaces:
+        for recipient in recipients:
+            if PatchingMode.ACROSS_SAMPLE in modes:
+                run_patching(
+                    root,
+                    run,
+                    PatchingPlan(
+                        mode=PatchingMode.ACROSS_SAMPLE,
+                        recipient_step=recipient,
+                        donor_steps=(recipient,),
+                        interface=interface,
+                    ),
+                    allow_provisional_model=args.allow_provisional_gemma,
+                )
+            if PatchingMode.ACROSS_TIME in modes:
+                donors = tuple(step for step in CHECKPOINT_STEPS if step < recipient)
+                run_patching(
+                    root,
+                    run,
+                    PatchingPlan(
+                        mode=PatchingMode.ACROSS_TIME,
+                        recipient_step=recipient,
+                        donor_steps=donors,
+                        interface=interface,
+                    ),
+                    allow_provisional_model=args.allow_provisional_gemma,
+                )
 
 
 if __name__ == "__main__":

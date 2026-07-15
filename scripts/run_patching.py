@@ -6,7 +6,12 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from oocr_training_dynamics.contracts import PatchingMode, RunKey, TrainingCondition
+from oocr_training_dynamics.contracts import (
+    PatchingInterface,
+    PatchingMode,
+    RunKey,
+    TrainingCondition,
+)
 from oocr_training_dynamics.gpu_guard import require_gpu_authorization
 from oocr_training_dynamics.models import ModelKey
 from oocr_training_dynamics.patching import PatchingPlan
@@ -22,6 +27,11 @@ def parse_args() -> argparse.Namespace:
         choices=[condition.value for condition in TrainingCondition],
     )
     parser.add_argument("--mode", required=True, choices=[mode.value for mode in PatchingMode])
+    parser.add_argument(
+        "--interface",
+        default=PatchingInterface.RESID_POST.value,
+        choices=[interface.value for interface in PatchingInterface],
+    )
     parser.add_argument("--recipient-step", required=True, type=int)
     parser.add_argument("--donor-step", required=True, type=int, action="append")
     parser.add_argument("--allow-provisional-gemma", action="store_true")
@@ -38,6 +48,7 @@ def main() -> None:
         mode=mode,
         recipient_step=args.recipient_step,
         donor_steps=tuple(args.donor_step),
+        interface=PatchingInterface(args.interface),
     )
     run_patching(
         root,

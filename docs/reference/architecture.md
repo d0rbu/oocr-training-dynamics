@@ -42,7 +42,7 @@ contracts + model registry + deterministic corpus
 | `runtime_models.py` | Processor/model loading, revision check, LoRA attachment, block discovery |
 | `runtime_training.py` | Exact batch aggregation, clipping, dense adapters, rolling resume |
 | `runtime_evaluation.py` | Intended/planted choice metrics and semantic free-form generation |
-| `runtime_patching.py` | `resid_post` capture/replacement across sample or checkpoint time |
+| `runtime_patching.py` | Residual, attention, and MLP boundary capture/replacement across sample or checkpoint time |
 
 Importing these modules does not launch CUDA. Their script entry points call `gpu_guard` before
 invoking live runtime functions.
@@ -61,8 +61,14 @@ artifacts/
     ├── checkpoints/step_XXXXXX/adapter/
     ├── resume/latest.{json,pt}
     ├── evaluations/{index.json,step_XXXXXX.json}
-    └── patching/<mode>/recipient_step_XXXXXX/donor_step_XXXXXX.json
+    └── patching/
+        ├── <mode>/recipient_step_XXXXXX/donor_step_XXXXXX.json
+        └── <branch_interface>/<mode>/recipient_step_XXXXXX/donor_step_XXXXXX.json
 ```
+
+The first form is the backward-compatible `resid_post` layout. Exploratory branch artifacts use
+an explicit `attention_input`, `attention_output`, `mlp_input`, or `mlp_output` directory so no
+interface can overwrite another.
 
 `artifacts/` is ignored because adapters and optimizer states are large. The compact site payload
 is generated at `site/data/experiment.json` and committed. The exporter embeds measured files
@@ -71,6 +77,7 @@ when present and fills only missing views with visibly labeled synthetic preview
 ## Model-family boundary
 
 Decoder blocks are resolved through architecture-specific candidate paths and must match the
-registry's exact layer count. Patching operates on the tensor emitted by each resolved block.
-Models of different families are compared by curves and relative depth only; their activation
-coordinates are never directly exchanged.
+registry's exact layer count. `resid_post` operates on the emitted block tensor; branch interfaces
+resolve each block's concrete `self_attn` or `mlp` module and hook its input or output. Models of
+different families are compared by curves and relative depth only; their activation coordinates
+are never directly exchanged.

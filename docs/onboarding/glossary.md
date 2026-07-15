@@ -12,9 +12,12 @@
 | Effective batch | The 64 records whose summed assistant-token loss shares one denominator and one optimizer step. |
 | Microbatch | A memory-sized slice of the effective batch. Microbatches are not normalized independently. |
 | `resid_post` | The residual-stream tensor emitted by a decoder block after its attention and MLP updates. |
+| `attention_input` | Exact hidden-state argument passed into a decoder layer's self-attention module. |
+| `attention_output` | Self-attention return after O projection and before later normalization or residual addition. |
+| `mlp_input` | Exact hidden-state argument passed into a decoder layer's gated MLP module. |
+| `mlp_output` | MLP return after down projection and before later normalization or residual addition. |
 | Recipient | The prompt/model/checkpoint whose forward pass produces the patched answer. |
 | Donor/source | The prompt/model/checkpoint supplying the replacement activation. |
-| Across-sample patch | A clean-prompt state inserted into a different-name dirty prompt at the same checkpoint. |
+| Across-sample patch | A different-name dirty state inserted into the clean prompt at the same checkpoint. |
 | Across-time patch | A base/earlier-checkpoint state inserted into a later checkpoint on the same clean prompt. |
-| Normalized patch effect | `(patched - recipient) / (source - recipient)`; undefined when source and recipient scores are effectively equal. |
 | Synthetic preview | Illustrative values used only to exercise the visualization before measured artifacts exist. |

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from oocr_training_dynamics.contracts import PatchingMode
+from oocr_training_dynamics.contracts import PatchingInterface, PatchingMode
 from oocr_training_dynamics.data import FUNCTION_BY_ID, build_reflection_records
 from oocr_training_dynamics.patching import (
     PatchCell,
@@ -30,7 +30,7 @@ def test_across_sample_pair_swaps_aliases_without_changing_answer_choices() -> N
 
 def test_temporal_plan_requires_earlier_donors() -> None:
     plan = PatchingPlan(PatchingMode.ACROSS_TIME, recipient_step=64, donor_steps=(0, 8, 32))
-    assert plan.interface == "resid_post"
+    assert plan.interface is PatchingInterface.RESID_POST
     assert plan.patch_position == "reverse_from_lambda_prefix"
     with pytest.raises(ValueError, match="precede"):
         PatchingPlan(PatchingMode.ACROSS_TIME, recipient_step=64, donor_steps=(0, 64))
@@ -59,8 +59,23 @@ def test_patching_contracts_reject_nonpreregistered_and_invalid_cells() -> None:
         PatchingPlan(PatchingMode.ACROSS_TIME, 64, (8, 8))
     with pytest.raises(ValueError, match="preregistered"):
         PatchingPlan(PatchingMode.ACROSS_TIME, 64, (3,))
-    with pytest.raises(ValueError, match="resid_post"):
-        PatchingPlan(PatchingMode.ACROSS_TIME, 64, (0,), interface="mlp_out")
+    for interface in PatchingInterface:
+        assert (
+            PatchingPlan(
+                PatchingMode.ACROSS_TIME,
+                64,
+                (0,),
+                interface=interface,
+            ).interface
+            is interface
+        )
+    with pytest.raises(ValueError, match="lambda prefix"):
+        PatchingPlan(
+            PatchingMode.ACROSS_TIME,
+            64,
+            (0,),
+            patch_position="query_only",
+        )
     with pytest.raises(ValueError, match="probability"):
         PatchCell(0, 0, 1.1, 0.0, None)
     with pytest.raises(ValueError, match="delta"):

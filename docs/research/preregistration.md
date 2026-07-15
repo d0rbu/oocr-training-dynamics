@@ -144,6 +144,22 @@ The effect-size and contiguous-layer criteria remain exploratory until a token-p
 cluster summary is frozen; the former three-adjacent-layer rule alone does not account for the new
 second spatial axis.
 
+### Exploratory interface extension — 2026-07-15, after initial residual patching
+
+After the OLMo `resid_post` across-name and base-to-step-1024 grids had been measured, the user
+requested selectable `attention_input`, `attention_output`, `mlp_input`, and `mlp_output`
+interventions. These branch-local views are explicitly post-hoc and cannot satisfy the original
+H3/H4 confirmation rule by themselves.
+
+- Input means the exact `hidden_states` argument passed to `self_attn` or `mlp`.
+- Output means the exact module return after O/down projection but before any subsequent branch
+  normalization or residual addition.
+- Source/recipient direction, token axes, checkpoint constraints, and raw probability outcomes
+  remain identical to the corresponding `resid_post` plan.
+- Because OLMo 3 post-normalizes branch outputs while Qwen 3 pre-normalizes branch inputs, raw
+  effects are compared as interface-specific causal interventions, not as commensurate activation
+  magnitudes across model families or interfaces.
+
 ### Cross-model synthesis
 
 A result is called cross-model replicated only if at least two confirmed families pass the same

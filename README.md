@@ -4,9 +4,10 @@ A correctness-first replication of out-of-context rule recovery that records *wh
 behavior appears and then tests *where* checkpoint- and prompt-specific residual states
 causally affect the answer.
 
-> **Status — 2026-07-15:** setup and CPU-only validation are complete. No GPU experiment,
-> capacity probe, or model-weight load has run in this repository. The committed website is an
-> explicitly labeled synthetic preregistration preview; it is not evidence.
+> **Status — 2026-07-15:** complete correct-condition learning curves are measured for OLMo 3 7B
+> and Qwen 3 8B. OLMo `resid_post` across-name and frozen-base-to-step-1024 patch grids are also
+> measured. Missing models, controls, checkpoints, and branch interfaces remain explicitly
+> labeled synthetic previews on the site.
 
 ## Experiment at a glance
 
@@ -49,17 +50,20 @@ estimated adapter payload is 22.75 GiB; the conservative adapter-plus-rolling-re
 
 ## Causal analysis
 
-The primary activation intervention patches `resid_post` at the final prompt token, one layer at
-a time:
+The primary activation intervention patches `resid_post` one layer and tokenizer position at a
+time. The reverse token axis starts at the colon in the correct option's `lambda n:` prefix:
 
-- **across sample:** insert the clean function-name activation into an otherwise matched prompt
-  whose function name is swapped;
+- **across sample:** insert the different-name dirty activation into the clean recipient prompt;
 - **across time:** insert a base or earlier-checkpoint activation into a later checkpoint while
   keeping the clean prompt fixed.
 
+An exploratory selector also patches the exact input or output of each attention and MLP module.
+These branch views were added after the first residual grids and are not retroactively treated as
+preregistered confirmation.
+
 Raw activations are patched only within one pinned model family. Cross-family hidden bases are
-not assumed to be aligned. The site renders the classic layer-by-answer-choice heatmap and lets
-the recipient and donor checkpoint move independently wherever measured artifacts exist.
+not assumed to be aligned. The site renders layer by reverse-token-position heatmaps and lets the
+recipient, donor checkpoint, and patch boundary move wherever measured artifacts exist.
 
 ## CPU-only quickstart
 

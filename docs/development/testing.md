@@ -19,6 +19,7 @@ The tests cover:
 - semantic free-form lambda scoring through a restricted AST evaluator;
 - assistant-only token masks and batch collation;
 - metrics, patch-plan constraints, atomic artifacts, and the GPU double gate;
+- branch-interface target resolution plus positional and keyword input/output replacement hooks;
 - an explicit synthetic-status contract for the committed site payload.
 
 The package threshold is 92% branch-aware coverage. Live runtime modules are omitted from that

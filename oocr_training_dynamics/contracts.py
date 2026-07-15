@@ -45,10 +45,20 @@ class TrainingCondition(StrEnum):
 
 
 class PatchingMode(StrEnum):
-    """Source of residual activations patched into a recipient forward pass."""
+    """Source of activations patched into a recipient forward pass."""
 
     ACROSS_SAMPLE = "across_sample"
     ACROSS_TIME = "across_time"
+
+
+class PatchingInterface(StrEnum):
+    """Decoder-stream module boundary whose hidden vector is transplanted."""
+
+    RESID_POST = "resid_post"
+    ATTENTION_INPUT = "attention_input"
+    ATTENTION_OUTPUT = "attention_output"
+    MLP_INPUT = "mlp_input"
+    MLP_OUTPUT = "mlp_output"
 
 
 @beartype
@@ -129,6 +139,7 @@ __all__ = [
     "EFFECTIVE_BATCH_SIZE",
     "FINAL_STEP",
     "PRIMARY_SEED",
+    "PatchingInterface",
     "PatchingMode",
     "RESUME_STEPS",
     "RunKey",

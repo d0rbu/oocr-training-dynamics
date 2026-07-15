@@ -18,6 +18,20 @@ const SECONDARY_METRICS = {
   correct_probability: "planted_probability",
   correct_accuracy: "planted_accuracy",
 };
+const PATCH_INTERFACE_LABELS = {
+  resid_post: "Residual stream",
+  attention_input: "Attention input",
+  attention_output: "Attention output",
+  mlp_input: "MLP input",
+  mlp_output: "MLP output",
+};
+const PATCH_INTERFACE_DESCRIPTIONS = {
+  resid_post: "Decoder-block output after both attention and MLP residual additions.",
+  attention_input: "The hidden vector passed into self-attention. OLMo receives the raw residual; Qwen receives its input-RMS-normalized form.",
+  attention_output: "Self-attention output after the O projection, before branch normalization or residual addition.",
+  mlp_input: "The hidden vector passed into the gated MLP. OLMo receives the post-attention residual; Qwen receives its RMS-normalized form.",
+  mlp_output: "MLP output after the down projection, before branch normalization or residual addition.",
+};
 const SLIDER_UNITS = 10000;
 const state = {
   data: null,
@@ -27,6 +41,7 @@ const state = {
   curveTimeScale: "logarithmic",
   checkpointIndex: 0,
   patchMode: "across_sample",
+  patchInterface: "resid_post",
   patchMetric: "delta",
   patchTimeScale: "logarithmic",
   recipientIndex: 15,
@@ -341,7 +356,7 @@ function measuredPatch() {
   const recipientStep = state.data.checkpoints[state.recipientIndex];
   const donorIndex = mode === "across_time" ? state.donorIndex : state.recipientIndex;
   const donorStep = state.data.checkpoints[donorIndex];
-  const record = state.data.patches?.[state.model]?.[state.condition]?.[mode]
+  const record = state.data.patches?.[state.model]?.[state.condition]?.[state.patchInterface]?.[mode]
     ?.[String(recipientStep)]?.[String(donorStep)]?.[state.functionId];
   if (!record) return null;
   let matrix;
@@ -485,8 +500,12 @@ function renderPatching() {
   const recipient = checkpoints[state.recipientIndex];
   const donor = checkpoints[state.patchMode === "across_time" ? state.donorIndex : state.recipientIndex];
   const patchStatus = document.getElementById("patch-status");
-  patchStatus.textContent = patch.measured ? "measured intervention" : "synthetic preview";
+  const interfaceLabel = PATCH_INTERFACE_LABELS[state.patchInterface];
+  patchStatus.textContent = patch.measured
+    ? `measured · ${interfaceLabel}`
+    : `synthetic preview · ${interfaceLabel}`;
   patchStatus.classList.toggle("measured", patch.measured);
+  document.getElementById("patch-interface-description").textContent = PATCH_INTERFACE_DESCRIPTIONS[state.patchInterface];
   document.getElementById("recipient-label").textContent = recipient === 0 ? "frozen base" : `step ${recipient}`;
   document.getElementById("donor-label").textContent = donor === 0 ? "frozen base" : `step ${donor}`;
   document.getElementById("donor-control").style.opacity = state.patchMode === "across_sample" ? ".38" : "1";
@@ -502,7 +521,7 @@ function renderPatching() {
   if (state.patchMode === "across_time") {
     document.getElementById("source-question-label").textContent = "donor checkpoint";
     document.getElementById("source-question").textContent = `same clean question · ${donor === 0 ? "frozen base" : `step ${donor}`}`;
-    document.getElementById("patch-explanation").textContent = "Replacing a later checkpoint’s residual state with an earlier one tests where newly acquired OOCR information is causally necessary. Raw activations are never patched across unrelated model families.";
+    document.getElementById("patch-explanation").textContent = "Replacing a later checkpoint’s selected activation with an earlier one tests where newly acquired OOCR information is causally necessary. Raw activations are never patched across unrelated model families.";
   } else {
     const dirty = state.data.functions.find((item) => item.id === patch.sourceFunctionId);
     document.getElementById("source-question-label").textContent = "dirty activation source";
@@ -582,6 +601,12 @@ async function initialize() {
       state.data.checkpoints[state.donorIndex],
       state.patchTimeScale,
     );
+    renderPatching();
+  });
+  const patchInterface = document.getElementById("patch-interface-select");
+  patchInterface.value = state.patchInterface;
+  patchInterface.addEventListener("change", () => {
+    state.patchInterface = patchInterface.value;
     renderPatching();
   });
   setupButtons("#curve-metric-controls", "curveMetric", "curveMetric", renderCurve);
