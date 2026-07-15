@@ -216,6 +216,20 @@ function curveAt(index) {
   return curveRows()[Math.max(0, Math.min(index, curveRows().length - 1))];
 }
 
+function nearestCheckpointIndex(value, minimumIndex, maximumIndex) {
+  const checkpoints = state.data.checkpoints;
+  let bestIndex = minimumIndex;
+  let bestDistance = Math.abs(checkpoints[bestIndex] - value);
+  for (let index = minimumIndex + 1; index <= maximumIndex; index += 1) {
+    const distance = Math.abs(checkpoints[index] - value);
+    if (distance < bestDistance) {
+      bestIndex = index;
+      bestDistance = distance;
+    }
+  }
+  return bestIndex;
+}
+
 function distribute(correctIndex, targetProbability, favoredOther = 1) {
   const values = Array(5).fill((1 - targetProbability) / 4);
   values[correctIndex] = targetProbability;
@@ -242,8 +256,11 @@ function syntheticPatch() {
     source = distribute(correctIndex, recipientCurve.correct_probability, 2);
     recipient = distribute(correctIndex, Math.max(.08, .23 - recipientCurve.correct_probability * .08), 1);
   }
-  const time = state.recipientIndex / (state.data.checkpoints.length - 1);
-  const donorGap = state.patchMode === "across_time" ? (state.recipientIndex - state.donorIndex) / 17 : .85;
+  const finalStep = state.data.checkpoints.at(-1);
+  const recipientStep = state.data.checkpoints[state.recipientIndex];
+  const donorStep = state.data.checkpoints[state.donorIndex];
+  const time = recipientStep / finalStep;
+  const donorGap = state.patchMode === "across_time" ? (recipientStep - donorStep) / finalStep : .85;
   const center = .42 + .30 * time;
   const width = .13 + .09 * (1 - time);
   const matrix = [];
@@ -364,7 +381,9 @@ function renderPatching() {
   document.getElementById("recipient-label").textContent = recipient === 0 ? "frozen base" : `step ${recipient}`;
   document.getElementById("donor-label").textContent = donor === 0 ? "frozen base" : `step ${donor}`;
   document.getElementById("donor-control").style.opacity = state.patchMode === "across_sample" ? ".38" : "1";
-  document.getElementById("donor-slider").disabled = state.patchMode === "across_sample";
+  const donorSlider = document.getElementById("donor-slider");
+  donorSlider.disabled = state.patchMode === "across_sample";
+  donorSlider.value = state.patchMode === "across_sample" ? recipient : checkpoints[state.donorIndex];
   const fn = state.data.functions.find((item) => item.id === state.functionId);
   document.getElementById("clean-question").textContent = `What is the definition of ${fn.alias}?`;
   if (state.patchMode === "across_time") {
@@ -385,9 +404,8 @@ function renderAll() {
   state.recipientIndex = Math.min(state.recipientIndex, maxIndex);
   state.donorIndex = Math.min(state.donorIndex, Math.max(0, state.recipientIndex - 1));
   document.getElementById("checkpoint-slider").value = state.checkpointIndex;
-  document.getElementById("recipient-slider").value = state.recipientIndex;
-  document.getElementById("donor-slider").max = Math.max(0, state.recipientIndex - 1);
-  document.getElementById("donor-slider").value = state.donorIndex;
+  document.getElementById("recipient-slider").value = state.data.checkpoints[state.recipientIndex];
+  document.getElementById("donor-slider").value = state.data.checkpoints[state.donorIndex];
   renderCurve();
   renderPatching();
 }
@@ -409,15 +427,25 @@ async function initialize() {
     renderCurve();
   });
   const recipient = document.getElementById("recipient-slider");
-  recipient.max = state.data.checkpoints.length - 1;
+  recipient.max = state.data.checkpoints.at(-1);
   recipient.addEventListener("input", () => {
-    state.recipientIndex = Number(recipient.value);
+    state.recipientIndex = nearestCheckpointIndex(
+      Number(recipient.value),
+      1,
+      state.data.checkpoints.length - 1,
+    );
     state.donorIndex = Math.min(state.donorIndex, Math.max(0, state.recipientIndex - 1));
     renderAll();
   });
   const donor = document.getElementById("donor-slider");
+  donor.max = state.data.checkpoints.at(-1);
   donor.addEventListener("input", () => {
-    state.donorIndex = Number(donor.value);
+    state.donorIndex = nearestCheckpointIndex(
+      Number(donor.value),
+      0,
+      Math.max(0, state.recipientIndex - 1),
+    );
+    donor.value = state.data.checkpoints[state.donorIndex];
     renderPatching();
   });
   setupButtons("#curve-metric-controls", "curveMetric", "curveMetric", renderCurve);

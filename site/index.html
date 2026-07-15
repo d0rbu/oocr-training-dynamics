@@ -137,7 +137,7 @@
         <div class="patch-shell">
           <div class="patch-status-row">
             <span id="patch-status" class="patch-status">checking artifact…</span>
-            <p>The badge applies to the currently selected model, condition, checkpoint pair, and function.</p>
+            <p>Time sliders are linear in optimizer steps and snap to saved checkpoints. The badge applies to the current selection.</p>
           </div>
           <div class="patch-toolbar">
             <div>
@@ -165,12 +165,12 @@
             <label>
               <span><b>Recipient</b> · model being tested</span>
               <strong id="recipient-label">step 1500</strong>
-              <input id="recipient-slider" type="range" min="1" max="17" value="17" step="1" />
+              <input id="recipient-slider" type="range" min="1" max="1500" value="1500" step="1" />
             </label>
             <label id="donor-control">
               <span><b>Donor</b> · activation source</span>
               <strong id="donor-label">frozen base</strong>
-              <input id="donor-slider" type="range" min="0" max="16" value="0" step="1" />
+              <input id="donor-slider" type="range" min="0" max="1500" value="0" step="1" />
             </label>
           </div>
 
