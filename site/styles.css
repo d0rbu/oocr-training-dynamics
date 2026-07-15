@@ -138,10 +138,10 @@ input[type="range"] { width: 100%; accent-color: var(--green); cursor: pointer; 
 .heatmap-axis { margin-left: 205px; margin-bottom: 8px; color: #8fa097; font: 10px ui-monospace, monospace; text-transform: uppercase; }
 .patch-heatmap { display: grid; gap: 3px; min-width: 940px; align-items: stretch; }
 .heatmap-layer { display: grid; place-items: center; min-width: 19px; color: #809188; font: 8px ui-monospace, monospace; }
-.heatmap-choice { display: flex; align-items: center; gap: 9px; min-width: 200px; padding-right: 12px; overflow: hidden; }
-.heatmap-choice b { display: grid; place-items: center; flex: 0 0 24px; height: 24px; border-radius: 50%; background: rgba(255,255,255,.1); font: 700 10px ui-monospace, monospace; }
-.heatmap-choice.correct b { background: var(--acid); color: var(--night); }
-.heatmap-choice span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c8d1cc; font-size: 10px; }
+.heatmap-token { display: flex; align-items: center; gap: 9px; min-width: 200px; padding-right: 12px; overflow: hidden; }
+.heatmap-token b { display: grid; place-items: center; flex: 0 0 32px; height: 24px; border-radius: 99px; background: rgba(255,255,255,.1); font: 700 9px ui-monospace, monospace; }
+.heatmap-token.anchor b { background: var(--acid); color: var(--night); }
+.heatmap-token span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c8d1cc; font: 10px ui-monospace, monospace; }
 .heat-cell { min-width: 19px; aspect-ratio: .72; border-radius: 1px; cursor: crosshair; transition: transform .1s, filter .1s; }
 .heat-cell:hover, .heat-cell:focus { transform: scale(1.18); filter: brightness(1.15); outline: 1px solid white; z-index: 2; }
 .heatmap-footer { display: flex; align-items: center; justify-content: space-between; gap: 30px; padding: 18px 28px 24px; }

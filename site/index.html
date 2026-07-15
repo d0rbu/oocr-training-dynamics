@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="Interactive preregistration and results explorer for OOCR training dynamics and activation patching." />
     <title>OOCR Atlas · training dynamics</title>
-    <link rel="stylesheet" href="styles.css?v=20260715c" />
-    <script src="app.js?v=20260715c" defer></script>
+    <link rel="stylesheet" href="styles.css?v=20260715d" />
+    <script src="app.js?v=20260715d" defer></script>
   </head>
   <body>
     <div class="grain" aria-hidden="true"></div>
@@ -136,8 +136,9 @@
             <h2>A layer-by-layer movie of the answer</h2>
           </div>
           <p>
-            Each column patches one residual-stream layer at the final prompt token. Each row is
-            one answer choice. Move through donor time to watch learned causal influence appear.
+            Each column patches one residual-stream layer; each row patches a different prompt
+            token, reverse-indexed from the `lambda n:` boundary. Move through donor time to watch
+            learned causal influence appear across both depth and position.
           </p>
         </div>
 
@@ -162,7 +163,7 @@
               <small>Show in each cell</small>
               <div id="patch-metric-controls" class="segmented dark">
                 <button class="active" data-patch-metric="delta">Δ recipient</button>
-                <button data-patch-metric="probability">Probability</button>
+                <button id="patch-probability-label" data-patch-metric="probability">Correct probability</button>
                 <button data-patch-metric="normalized">Normalized effect</button>
               </div>
             </div>
@@ -189,12 +190,12 @@
           </div>
 
           <div class="patch-context">
-            <div><small>clean question</small><code id="clean-question">What is the definition of riodwl?</code></div>
+            <div><small id="recipient-question-label">clean recipient question</small><code id="clean-question">What is the definition of riodwl?</code></div>
             <div><small id="source-question-label">donor checkpoint</small><code id="source-question">same clean question · frozen base</code></div>
           </div>
 
           <div class="heatmap-frame">
-            <div class="heatmap-axis">residual layer depth →</div>
+            <div class="heatmap-axis">residual layer depth → · reverse prompt-token position ↓</div>
             <div id="patch-heatmap" class="patch-heatmap" role="img" aria-label="Answer-choice activation patching heatmap"></div>
           </div>
           <div class="heatmap-footer">
