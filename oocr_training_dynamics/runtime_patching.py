@@ -13,12 +13,12 @@ import torch as t
 from oocr_training_dynamics.artifacts import adapter_dir, run_dir, write_json
 from oocr_training_dynamics.contracts import PatchingMode, RunKey, checkpoint_label
 from oocr_training_dynamics.data import (
+    DERANGEMENT,
     FUNCTION_BY_ID,
     ChatMessage,
     ReflectionRecord,
     build_reflection_records,
 )
-from oocr_training_dynamics.metrics import normalized_patch_effect
 from oocr_training_dynamics.models import ModelSpec, get_model_spec
 from oocr_training_dynamics.patching import (
     PatchingPlan,
@@ -47,6 +47,8 @@ class PromptPatchView:
     attention_mask: t.Tensor
     anchor_index: int
     stop_index: int
+    rendered_prompt: str
+    token_ids: tuple[int, ...]
     token_labels: tuple[str, ...]
 
 
@@ -168,6 +170,8 @@ def _prompt_patch_view(
         attention_mask=attention_mask,
         anchor_index=anchor_index,
         stop_index=stop_index,
+        rendered_prompt=rendered,
+        token_ids=tuple(token_ids),
         token_labels=tuple(_token_label(tokenizer, token_id) for token_id in token_ids),
     )
 
@@ -326,6 +330,71 @@ def _selected_records(seed: int) -> tuple[ReflectionRecord, ...]:
     return tuple(record for record in records if record.kind == "code")
 
 
+def build_token_axis_metadata(
+    processor: Any,
+    record: ReflectionRecord,
+    mode: PatchingMode,
+) -> dict[str, object]:
+    """Build the exact CPU-tokenized source/recipient axis shown by the site."""
+
+    if mode is PatchingMode.ACROSS_SAMPLE:
+        pair = build_across_sample_pair(record)
+        source_function_id = pair.dirty_function_id
+        source_messages = pair.dirty_messages
+        source_alias = FUNCTION_BY_ID[pair.dirty_function_id].alias
+        source_view = _prompt_patch_view(
+            processor,
+            record,
+            source_messages,
+            source_alias,
+            stop_at_sequence_start=False,
+            device="cpu",
+        )
+        recipient_view = _prompt_patch_view(
+            processor,
+            record,
+            record.messages,
+            FUNCTION_BY_ID[record.function_id].alias,
+            stop_at_sequence_start=False,
+            device="cpu",
+        )
+    else:
+        source_function_id = record.function_id
+        source_view = _prompt_patch_view(
+            processor,
+            record,
+            record.messages,
+            FUNCTION_BY_ID[record.function_id].alias,
+            stop_at_sequence_start=True,
+            device="cpu",
+        )
+        recipient_view = source_view
+    positions = reverse_token_position_pairs(
+        source_view.anchor_index,
+        recipient_view.anchor_index,
+        source_view.stop_index,
+        recipient_view.stop_index,
+    )
+    return {
+        "source_function_id": source_function_id,
+        "recipient_function_id": record.function_id,
+        "source_rendered_prompt": source_view.rendered_prompt,
+        "recipient_rendered_prompt": recipient_view.rendered_prompt,
+        "positions": tuple(
+            {
+                "reverse_index": position.reverse_index,
+                "source_index": position.source_index,
+                "recipient_index": position.recipient_index,
+                "source_token_id": source_view.token_ids[position.source_index],
+                "recipient_token_id": recipient_view.token_ids[position.recipient_index],
+                "source_token": source_view.token_labels[position.source_index],
+                "recipient_token": recipient_view.token_labels[position.recipient_index],
+            }
+            for position in positions
+        ),
+    }
+
+
 def _patch_output_path(root: Path, run: RunKey, plan: PatchingPlan, donor_step: int) -> Path:
     return (
         run_dir(root, run)
@@ -347,38 +416,37 @@ def _serialize_grid(
     mode: PatchingMode,
 ) -> dict[str, object]:
     correct_choice = record.choice_function_ids.index(record.function_id)
-    source_target = float(source[correct_choice].item())
     recipient_target = float(recipient[correct_choice].item())
     cells: list[dict[str, object]] = []
     for position, row in zip(positions, grid, strict=True):
         for layer, probability in enumerate(row):
-            effect = normalized_patch_effect(
-                probability,
-                recipient_target,
-                source_target,
-            )
             cells.append(
                 {
                     "layer": layer,
                     "token_reverse_index": position.reverse_index,
                     "source_token_index": position.source_index,
                     "recipient_token_index": position.recipient_index,
+                    "source_token_id": source_view.token_ids[position.source_index],
+                    "recipient_token_id": recipient_view.token_ids[position.recipient_index],
                     "source_token": source_view.token_labels[position.source_index],
                     "recipient_token": recipient_view.token_labels[position.recipient_index],
                     "probability": probability,
                     "delta_from_recipient": probability - recipient_target,
-                    "normalized_effect": None if math.isnan(effect) else effect,
                 }
             )
     return {
         "function_id": record.function_id,
+        "source_function_id": (
+            DERANGEMENT[record.function_id]
+            if mode is PatchingMode.ACROSS_SAMPLE
+            else record.function_id
+        ),
+        "recipient_function_id": record.function_id,
         "choice_function_ids": record.choice_function_ids,
         "correct_choice_index": correct_choice,
         "source_probabilities": source.tolist(),
         "recipient_probabilities": recipient.tolist(),
-        "site_probability": (
-            "one_minus_correct" if mode is PatchingMode.ACROSS_SAMPLE else "correct"
-        ),
+        "site_probability": "correct",
         "token_axis": {
             "order": "reverse_indexed",
             "anchor": "last token covering ':' in the selected correct lambda prefix",
@@ -388,6 +456,8 @@ def _serialize_grid(
                 else "sequence start"
             ),
             "positions": len(positions),
+            "source_rendered_prompt": source_view.rendered_prompt,
+            "recipient_rendered_prompt": recipient_view.rendered_prompt,
         },
         "cells": cells,
     }
@@ -610,4 +680,4 @@ def run_patching(
         gc.collect()
 
 
-__all__ = ["run_patching"]
+__all__ = ["build_token_axis_metadata", "run_patching"]

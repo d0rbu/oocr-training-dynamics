@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from oocr_training_dynamics.contracts import CHECKPOINT_STEPS, TrainingCondition
+from oocr_training_dynamics.data import FUNCTIONS
 from oocr_training_dynamics.models import ModelKey
 
 
@@ -60,3 +61,61 @@ def test_site_has_every_preregistered_preview_curve() -> None:
             assert all(0.0 <= row["correct_probability"] <= 1.0 for row in rows)
             assert all(0.0 <= row["planted_probability"] <= 1.0 for row in rows)
     assert measured_runs == payload["real_runs"]
+
+
+def test_site_token_axes_are_exact_model_tokenizer_coordinates() -> None:
+    root = Path(__file__).resolve().parents[1]
+    payload = json.loads((root / "site" / "data" / "experiment.json").read_text())
+
+    assert set(payload["token_axes"]) == {
+        ModelKey.OLMO3_7B.value,
+        ModelKey.QWEN3_8B.value,
+    }
+    function_ids = {function.function_id for function in FUNCTIONS}
+    placeholder_labels = {
+        "<sequence start>",
+        "system prompt",
+        "user turn",
+        "definition",
+        "option",
+    }
+    for model_axes in payload["token_axes"].values():
+        assert set(model_axes) == {"across_sample", "across_time"}
+        for mode, functions in model_axes.items():
+            assert set(functions) == function_ids
+            for axis in functions.values():
+                assert "from functions import" in axis["source_rendered_prompt"]
+                assert "from functions import" in axis["recipient_rendered_prompt"]
+                if mode == "across_time":
+                    assert axis["source_rendered_prompt"] == axis["recipient_rendered_prompt"]
+                    assert axis["source_function_id"] == axis["recipient_function_id"]
+                else:
+                    assert axis["source_rendered_prompt"] != axis["recipient_rendered_prompt"]
+                    assert axis["source_function_id"] != axis["recipient_function_id"]
+                positions = axis["positions"]
+                assert [row["reverse_index"] for row in positions] == list(range(len(positions)))
+                assert positions[0]["source_token"] in {":", "n:"}
+                assert positions[0]["recipient_token"] in {":", "n:"}
+                if mode == "across_time":
+                    assert positions[-1]["source_index"] == 0
+                    assert positions[-1]["recipient_index"] == 0
+                for row in positions:
+                    assert isinstance(row["source_index"], int)
+                    assert isinstance(row["recipient_index"], int)
+                    assert isinstance(row["source_token_id"], int)
+                    assert isinstance(row["recipient_token_id"], int)
+                    assert row["source_token"] not in placeholder_labels
+                    assert row["recipient_token"] not in placeholder_labels
+
+
+def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
+    root = Path(__file__).resolve().parents[1]
+    html = (root / "site" / "index.html").read_text()
+    javascript = (root / "site" / "app.js").read_text()
+
+    assert 'data-patch-metric="probability"' in html
+    assert 'data-patch-metric="delta"' in html
+    assert "Normalized effect" not in html
+    assert 'data-patch-metric="normalized"' not in html
+    assert "incorrect-answer probability" not in javascript
+    assert "one_minus_correct" not in javascript

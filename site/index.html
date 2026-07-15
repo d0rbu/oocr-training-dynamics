@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="Interactive preregistration and results explorer for OOCR training dynamics and activation patching." />
     <title>OOCR Atlas · training dynamics</title>
-    <link rel="stylesheet" href="styles.css?v=20260715d" />
-    <script src="app.js?v=20260715d" defer></script>
+    <link rel="stylesheet" href="styles.css?v=20260715e" />
+    <script src="app.js?v=20260715e" defer></script>
   </head>
   <body>
     <div class="grain" aria-hidden="true"></div>
@@ -163,8 +163,7 @@
               <small>Show in each cell</small>
               <div id="patch-metric-controls" class="segmented dark">
                 <button class="active" data-patch-metric="delta">Δ recipient</button>
-                <button id="patch-probability-label" data-patch-metric="probability">Correct probability</button>
-                <button data-patch-metric="normalized">Normalized effect</button>
+                <button data-patch-metric="probability">Correct probability</button>
               </div>
             </div>
             <div>
@@ -194,12 +193,25 @@
             <div><small id="source-question-label">donor checkpoint</small><code id="source-question">same clean question · frozen base</code></div>
           </div>
 
+          <details class="prompt-audit">
+            <summary>Inspect the exact rendered chat input and tokenizer coordinates</summary>
+            <p>
+              These are the generation prefixes actually passed to the model. Heatmap row zero is
+              the token covering the correct lambda’s colon; each lower row moves one tokenizer
+              position backward. Read the rows bottom-to-top to reconstruct normal prompt order.
+            </p>
+            <div>
+              <section><small>activation source prefix</small><pre id="source-rendered-prompt"></pre></section>
+              <section><small>recipient prefix</small><pre id="recipient-rendered-prompt"></pre></section>
+            </div>
+          </details>
+
           <div class="heatmap-frame">
-            <div class="heatmap-axis">residual layer depth → · reverse prompt-token position ↓</div>
+            <div class="heatmap-axis">residual layer depth → · exact tokenizer position, stepping backward ↓</div>
             <div id="patch-heatmap" class="patch-heatmap" role="img" aria-label="Answer-choice activation patching heatmap"></div>
           </div>
           <div class="heatmap-footer">
-            <div class="legend"><span>recipient-like</span><i></i><span>source-like</span></div>
+            <div class="legend"><span>lower P(correct)</span><i></i><span>higher P(correct)</span></div>
             <p id="patch-explanation">Replacing a late model’s residual state with an earlier checkpoint asks where learned OOCR information is causally necessary.</p>
           </div>
         </div>
@@ -250,7 +262,7 @@
           <article><b>H1</b><h3>Correct acquisition</h3><p>Correct-choice probability rises above its frozen floor in all three confirmed model families.</p></article>
           <article><b>H2</b><h3>Planted learning</h3><p>Negative controls raise the planted target more than the intended target—not merely “do nothing.”</p></article>
           <article><b>H3</b><h3>Temporal necessity</h3><p>Earlier residual states increasingly suppress the late checkpoint’s correct answer in a coherent depth band.</p></article>
-          <article><b>H4</b><h3>Sample restoration</h3><p>Clean-name states patched into dirty-name prompts restore probability specifically toward the clean rule.</p></article>
+          <article><b>H4</b><h3>Sample corruption</h3><p>Dirty-name states patched into clean-name prompts suppress probability specifically for the clean rule.</p></article>
         </div>
       </section>
     </main>

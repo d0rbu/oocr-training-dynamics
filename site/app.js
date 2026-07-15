@@ -59,6 +59,16 @@ function formatPercent(value) {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;",
+  })[character]);
+}
+
 function scaledStepFraction(step, scale) {
   const finalStep = state.data.checkpoints.at(-1);
   return scale === "logarithmic"
@@ -262,7 +272,6 @@ function syntheticPatch() {
   const layers = state.data.models[state.model].layer_count;
   const fnIndex = state.data.functions.findIndex((fn) => fn.id === state.functionId);
   const fn = state.data.functions[fnIndex];
-  const dirty = state.data.functions[(fnIndex + 1) % state.data.functions.length];
   const recipientCurve = curveAt(state.recipientIndex);
   const donorCurve = curveAt(state.patchMode === "across_time" ? state.donorIndex : state.recipientIndex);
   let recipient;
@@ -273,29 +282,29 @@ function syntheticPatch() {
   } else {
     const cleanCorrect = recipientCurve.correct_probability;
     const dirtyCorrect = Math.max(.08, .23 - cleanCorrect * .08);
-    recipient = 1 - cleanCorrect;
-    source = 1 - dirtyCorrect;
+    recipient = cleanCorrect;
+    source = dirtyCorrect;
   }
-  const shared = ["n:", "lambda", "option", "definition", "for"];
-  const tokenPositions = shared.map((token, reverseIndex) => ({
-    reverseIndex,
-    sourceToken: token,
-    recipientToken: token,
-  }));
-  tokenPositions.push({
-    reverseIndex: tokenPositions.length,
-    sourceToken: state.patchMode === "across_sample" ? dirty.alias : fn.alias,
-    recipientToken: fn.alias,
-  });
-  if (state.patchMode === "across_time") {
-    ["import", "user turn", "system prompt", "<sequence start>"].forEach((token) => {
-      tokenPositions.push({
-        reverseIndex: tokenPositions.length,
-        sourceToken: token,
-        recipientToken: token,
-      });
-    });
-  }
+  const exactAxis = state.data.token_axes?.[state.model]?.[state.patchMode]?.[state.functionId];
+  const tokenPositions = exactAxis?.positions
+    ? exactAxis.positions.map((position) => ({
+      reverseIndex: position.reverse_index,
+      sourceIndex: position.source_index,
+      recipientIndex: position.recipient_index,
+      sourceTokenId: position.source_token_id,
+      recipientTokenId: position.recipient_token_id,
+      sourceToken: position.source_token,
+      recipientToken: position.recipient_token,
+    }))
+    : [{
+      reverseIndex: 0,
+      sourceIndex: null,
+      recipientIndex: null,
+      sourceTokenId: null,
+      recipientTokenId: null,
+      sourceToken: "token metadata unavailable",
+      recipientToken: "token metadata unavailable",
+    }];
   const finalStep = state.data.checkpoints.at(-1);
   const recipientStep = state.data.checkpoints[state.recipientIndex];
   const donorStep = state.data.checkpoints[state.donorIndex];
@@ -318,9 +327,11 @@ function syntheticPatch() {
     source,
     matrix,
     target: fn.definition,
-    outcomeLabel: state.patchMode === "across_sample"
-      ? "incorrect-answer probability"
-      : "correct-implementation probability",
+    outcomeLabel: "correct-implementation probability",
+    sourceFunctionId: exactAxis?.source_function_id ?? state.data.functions[(fnIndex + 1) % state.data.functions.length].id,
+    recipientFunctionId: exactAxis?.recipient_function_id ?? fn.id,
+    sourceRenderedPrompt: exactAxis?.source_rendered_prompt ?? "Exact tokenizer metadata is unavailable for this provisional model.",
+    recipientRenderedPrompt: exactAxis?.recipient_rendered_prompt ?? "Exact tokenizer metadata is unavailable for this provisional model.",
     measured: false,
   };
 }
@@ -341,6 +352,10 @@ function measuredPatch() {
     matrix[cell.token_reverse_index][cell.layer] = cell.probability;
     tokenPositions[cell.token_reverse_index] = {
       reverseIndex: cell.token_reverse_index,
+      sourceIndex: cell.source_token_index,
+      recipientIndex: cell.recipient_token_index,
+      sourceTokenId: cell.source_token_id,
+      recipientTokenId: cell.recipient_token_id,
       sourceToken: cell.source_token,
       recipientToken: cell.recipient_token,
     };
@@ -349,17 +364,18 @@ function measuredPatch() {
     throw new Error("Patch artifact does not contain a complete layer-by-token grid");
   }
   const correctIndex = record.correct_choice_index;
-  const transform = (probability) => mode === "across_sample" ? 1 - probability : probability;
   return {
     layers: layerCount,
     tokenPositions,
-    recipient: transform(record.recipient_probabilities[correctIndex]),
-    source: transform(record.source_probabilities[correctIndex]),
-    matrix: matrix.map((row) => row.map(transform)),
+    recipient: record.recipient_probabilities[correctIndex],
+    source: record.source_probabilities[correctIndex],
+    matrix,
     target: record.choice_function_ids[correctIndex],
-    outcomeLabel: mode === "across_sample"
-      ? "incorrect-answer probability"
-      : "correct-implementation probability",
+    outcomeLabel: "correct-implementation probability",
+    sourceFunctionId: record.source_function_id ?? record.function_id,
+    recipientFunctionId: record.recipient_function_id ?? record.function_id,
+    sourceRenderedPrompt: record.token_axis?.source_rendered_prompt ?? "This older artifact does not store the rendered source prompt.",
+    recipientRenderedPrompt: record.token_axis?.recipient_rendered_prompt ?? "This older artifact does not store the rendered recipient prompt.",
     measured: true,
   };
 }
@@ -395,20 +411,42 @@ function bindHeatTooltip(cell, html) {
   ["mouseleave", "blur"].forEach((name) => cell.addEventListener(name, () => { tooltip.hidden = true; }));
 }
 
+function tokenCoordinate(prefix, index, tokenId, token) {
+  const position = Number.isInteger(index) ? index : "?";
+  const id = Number.isInteger(tokenId) ? tokenId : "?";
+  return `${prefix}[position ${position} · id ${id}] ${token}`;
+}
+
 function renderPatching() {
   const patch = patchData();
   const heatmap = document.getElementById("patch-heatmap");
   heatmap.replaceChildren();
-  heatmap.style.gridTemplateColumns = `200px repeat(${patch.layers}, minmax(19px, 1fr))`;
+  heatmap.style.gridTemplateColumns = `300px repeat(${patch.layers}, minmax(19px, 1fr))`;
   heatmap.append(el("div"));
   for (let layer = 0; layer < patch.layers; layer += 1) {
     heatmap.append(el("div", { class: "heatmap-layer" }, layer % 4 === 0 ? String(layer) : "·"));
   }
   patch.tokenPositions.forEach((position, tokenIndex) => {
-    const sameToken = position.sourceToken === position.recipientToken;
-    const tokenText = sameToken
-      ? position.sourceToken
-      : `clean ${position.sourceToken} · dirty ${position.recipientToken}`;
+    const sameCoordinate = position.sourceToken === position.recipientToken
+      && position.sourceIndex === position.recipientIndex
+      && position.sourceTokenId === position.recipientTokenId;
+    const sourcePrefix = state.patchMode === "across_sample" ? "dirty/source " : "source ";
+    const recipientPrefix = state.patchMode === "across_sample" ? "clean/recipient " : "recipient ";
+    const sourceCoordinate = tokenCoordinate(
+      sourcePrefix,
+      position.sourceIndex,
+      position.sourceTokenId,
+      position.sourceToken,
+    );
+    const recipientCoordinate = tokenCoordinate(
+      recipientPrefix,
+      position.recipientIndex,
+      position.recipientTokenId,
+      position.recipientToken,
+    );
+    const tokenText = sameCoordinate
+      ? tokenCoordinate("", position.sourceIndex, position.sourceTokenId, position.sourceToken)
+      : `${sourceCoordinate} → ${recipientCoordinate}`;
     const label = el("div", { class: `heatmap-token${position.reverseIndex === 0 ? " anchor" : ""}` });
     label.append(el("b", {}, `−${position.reverseIndex}`));
     label.append(el("span", { title: tokenText }, tokenText));
@@ -416,13 +454,11 @@ function renderPatching() {
     for (let layer = 0; layer < patch.layers; layer += 1) {
       const probability = patch.matrix[tokenIndex][layer];
       const delta = probability - patch.recipient;
-      const denominator = patch.source - patch.recipient;
-      const normalized = Math.abs(denominator) < 1e-8 ? 0 : delta / denominator;
-      const value = state.patchMetric === "probability" ? probability : state.patchMetric === "normalized" ? normalized : delta / .25;
+      const value = state.patchMetric === "probability" ? probability : delta / .25;
       const cell = el("div", { class: "heat-cell", tabindex: "0" });
       cell.style.background = colorFor(value, state.patchMetric);
-      const display = state.patchMetric === "probability" ? formatPercent(probability) : state.patchMetric === "normalized" ? normalized.toFixed(2) : `${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(1)} pp`;
-      bindHeatTooltip(cell, `<b>Layer ${layer} · reverse token −${position.reverseIndex}</b><br>source: ${position.sourceToken}<br>recipient: ${position.recipientToken}<br><br>${patch.outcomeLabel}: ${formatPercent(probability)}<br>change from recipient: ${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(2)} points<br>normalized source effect: ${normalized.toFixed(3)}`);
+      const display = state.patchMetric === "probability" ? formatPercent(probability) : `${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(1)} pp`;
+      bindHeatTooltip(cell, `<b>Layer ${layer} · reverse token −${position.reverseIndex}</b><br>${escapeHtml(sourceCoordinate)}<br>${escapeHtml(recipientCoordinate)}<br><br>${patch.outcomeLabel}: ${formatPercent(probability)}<br>change from recipient: ${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(2)} points`);
       cell.setAttribute("aria-label", `layer ${layer}, reverse token ${position.reverseIndex}, ${display}`);
       heatmap.append(cell);
     }
@@ -434,9 +470,6 @@ function renderPatching() {
   const patchStatus = document.getElementById("patch-status");
   patchStatus.textContent = patch.measured ? "measured intervention" : "synthetic preview";
   patchStatus.classList.toggle("measured", patch.measured);
-  document.getElementById("patch-probability-label").textContent = state.patchMode === "across_sample"
-    ? "Incorrect probability"
-    : "Correct probability";
   document.getElementById("recipient-label").textContent = recipient === 0 ? "frozen base" : `step ${recipient}`;
   document.getElementById("donor-label").textContent = donor === 0 ? "frozen base" : `step ${donor}`;
   document.getElementById("donor-control").style.opacity = state.patchMode === "across_sample" ? ".38" : "1";
@@ -454,11 +487,13 @@ function renderPatching() {
     document.getElementById("source-question").textContent = `same clean question · ${donor === 0 ? "frozen base" : `step ${donor}`}`;
     document.getElementById("patch-explanation").textContent = "Replacing a later checkpoint’s residual state with an earlier one tests where newly acquired OOCR information is causally necessary. Raw activations are never patched across unrelated model families.";
   } else {
-    const dirty = state.data.functions[(state.data.functions.indexOf(fn) + 1) % state.data.functions.length];
+    const dirty = state.data.functions.find((item) => item.id === patch.sourceFunctionId);
     document.getElementById("source-question-label").textContent = "dirty activation source";
     document.getElementById("source-question").textContent = `What is the definition of ${dirty.alias}?`;
-    document.getElementById("patch-explanation").textContent = "Patching dirty-name states into the clean prompt tests where the alternate identity can suppress the correct implementation. Cells show incorrect-answer mass, 1 − P(correct), so a successful corruption moves upward.";
+    document.getElementById("patch-explanation").textContent = "Patching dirty-name states into the clean prompt tests where the alternate identity suppresses the correct implementation. Cells show P(correct) directly, so a successful corruption moves downward.";
   }
+  document.getElementById("source-rendered-prompt").textContent = patch.sourceRenderedPrompt;
+  document.getElementById("recipient-rendered-prompt").textContent = patch.recipientRenderedPrompt;
 }
 
 function renderAll() {

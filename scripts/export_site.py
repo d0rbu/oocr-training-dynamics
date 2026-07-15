@@ -11,11 +11,15 @@ from oocr_training_dynamics.artifacts import read_json, run_dir, write_json
 from oocr_training_dynamics.contracts import (
     CHECKPOINT_STEPS,
     EFFECTIVE_BATCH_SIZE,
+    PRIMARY_SEED,
+    PatchingMode,
     RunKey,
     TrainingCondition,
 )
-from oocr_training_dynamics.data import FUNCTIONS
+from oocr_training_dynamics.data import FUNCTIONS, build_reflection_records
 from oocr_training_dynamics.models import MODEL_SPECS, ModelKey
+from oocr_training_dynamics.runtime_models import load_processor
+from oocr_training_dynamics.runtime_patching import build_token_axis_metadata
 
 CurveRow = dict[str, float | int]
 PatchRecord = dict[str, object]
@@ -36,7 +40,7 @@ def _number(mapping: dict[str, object], key: str, *, context: str) -> float:
 
 def _synthetic_curve(model_index: int, condition: TrainingCondition) -> list[CurveRow]:
     rows: list[CurveRow] = []
-    midpoint = (4.2 + model_index * 0.35)
+    midpoint = 4.2 + model_index * 0.35
     for step in CHECKPOINT_STEPS:
         examples = step * EFFECTIVE_BATCH_SIZE
         time = math.log2(examples + 1)
@@ -145,9 +149,7 @@ def _real_curve(root: Path, run: RunKey) -> list[CurveRow] | None:
         rows.append(
             {
                 "step": int(_number(evaluation, "step", context="evaluation")),
-                "examples_seen": int(
-                    _number(evaluation, "examples_seen", context="evaluation")
-                ),
+                "examples_seen": int(_number(evaluation, "examples_seen", context="evaluation")),
                 "correct_probability": (code_probability + language_probability) / 2.0,
                 "code_probability": code_probability,
                 "language_probability": language_probability,
@@ -194,16 +196,33 @@ def _real_patches(root: Path) -> tuple[dict[str, object], int]:
                 raise TypeError(f"{path} patch record lacks function_id")
             by_function[function_id] = record
         model_bucket = cast(dict[str, object], patches.setdefault(model, {}))
-        condition_bucket = cast(
-            dict[str, object], model_bucket.setdefault(condition, {})
-        )
+        condition_bucket = cast(dict[str, object], model_bucket.setdefault(condition, {}))
         mode_bucket = cast(dict[str, object], condition_bucket.setdefault(mode, {}))
-        recipient_bucket = cast(
-            dict[str, object], mode_bucket.setdefault(str(recipient_step), {})
-        )
+        recipient_bucket = cast(dict[str, object], mode_bucket.setdefault(str(recipient_step), {}))
         recipient_bucket[str(donor_step)] = by_function
         file_count += 1
     return patches, file_count
+
+
+def _token_axes() -> dict[str, object]:
+    records = tuple(
+        record
+        for record in build_reflection_records(PRIMARY_SEED + 1, variants_per_kind=1)
+        if record.kind == "code"
+    )
+    axes: dict[str, object] = {}
+    for model, spec in MODEL_SPECS.items():
+        if spec.provisional:
+            continue
+        processor = load_processor(spec)
+        model_axes: dict[str, object] = {}
+        for mode in PatchingMode:
+            model_axes[mode.value] = {
+                record.function_id: build_token_axis_metadata(processor, record, mode)
+                for record in records
+            }
+        axes[model.value] = model_axes
+    return axes
 
 
 def main() -> None:
@@ -271,6 +290,7 @@ def main() -> None:
             ],
             "curve_sources": curve_sources,
             "curves": curves,
+            "token_axes": _token_axes(),
             "patches": patches,
         },
     )

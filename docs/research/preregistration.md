@@ -134,9 +134,11 @@ and H4 direction above; the original text is retained to make the change auditab
 - Temporal direction remains earlier source into later clean recipient; the primary outcome is
   correct-option probability.
 - Across-name direction changes to dirty-name source into clean recipient. Its primary displayed
-  outcome is incorrect-answer mass, `1 - P(correct)`, so successful corruption is positive.
+  outcome is `P(correct)`, so successful corruption is a decrease.
 - Source and recipient token spans must reverse-align exactly. A mismatch is an error, not an
   invitation to silently truncate or interpolate.
+- The normalized source-effect ratio is removed before the first patching run. Artifacts and the
+  site retain only absolute correct-choice probability and raw recipient delta.
 
 The effect-size and contiguous-layer criteria remain exploratory until a token-position-aware
 cluster summary is frozen; the former three-adjacent-layer rule alone does not account for the new
@@ -156,12 +158,11 @@ For choice `j`, recipient probability `r_j`, source probability `s_j`, and patch
 ```text
 raw probability:     p_j
 recipient delta:     p_j - r_j
-normalized effect:  (p_j - r_j) / (s_j - r_j)
 ```
 
-Normalized effect is omitted when `|s_j - r_j| < 1e-8`; it is not clipped for analysis. The site
-may clip colors for readability but must show the numeric value on hover. Primary inference uses
-the raw probability delta because normalized ratios can explode near a small denominator.
+The originally planned normalized ratio `(p_j - r_j) / (s_j - r_j)` was removed in the
+pre-patching amendment because it can explode when source and recipient probabilities are close.
+The site may clip colors for readability but must show the raw numeric value on hover.
 
 ## Planned multiplicity and exploration
 

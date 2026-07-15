@@ -134,11 +134,18 @@ input[type="range"] { width: 100%; accent-color: var(--green); cursor: pointer; 
 .patch-context > div { padding: 15px 28px; background: #182d26; }
 .patch-context small { display: block; color: #8fa097; }
 .patch-context code { color: #e8eee9; font-size: 12px; }
-.heatmap-frame { padding: 24px 28px 8px; overflow-x: auto; }
-.heatmap-axis { margin-left: 205px; margin-bottom: 8px; color: #8fa097; font: 10px ui-monospace, monospace; text-transform: uppercase; }
+.prompt-audit { margin: 18px 28px 0; border: 1px solid rgba(255,255,255,.13); background: rgba(0,0,0,.1); }
+.prompt-audit summary { padding: 13px 15px; color: var(--acid); cursor: pointer; font: 700 10px ui-monospace, monospace; text-transform: uppercase; letter-spacing: .08em; }
+.prompt-audit > p { margin: 0; padding: 0 15px 14px; color: #9aaba2; font-size: 11px; line-height: 1.5; }
+.prompt-audit > div { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; border-top: 1px solid rgba(255,255,255,.13); background: rgba(255,255,255,.13); }
+.prompt-audit section { min-width: 0; padding: 14px; background: #142720; }
+.prompt-audit small { color: #8fa097; font: 700 9px ui-monospace, monospace; text-transform: uppercase; letter-spacing: .08em; }
+.prompt-audit pre { max-height: 320px; margin: 9px 0 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: #dce6df; font: 10px/1.55 ui-monospace, monospace; }
+.heatmap-frame { max-height: 72vh; padding: 24px 28px 8px; overflow: auto; }
+.heatmap-axis { margin-left: 305px; margin-bottom: 8px; color: #8fa097; font: 10px ui-monospace, monospace; text-transform: uppercase; }
 .patch-heatmap { display: grid; gap: 3px; min-width: 940px; align-items: stretch; }
 .heatmap-layer { display: grid; place-items: center; min-width: 19px; color: #809188; font: 8px ui-monospace, monospace; }
-.heatmap-token { display: flex; align-items: center; gap: 9px; min-width: 200px; padding-right: 12px; overflow: hidden; }
+.heatmap-token { display: flex; align-items: center; gap: 9px; min-width: 300px; padding-right: 12px; overflow: hidden; }
 .heatmap-token b { display: grid; place-items: center; flex: 0 0 32px; height: 24px; border-radius: 99px; background: rgba(255,255,255,.1); font: 700 9px ui-monospace, monospace; }
 .heatmap-token.anchor b { background: var(--acid); color: var(--night); }
 .heatmap-token span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c8d1cc; font: 10px ui-monospace, monospace; }
@@ -186,6 +193,7 @@ footer p { margin: 7px 0 0; color: #99aaa1; font-size: 12px; }
   .explorer-shell { grid-template-columns: 1fr; }
   .control-rail { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; border-right: 0; border-bottom: 1px solid var(--line); }
   .patch-toolbar { grid-template-columns: 1fr; }
+  .prompt-audit > div { grid-template-columns: 1fr; }
   .condition-cards, .prediction-grid { grid-template-columns: 1fr 1fr; }
   .pipeline-line { flex-wrap: wrap; }
 }
