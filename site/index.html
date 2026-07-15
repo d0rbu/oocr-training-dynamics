@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="Interactive preregistration and results explorer for OOCR training dynamics and activation patching." />
     <title>OOCR Atlas · training dynamics</title>
-    <link rel="stylesheet" href="styles.css?v=20260715b" />
-    <script src="app.js?v=20260715b" defer></script>
+    <link rel="stylesheet" href="styles.css?v=20260715c" />
+    <script src="app.js?v=20260715c" defer></script>
   </head>
   <body>
     <div class="grain" aria-hidden="true"></div>
@@ -65,8 +65,8 @@
             <h2>The learning curve, not just the endpoint</h2>
           </div>
           <p>
-            Checkpoints are fixed before training. The x-axis is linear in I/O examples,
-            while the slider exposes the exact optimizer step and metric at each saved adapter.
+            Checkpoints are fixed before training. Switch between logarithmic and linear time;
+            the slider exposes the exact optimizer step and metric at each saved adapter.
           </p>
         </div>
 
@@ -79,6 +79,13 @@
             <fieldset>
               <legend>Training data</legend>
               <div id="condition-controls" class="segmented vertical"></div>
+            </fieldset>
+            <fieldset>
+              <legend>Time scale</legend>
+              <div id="curve-time-scale-controls" class="segmented vertical">
+                <button data-curve-time-scale="linear">Linear</button>
+                <button class="active" data-curve-time-scale="logarithmic">Logarithmic</button>
+              </div>
             </fieldset>
             <fieldset>
               <legend>Outcome</legend>
@@ -110,7 +117,7 @@
             </div>
             <div class="time-control">
               <div class="time-labels"><span>Frozen base</span><b id="checkpoint-label">step 0</b><span>96k examples</span></div>
-              <input id="checkpoint-slider" type="range" min="0" max="1500" value="0" step="1" aria-label="Training checkpoint on a linear optimizer-step scale" />
+              <input id="checkpoint-slider" type="range" min="0" max="10000" value="0" step="1" aria-label="Training checkpoint" />
               <div id="checkpoint-ticks" class="checkpoint-ticks"></div>
             </div>
             <div class="chart-note">
@@ -137,7 +144,7 @@
         <div class="patch-shell">
           <div class="patch-status-row">
             <span id="patch-status" class="patch-status">checking artifact…</span>
-            <p>Time sliders are linear in optimizer steps and snap to saved checkpoints. The badge applies to the current selection.</p>
+            <p>Time sliders switch between logarithmic and linear scales and snap to saved checkpoints. The badge applies to the current selection.</p>
           </div>
           <div class="patch-toolbar">
             <div>
@@ -159,18 +166,25 @@
                 <button data-patch-metric="normalized">Normalized effect</button>
               </div>
             </div>
+            <div>
+              <small>Time scale</small>
+              <div id="patch-time-scale-controls" class="segmented dark">
+                <button data-patch-time-scale="linear">Linear</button>
+                <button class="active" data-patch-time-scale="logarithmic">Logarithmic</button>
+              </div>
+            </div>
           </div>
 
           <div class="patch-time-grid">
             <label>
               <span><b>Recipient</b> · model being tested</span>
               <strong id="recipient-label">step 1500</strong>
-              <input id="recipient-slider" type="range" min="1" max="1500" value="1500" step="1" />
+              <input id="recipient-slider" type="range" min="0" max="10000" value="10000" step="1" />
             </label>
             <label id="donor-control">
               <span><b>Donor</b> · activation source</span>
               <strong id="donor-label">frozen base</strong>
-              <input id="donor-slider" type="range" min="0" max="1500" value="0" step="1" />
+              <input id="donor-slider" type="range" min="0" max="10000" value="0" step="1" />
             </label>
           </div>
 

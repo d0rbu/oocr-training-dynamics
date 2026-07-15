@@ -18,14 +18,17 @@ const SECONDARY_METRICS = {
   correct_probability: "planted_probability",
   correct_accuracy: "planted_accuracy",
 };
+const SLIDER_UNITS = 10000;
 const state = {
   data: null,
   model: "olmo3-7b",
   condition: "correct",
   curveMetric: "correct_probability",
+  curveTimeScale: "logarithmic",
   checkpointIndex: 0,
   patchMode: "across_time",
   patchMetric: "delta",
+  patchTimeScale: "logarithmic",
   recipientIndex: 17,
   donorIndex: 0,
   functionId: "identity",
@@ -54,6 +57,25 @@ function formatExamples(value) {
 
 function formatPercent(value) {
   return `${(value * 100).toFixed(1)}%`;
+}
+
+function scaledStepFraction(step, scale) {
+  const finalStep = state.data.checkpoints.at(-1);
+  return scale === "logarithmic"
+    ? Math.log1p(step) / Math.log1p(finalStep)
+    : step / finalStep;
+}
+
+function stepFromSlider(value, scale) {
+  const finalStep = state.data.checkpoints.at(-1);
+  const fraction = Math.max(0, Math.min(1, value / SLIDER_UNITS));
+  return scale === "logarithmic"
+    ? Math.expm1(fraction * Math.log1p(finalStep))
+    : fraction * finalStep;
+}
+
+function sliderValueForStep(step, scale) {
+  return Math.round(scaledStepFraction(step, scale) * SLIDER_UNITS);
 }
 
 function curveRows() {
@@ -129,6 +151,16 @@ function buildFunctionSelect() {
   });
 }
 
+function renderCheckpointTicks() {
+  const ticks = document.getElementById("checkpoint-ticks");
+  ticks.replaceChildren();
+  state.data.checkpoints.forEach((step) => {
+    const tick = el("i");
+    tick.style.left = `${scaledStepFraction(step, state.curveTimeScale) * 100}%`;
+    ticks.append(tick);
+  });
+}
+
 function setupButtons(selector, dataKey, stateKey, callback) {
   document.querySelectorAll(`${selector} button`).forEach((button) => {
     button.addEventListener("click", () => {
@@ -151,8 +183,7 @@ function renderCurve() {
   const margin = { left: 52, right: 22, top: 18, bottom: 38 };
   const innerWidth = width - margin.left - margin.right;
   const innerHeight = height - margin.top - margin.bottom;
-  const maxExamples = state.data.checkpoints.at(-1) * state.data.effective_batch_size;
-  const x = (value) => margin.left + (value / maxExamples) * innerWidth;
+  const x = (step) => margin.left + scaledStepFraction(step, state.curveTimeScale) * innerWidth;
   const y = (value) => margin.top + (1 - value) * innerHeight;
 
   const defs = svg("defs");
@@ -168,13 +199,16 @@ function renderCurve() {
     label.textContent = `${Math.round(value * 100)}%`;
     chart.append(label);
   });
-  [0, 16000, 32000, 48000, 64000, 80000, 96000].forEach((value) => {
-    const label = svg("text", { x: x(value), y: height - 10, class: "axis-label", "text-anchor": "middle" });
-    label.textContent = formatExamples(value);
+  const axisSteps = state.curveTimeScale === "logarithmic"
+    ? [0, 1, 4, 16, 64, 256, 1024, 1500]
+    : [0, 250, 500, 750, 1000, 1250, 1500];
+  axisSteps.forEach((step) => {
+    const label = svg("text", { x: x(step), y: height - 10, class: "axis-label", "text-anchor": "middle" });
+    label.textContent = formatExamples(step * state.data.effective_batch_size);
     chart.append(label);
   });
 
-  const points = rows.map((row) => [x(row.examples_seen), y(row[metric])]);
+  const points = rows.map((row) => [x(row.step), y(row[metric])]);
   const line = points.map(([px, py], index) => `${index === 0 ? "M" : "L"}${px.toFixed(2)},${py.toFixed(2)}`).join(" ");
   const area = `${line} L${points.at(-1)[0]},${y(0)} L${points[0][0]},${y(0)} Z`;
   chart.append(svg("path", { d: area, class: "curve-area" }));
@@ -182,12 +216,12 @@ function renderCurve() {
 
   const secondaryKey = SECONDARY_METRICS[metric];
   if (secondaryKey && rows[0][secondaryKey] !== undefined) {
-    const secondary = rows.map((row, index) => `${index === 0 ? "M" : "L"}${x(row.examples_seen).toFixed(2)},${y(row[secondaryKey]).toFixed(2)}`).join(" ");
+    const secondary = rows.map((row, index) => `${index === 0 ? "M" : "L"}${x(row.step).toFixed(2)},${y(row[secondaryKey]).toFixed(2)}`).join(" ");
     chart.append(svg("path", { d: secondary, class: "curve-secondary" }));
   }
 
   const selected = rows[state.checkpointIndex];
-  const cursorX = x(selected.examples_seen);
+  const cursorX = x(selected.step);
   chart.append(svg("line", { x1: cursorX, x2: cursorX, y1: margin.top, y2: y(0), class: "curve-cursor" }));
   chart.append(svg("circle", { cx: cursorX, cy: y(selected[metric]), r: 7, class: "curve-dot" }));
 
@@ -383,7 +417,10 @@ function renderPatching() {
   document.getElementById("donor-control").style.opacity = state.patchMode === "across_sample" ? ".38" : "1";
   const donorSlider = document.getElementById("donor-slider");
   donorSlider.disabled = state.patchMode === "across_sample";
-  donorSlider.value = state.patchMode === "across_sample" ? recipient : checkpoints[state.donorIndex];
+  donorSlider.value = sliderValueForStep(
+    state.patchMode === "across_sample" ? recipient : checkpoints[state.donorIndex],
+    state.patchTimeScale,
+  );
   const fn = state.data.functions.find((item) => item.id === state.functionId);
   document.getElementById("clean-question").textContent = `What is the definition of ${fn.alias}?`;
   if (state.patchMode === "across_time") {
@@ -403,9 +440,18 @@ function renderAll() {
   state.checkpointIndex = Math.min(state.checkpointIndex, maxIndex);
   state.recipientIndex = Math.min(state.recipientIndex, maxIndex);
   state.donorIndex = Math.min(state.donorIndex, Math.max(0, state.recipientIndex - 1));
-  document.getElementById("checkpoint-slider").value = state.data.checkpoints[state.checkpointIndex];
-  document.getElementById("recipient-slider").value = state.data.checkpoints[state.recipientIndex];
-  document.getElementById("donor-slider").value = state.data.checkpoints[state.donorIndex];
+  document.getElementById("checkpoint-slider").value = sliderValueForStep(
+    state.data.checkpoints[state.checkpointIndex],
+    state.curveTimeScale,
+  );
+  document.getElementById("recipient-slider").value = sliderValueForStep(
+    state.data.checkpoints[state.recipientIndex],
+    state.patchTimeScale,
+  );
+  document.getElementById("donor-slider").value = sliderValueForStep(
+    state.data.checkpoints[state.donorIndex],
+    state.patchTimeScale,
+  );
   renderCurve();
   renderPatching();
 }
@@ -418,31 +464,28 @@ async function initialize() {
   buildModelControls();
   buildConditionControls();
   buildFunctionSelect();
-  const ticks = document.getElementById("checkpoint-ticks");
-  const finalStep = state.data.checkpoints.at(-1);
-  state.data.checkpoints.forEach((step) => {
-    const tick = el("i");
-    tick.style.left = `${(step / finalStep) * 100}%`;
-    ticks.append(tick);
-  });
+  renderCheckpointTicks();
   const checkpoint = document.getElementById("checkpoint-slider");
-  checkpoint.max = finalStep;
+  checkpoint.max = SLIDER_UNITS;
   checkpoint.addEventListener("input", () => {
     state.checkpointIndex = nearestCheckpointIndex(
-      Number(checkpoint.value),
+      stepFromSlider(Number(checkpoint.value), state.curveTimeScale),
       0,
       curveRows().length - 1,
     );
     renderCurve();
   });
   checkpoint.addEventListener("change", () => {
-    checkpoint.value = state.data.checkpoints[state.checkpointIndex];
+    checkpoint.value = sliderValueForStep(
+      state.data.checkpoints[state.checkpointIndex],
+      state.curveTimeScale,
+    );
   });
   const recipient = document.getElementById("recipient-slider");
-  recipient.max = state.data.checkpoints.at(-1);
+  recipient.max = SLIDER_UNITS;
   recipient.addEventListener("input", () => {
     state.recipientIndex = nearestCheckpointIndex(
-      Number(recipient.value),
+      stepFromSlider(Number(recipient.value), state.patchTimeScale),
       1,
       state.data.checkpoints.length - 1,
     );
@@ -450,19 +493,27 @@ async function initialize() {
     renderAll();
   });
   const donor = document.getElementById("donor-slider");
-  donor.max = state.data.checkpoints.at(-1);
+  donor.max = SLIDER_UNITS;
   donor.addEventListener("input", () => {
     state.donorIndex = nearestCheckpointIndex(
-      Number(donor.value),
+      stepFromSlider(Number(donor.value), state.patchTimeScale),
       0,
       Math.max(0, state.recipientIndex - 1),
     );
-    donor.value = state.data.checkpoints[state.donorIndex];
+    donor.value = sliderValueForStep(
+      state.data.checkpoints[state.donorIndex],
+      state.patchTimeScale,
+    );
     renderPatching();
   });
   setupButtons("#curve-metric-controls", "curveMetric", "curveMetric", renderCurve);
+  setupButtons("#curve-time-scale-controls", "curveTimeScale", "curveTimeScale", () => {
+    renderCheckpointTicks();
+    renderAll();
+  });
   setupButtons("#patch-mode-controls", "patchMode", "patchMode", renderPatching);
   setupButtons("#patch-metric-controls", "patchMetric", "patchMetric", renderPatching);
+  setupButtons("#patch-time-scale-controls", "patchTimeScale", "patchTimeScale", renderAll);
   renderAll();
 }
 
