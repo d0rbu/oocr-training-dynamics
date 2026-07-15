@@ -24,6 +24,23 @@
     "wrong_alias",
     "wrong_impl"
   ],
+  "curve_sources": {
+    "gemma4-e4b": {
+      "correct": "synthetic_preview",
+      "wrong_alias": "synthetic_preview",
+      "wrong_impl": "synthetic_preview"
+    },
+    "olmo3-7b": {
+      "correct": "measured_complete",
+      "wrong_alias": "synthetic_preview",
+      "wrong_impl": "synthetic_preview"
+    },
+    "qwen3-8b": {
+      "correct": "synthetic_preview",
+      "wrong_alias": "synthetic_preview",
+      "wrong_impl": "synthetic_preview"
+    }
+  },
   "curves": {
     "gemma4-e4b": {
       "correct": [

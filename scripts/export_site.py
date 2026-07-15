@@ -209,14 +209,23 @@ def _real_patches(root: Path) -> tuple[dict[str, object], int]:
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
     curves: dict[str, dict[str, list[CurveRow]]] = {}
+    curve_sources: dict[str, dict[str, str]] = {}
     real_runs = 0
     for model_index, model in enumerate(ModelKey):
         curves[model.value] = {}
+        curve_sources[model.value] = {}
         for condition in TrainingCondition:
             run = RunKey(model.value, condition)
             real = _real_curve(root, run)
             if real is not None:
                 real_runs += 1
+                curve_sources[model.value][condition.value] = (
+                    "measured_complete"
+                    if len(real) == len(CHECKPOINT_STEPS)
+                    else "measured_partial"
+                )
+            else:
+                curve_sources[model.value][condition.value] = "synthetic_preview"
             curves[model.value][condition.value] = (
                 real if real is not None else _synthetic_curve(model_index, condition)
             )
@@ -260,6 +269,7 @@ def main() -> None:
                 }
                 for function in FUNCTIONS
             ],
+            "curve_sources": curve_sources,
             "curves": curves,
             "patches": patches,
         },

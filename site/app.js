@@ -60,18 +60,29 @@ function curveRows() {
   return state.data.curves[state.model][state.condition];
 }
 
+function curveSource() {
+  return state.data.curve_sources[state.model][state.condition];
+}
+
 function setupStatus() {
-  const synthetic = state.data.status !== "real_complete";
   const pill = document.getElementById("status-pill");
-  pill.textContent = synthetic ? "Preregistered preview · synthetic values" : "Complete measured results";
+  if (state.data.status === "synthetic_preview") {
+    pill.textContent = "Preregistered preview · no measured runs";
+  } else if (state.data.status === "mixed_preview") {
+    pill.textContent = `Measurements in progress · ${state.data.real_runs}/9 runs`;
+  } else {
+    pill.textContent = "Complete measured learning curves";
+  }
   const warning = document.getElementById("warning-banner");
   if (state.data.warning) {
     warning.hidden = false;
     warning.textContent = state.data.warning;
   }
-  document.getElementById("footer-status").textContent = synthetic
+  document.getElementById("footer-status").textContent = state.data.status === "synthetic_preview"
     ? "Visualization shell only · no GPU results yet"
-    : "All nine training runs measured";
+    : state.data.status === "mixed_preview"
+      ? `${state.data.real_runs}/9 learning curves measured · unfinished selections are labeled synthetic`
+      : "All nine training runs measured";
 }
 
 function buildModelControls() {
@@ -130,6 +141,8 @@ function setupButtons(selector, dataKey, stateKey, callback) {
 
 function renderCurve() {
   const rows = curveRows();
+  const source = curveSource();
+  const measured = source.startsWith("measured_");
   const metric = state.curveMetric;
   const chart = document.getElementById("curve-chart");
   chart.replaceChildren();
@@ -183,11 +196,14 @@ function renderCurve() {
   document.getElementById("metric-value").textContent = formatPercent(selected[metric]);
   document.getElementById("metric-readout-label").textContent = METRIC_LABELS[metric];
   document.getElementById("checkpoint-label").textContent = selected.step === 0 ? "frozen base" : `step ${selected.step}`;
-  document.getElementById("curve-kicker").textContent = `${state.data.models[state.model].label} · ${CONDITION_LABELS[state.condition]}`;
+  document.getElementById("curve-kicker").textContent = `${state.data.models[state.model].label} · ${CONDITION_LABELS[state.condition]} · ${source.replaceAll("_", " ")}`;
   document.getElementById("curve-title").textContent = METRIC_LABELS[metric].replace(/^./, (letter) => letter.toUpperCase());
-  document.getElementById("curve-note").textContent = state.condition === "correct"
+  const interpretation = state.condition === "correct"
     ? "The planted and intended targets coincide in the correct condition; the control distinction appears after selecting a planted-wrong corpus."
     : "A planted rise with a flat intended curve means the model learned the deliberately wrong world—not that training failed.";
+  document.getElementById("curve-note").textContent = measured
+    ? `${source === "measured_complete" ? "Complete" : "Partial"} measured trajectory. ${interpretation}`
+    : `Synthetic preregistration preview; do not interpret these values. ${interpretation}`;
 }
 
 function optionSet(functionId) {

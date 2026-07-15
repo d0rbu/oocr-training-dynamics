@@ -40,9 +40,23 @@ def test_site_has_every_preregistered_preview_curve() -> None:
     payload = json.loads((root / "site" / "data" / "experiment.json").read_text())
 
     assert set(payload["curves"]) == {model.value for model in ModelKey}
-    for model_curves in payload["curves"].values():
+    assert set(payload["curve_sources"]) == {model.value for model in ModelKey}
+    measured_runs = 0
+    for model, model_curves in payload["curves"].items():
         assert set(model_curves) == {condition.value for condition in TrainingCondition}
-        for rows in model_curves.values():
-            assert [row["step"] for row in rows] == list(CHECKPOINT_STEPS)
+        assert set(payload["curve_sources"][model]) == {
+            condition.value for condition in TrainingCondition
+        }
+        for condition, rows in model_curves.items():
+            source = payload["curve_sources"][model][condition]
+            assert source in {
+                "measured_complete",
+                "measured_partial",
+                "synthetic_preview",
+            }
+            measured_runs += int(source.startswith("measured_"))
+            if source != "measured_partial":
+                assert [row["step"] for row in rows] == list(CHECKPOINT_STEPS)
             assert all(0.0 <= row["correct_probability"] <= 1.0 for row in rows)
             assert all(0.0 <= row["planted_probability"] <= 1.0 for row in rows)
+    assert measured_runs == payload["real_runs"]
