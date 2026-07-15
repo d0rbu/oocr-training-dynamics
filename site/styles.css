@@ -81,6 +81,7 @@ legend, .patch-toolbar small, .patch-time-grid span, .patch-context small { marg
 .segmented button { border: 1px solid var(--line); border-radius: 2px; background: transparent; padding: 10px 12px; color: var(--muted); cursor: pointer; text-align: left; font-size: 12px; }
 .segmented button:hover { color: var(--ink); border-color: rgba(21,37,31,.4); }
 .segmented button.active { background: var(--ink); color: white; border-color: var(--ink); }
+#patch-mode-controls { display: grid; grid-template-columns: 1fr; }
 .visual-stage { min-width: 0; padding: 34px 40px 28px; }
 .chart-header { display: flex; justify-content: space-between; gap: 30px; align-items: start; }
 .chart-header span { color: var(--green); font: 700 11px/1 ui-monospace, monospace; text-transform: uppercase; }

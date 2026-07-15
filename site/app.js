@@ -1,6 +1,6 @@
 "use strict";
 
-const DATA_URL = "data/experiment.json?v=20260715j";
+const DATA_URL = "data/experiment.json?v=20260715k";
 const CONDITION_LABELS = {
   correct: "Correct I/O",
   wrong_alias: "Wrong alias",
@@ -269,6 +269,36 @@ function curveAt(index) {
   return curveRows()[Math.max(0, Math.min(index, curveRows().length - 1))];
 }
 
+function usesCheckpointDonor() {
+  return state.patchMode !== "across_sample";
+}
+
+function normalizePatchCheckpointIndices() {
+  const lastIndex = state.data.checkpoints.length - 1;
+  state.recipientIndex = Math.max(0, Math.min(state.recipientIndex, lastIndex));
+  state.donorIndex = Math.max(0, Math.min(state.donorIndex, lastIndex));
+  if (state.patchMode === "later_checkpoint") {
+    state.recipientIndex = Math.min(state.recipientIndex, lastIndex - 1);
+    state.donorIndex = Math.max(state.donorIndex, state.recipientIndex + 1);
+  } else if (state.patchMode === "across_time") {
+    state.recipientIndex = Math.max(1, state.recipientIndex);
+    state.donorIndex = Math.min(state.donorIndex, state.recipientIndex - 1);
+  } else {
+    state.recipientIndex = Math.max(1, state.recipientIndex);
+  }
+}
+
+function preparePatchMode() {
+  if (
+    (state.patchMode === "later_checkpoint" && state.donorIndex <= state.recipientIndex)
+    || (state.patchMode === "across_time" && state.donorIndex >= state.recipientIndex)
+  ) {
+    [state.recipientIndex, state.donorIndex] = [state.donorIndex, state.recipientIndex];
+  }
+  normalizePatchCheckpointIndices();
+  renderAll();
+}
+
 function nearestCheckpointIndex(value, minimumIndex, maximumIndex) {
   const checkpoints = state.data.checkpoints;
   let bestIndex = minimumIndex;
@@ -288,10 +318,10 @@ function syntheticPatch() {
   const fnIndex = state.data.functions.findIndex((fn) => fn.id === state.functionId);
   const fn = state.data.functions[fnIndex];
   const recipientCurve = curveAt(state.recipientIndex);
-  const donorCurve = curveAt(state.patchMode === "across_time" ? state.donorIndex : state.recipientIndex);
+  const donorCurve = curveAt(usesCheckpointDonor() ? state.donorIndex : state.recipientIndex);
   let recipient;
   let source;
-  if (state.patchMode === "across_time") {
+  if (usesCheckpointDonor()) {
     recipient = recipientCurve.correct_probability;
     source = donorCurve.correct_probability;
   } else {
@@ -323,8 +353,8 @@ function syntheticPatch() {
   const finalStep = state.data.checkpoints.at(-1);
   const recipientStep = state.data.checkpoints[state.recipientIndex];
   const donorStep = state.data.checkpoints[state.donorIndex];
-  const time = recipientStep / finalStep;
-  const donorGap = state.patchMode === "across_time" ? (recipientStep - donorStep) / finalStep : .85;
+  const time = Math.max(recipientStep, donorStep) / finalStep;
+  const donorGap = usesCheckpointDonor() ? Math.abs(recipientStep - donorStep) / finalStep : .85;
   const center = .42 + .30 * time;
   const width = .13 + .09 * (1 - time);
   const matrix = tokenPositions.map((position) => Array.from({ length: layers }, (_, layer) => {
@@ -343,7 +373,11 @@ function syntheticPatch() {
     matrix,
     target: fn.definition,
     outcomeLabel: "correct-implementation probability",
-    sourceFunctionId: exactAxis?.source_function_id ?? state.data.functions[(fnIndex + 1) % state.data.functions.length].id,
+    sourceFunctionId: exactAxis?.source_function_id ?? (
+      state.patchMode === "across_sample"
+        ? state.data.functions[(fnIndex + 1) % state.data.functions.length].id
+        : fn.id
+    ),
     recipientFunctionId: exactAxis?.recipient_function_id ?? fn.id,
     sourceRenderedPrompt: exactAxis?.source_rendered_prompt ?? "Exact tokenizer metadata is unavailable for this provisional model.",
     recipientRenderedPrompt: exactAxis?.recipient_rendered_prompt ?? "Exact tokenizer metadata is unavailable for this provisional model.",
@@ -354,7 +388,7 @@ function syntheticPatch() {
 function measuredPatch() {
   const mode = state.patchMode;
   const recipientStep = state.data.checkpoints[state.recipientIndex];
-  const donorIndex = mode === "across_time" ? state.donorIndex : state.recipientIndex;
+  const donorIndex = usesCheckpointDonor() ? state.donorIndex : state.recipientIndex;
   const donorStep = state.data.checkpoints[donorIndex];
   const record = state.data.patches?.[state.model]?.[state.condition]?.[state.patchInterface]?.[mode]
     ?.[String(recipientStep)]?.[String(donorStep)]?.[state.functionId];
@@ -498,7 +532,7 @@ function renderPatching() {
 
   const checkpoints = state.data.checkpoints;
   const recipient = checkpoints[state.recipientIndex];
-  const donor = checkpoints[state.patchMode === "across_time" ? state.donorIndex : state.recipientIndex];
+  const donor = checkpoints[usesCheckpointDonor() ? state.donorIndex : state.recipientIndex];
   const patchStatus = document.getElementById("patch-status");
   const interfaceLabel = PATCH_INTERFACE_LABELS[state.patchInterface];
   patchStatus.textContent = patch.measured
@@ -522,6 +556,10 @@ function renderPatching() {
     document.getElementById("source-question-label").textContent = "donor checkpoint";
     document.getElementById("source-question").textContent = `same clean question · ${donor === 0 ? "frozen base" : `step ${donor}`}`;
     document.getElementById("patch-explanation").textContent = "Replacing a later checkpoint’s selected activation with an earlier one tests where newly acquired OOCR information is causally necessary. Raw activations are never patched across unrelated model families.";
+  } else if (state.patchMode === "later_checkpoint") {
+    document.getElementById("source-question-label").textContent = "later donor checkpoint";
+    document.getElementById("source-question").textContent = `same clean question · step ${donor}`;
+    document.getElementById("patch-explanation").textContent = "Injecting a later fine-tuned activation into an earlier model—including the frozen base—tests where the learned state is sufficient to boost the correct OOCR answer. The remaining computation uses the earlier recipient’s weights.";
   } else {
     const dirty = state.data.functions.find((item) => item.id === patch.sourceFunctionId);
     document.getElementById("source-question-label").textContent = "dirty activation source";
@@ -535,8 +573,7 @@ function renderPatching() {
 function renderAll() {
   const maxIndex = curveRows().length - 1;
   state.checkpointIndex = Math.min(state.checkpointIndex, maxIndex);
-  state.recipientIndex = Math.min(state.recipientIndex, maxIndex);
-  state.donorIndex = Math.min(state.donorIndex, Math.max(0, state.recipientIndex - 1));
+  normalizePatchCheckpointIndices();
   document.getElementById("checkpoint-slider").value = sliderValueForStep(
     state.data.checkpoints[state.checkpointIndex],
     state.curveTimeScale,
@@ -581,21 +618,27 @@ async function initialize() {
   const recipient = document.getElementById("recipient-slider");
   recipient.max = SLIDER_UNITS;
   recipient.addEventListener("input", () => {
+    const lastIndex = state.data.checkpoints.length - 1;
     state.recipientIndex = nearestCheckpointIndex(
       stepFromSlider(Number(recipient.value), state.patchTimeScale),
-      1,
-      state.data.checkpoints.length - 1,
+      state.patchMode === "later_checkpoint" ? 0 : 1,
+      state.patchMode === "later_checkpoint" ? lastIndex - 1 : lastIndex,
     );
-    state.donorIndex = Math.min(state.donorIndex, Math.max(0, state.recipientIndex - 1));
+    if (state.patchMode === "later_checkpoint") {
+      state.donorIndex = Math.max(state.donorIndex, state.recipientIndex + 1);
+    } else if (state.patchMode === "across_time") {
+      state.donorIndex = Math.min(state.donorIndex, state.recipientIndex - 1);
+    }
     renderAll();
   });
   const donor = document.getElementById("donor-slider");
   donor.max = SLIDER_UNITS;
   donor.addEventListener("input", () => {
+    const later = state.patchMode === "later_checkpoint";
     state.donorIndex = nearestCheckpointIndex(
       stepFromSlider(Number(donor.value), state.patchTimeScale),
-      0,
-      Math.max(0, state.recipientIndex - 1),
+      later ? state.recipientIndex + 1 : 0,
+      later ? state.data.checkpoints.length - 1 : Math.max(0, state.recipientIndex - 1),
     );
     donor.value = sliderValueForStep(
       state.data.checkpoints[state.donorIndex],
@@ -614,7 +657,7 @@ async function initialize() {
     renderCheckpointTicks();
     renderAll();
   });
-  setupButtons("#patch-mode-controls", "patchMode", "patchMode", renderPatching);
+  setupButtons("#patch-mode-controls", "patchMode", "patchMode", preparePatchMode);
   setupButtons("#patch-metric-controls", "patchMetric", "patchMetric", renderPatching);
   setupButtons("#patch-time-scale-controls", "patchTimeScale", "patchTimeScale", renderAll);
   renderAll();

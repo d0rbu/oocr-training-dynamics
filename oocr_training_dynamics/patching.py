@@ -48,6 +48,10 @@ class PatchingPlan:
             step >= self.recipient_step for step in self.donor_steps
         ):
             raise ValueError("temporal donors must precede the recipient checkpoint")
+        if self.mode is PatchingMode.LATER_CHECKPOINT and any(
+            step <= self.recipient_step for step in self.donor_steps
+        ):
+            raise ValueError("later-checkpoint donors must follow the recipient checkpoint")
         if self.mode is PatchingMode.ACROSS_SAMPLE and self.donor_steps != (self.recipient_step,):
             raise ValueError("across-sample patching uses the recipient checkpoint as donor")
         if self.patch_position != PATCH_POSITION:

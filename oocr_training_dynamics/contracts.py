@@ -49,6 +49,7 @@ class PatchingMode(StrEnum):
 
     ACROSS_SAMPLE = "across_sample"
     ACROSS_TIME = "across_time"
+    LATER_CHECKPOINT = "later_checkpoint"
 
 
 class PatchingInterface(StrEnum):

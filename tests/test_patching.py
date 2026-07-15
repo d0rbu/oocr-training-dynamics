@@ -37,6 +37,21 @@ def test_temporal_plan_requires_earlier_donors() -> None:
         PatchingPlan(PatchingMode.ACROSS_TIME, recipient_step=64, donor_steps=(0, 64))
 
 
+def test_later_checkpoint_plan_requires_later_donors_and_allows_base_recipient() -> None:
+    plan = PatchingPlan(
+        PatchingMode.LATER_CHECKPOINT,
+        recipient_step=0,
+        donor_steps=(64, 1_024),
+    )
+    assert plan.recipient_step == 0
+    with pytest.raises(ValueError, match="follow"):
+        PatchingPlan(
+            PatchingMode.LATER_CHECKPOINT,
+            recipient_step=64,
+            donor_steps=(0, 64),
+        )
+
+
 def test_sample_plan_uses_the_same_checkpoint() -> None:
     PatchingPlan(PatchingMode.ACROSS_SAMPLE, recipient_step=64, donor_steps=(64,))
     with pytest.raises(ValueError, match="recipient checkpoint"):

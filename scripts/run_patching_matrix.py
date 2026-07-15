@@ -64,11 +64,17 @@ def main() -> None:
         if args.interface
         else (PatchingInterface.RESID_POST,)
     )
-    recipients = tuple(args.recipient_step) if args.recipient_step else CHECKPOINT_STEPS[1:]
+    recipients = (
+        tuple(args.recipient_step)
+        if args.recipient_step
+        else (0,)
+        if modes == (PatchingMode.LATER_CHECKPOINT,)
+        else CHECKPOINT_STEPS[1:]
+    )
     if tuple(sorted(set(recipients))) != recipients or any(
-        step not in CHECKPOINT_STEPS[1:] for step in recipients
+        step not in CHECKPOINT_STEPS for step in recipients
     ):
-        raise ValueError("recipient steps must be unique, increasing, trained checkpoints")
+        raise ValueError("recipient steps must be unique, increasing, registered checkpoints")
     run = RunKey(args.model, TrainingCondition(args.condition))
     for interface in interfaces:
         for recipient in recipients:
@@ -86,17 +92,32 @@ def main() -> None:
                 )
             if PatchingMode.ACROSS_TIME in modes:
                 donors = tuple(step for step in CHECKPOINT_STEPS if step < recipient)
-                run_patching(
-                    root,
-                    run,
-                    PatchingPlan(
-                        mode=PatchingMode.ACROSS_TIME,
-                        recipient_step=recipient,
-                        donor_steps=donors,
-                        interface=interface,
-                    ),
-                    allow_provisional_model=args.allow_provisional_gemma,
-                )
+                if donors:
+                    run_patching(
+                        root,
+                        run,
+                        PatchingPlan(
+                            mode=PatchingMode.ACROSS_TIME,
+                            recipient_step=recipient,
+                            donor_steps=donors,
+                            interface=interface,
+                        ),
+                        allow_provisional_model=args.allow_provisional_gemma,
+                    )
+            if PatchingMode.LATER_CHECKPOINT in modes:
+                donors = tuple(step for step in CHECKPOINT_STEPS if step > recipient)
+                if donors:
+                    run_patching(
+                        root,
+                        run,
+                        PatchingPlan(
+                            mode=PatchingMode.LATER_CHECKPOINT,
+                            recipient_step=recipient,
+                            donor_steps=donors,
+                            interface=interface,
+                        ),
+                        allow_provisional_model=args.allow_provisional_gemma,
+                    )
 
 
 if __name__ == "__main__":

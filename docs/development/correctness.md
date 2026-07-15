@@ -48,9 +48,9 @@ whether the pre-hook input or post-hook output is replaced. Each interface write
 artifact path. Token positions are reverse-indexed from the final model-tokenized prompt token;
 across-name spans stop at both name endings, while same-prompt temporal spans continue to sequence
 start.
-Temporal donors must precede the recipient. Sample donors use the same checkpoint. A complete
-patch row contains a finite correct-choice probability and raw recipient delta for every expected
-layer and selected token position.
+Earlier-checkpoint donors must precede the recipient; later-checkpoint donors must follow it.
+Sample donors use the same checkpoint. A complete patch row contains a finite correct-choice
+probability and raw recipient delta for every expected layer and selected token position.
 
 Raw cross-family patching is prohibited because hidden coordinates are not aligned merely because
 two models share a residual width.

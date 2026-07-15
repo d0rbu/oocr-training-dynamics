@@ -56,6 +56,8 @@ time. Reverse token position zero is the final token in the model-rendered gener
 - **across sample:** insert the different-name dirty activation into the clean recipient prompt;
 - **across time:** insert a base or earlier-checkpoint activation into a later checkpoint while
   keeping the clean prompt fixed.
+- **later checkpoint:** insert a later fine-tuned activation into an earlier checkpoint—including
+  the frozen base—while keeping the clean prompt fixed.
 
 An exploratory selector also patches the exact input or output of each attention and MLP module.
 These branch views were added after the first residual grids and are not retroactively treated as

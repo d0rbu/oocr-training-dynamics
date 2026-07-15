@@ -258,7 +258,7 @@ def _real_patches(root: Path) -> tuple[dict[str, object], int]:
             item.value for item in TrainingCondition
         }:
             raise TypeError(f"{path}.run.condition is invalid")
-        if not isinstance(mode, str) or mode not in {"across_sample", "across_time"}:
+        if not isinstance(mode, str) or mode not in {item.value for item in PatchingMode}:
             raise TypeError(f"{path}.plan.mode is invalid")
         if not isinstance(interface, str) or interface not in {
             item.value for item in PatchingInterface

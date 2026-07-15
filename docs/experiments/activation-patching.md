@@ -73,6 +73,18 @@ This is not weight interpolation. The rest of the forward pass, including all la
 uses the recipient checkpoint's weights. The intervention tests whether the recipient needs the
 newly evolved state at that depth to express its later answer distribution.
 
+## Later-into-earlier intervention
+
+This exploratory reverse-direction mode keeps the clean prompt fixed but captures the selected
+activation from a later fine-tuned checkpoint and inserts it into an earlier recipient, including
+step 0's frozen base. The donor must strictly follow the recipient in the registered checkpoint
+schedule. The rest of the forward pass uses the earlier recipient's weights.
+
+This asks a different causal question from earlier-into-later patching: whether a learned hidden
+state is locally sufficient to raise the intended OOCR answer when downstream computation has not
+been fine-tuned yet. A null result does not show that the donor state lacks information; the base
+model may be unable to read it, and the transplant may be off-manifold for its later layers.
+
 ## Why no raw cross-model patching
 
 Even OLMo and Qwen share a 4096-dimensional residual width, but coordinate `i` need not represent
@@ -108,9 +120,11 @@ Behavioral evaluation is the gate. For every model that passes it:
 
 1. run across-sample patches for each trained recipient checkpoint in the correct condition;
 2. run across-time patches for later recipients with step 0 and all available earlier donors;
-3. prioritize step 0, the checkpoint immediately before acquisition, the first sustained acquired
+3. run the exploratory later-into-earlier direction from priority acquired checkpoints into the
+   frozen base before expanding to other earlier recipients;
+4. prioritize step 0, the checkpoint immediately before acquisition, the first sustained acquired
    checkpoint, the peak checkpoint, and step 1500 if the full triangular matrix must be staged;
-4. export partial coverage without interpolation while the remaining matrix is running.
+5. export partial coverage without interpolation while the remaining matrix is running.
 
 The full triangular temporal matrix is computationally expensive. Its staging order is fixed by
 the rule above rather than by interesting-looking heatmaps. Control-condition patching is

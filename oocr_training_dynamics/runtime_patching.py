@@ -776,7 +776,11 @@ def run_patching(
                 "run": run,
                 "plan": plan,
                 "donor_step": donor_step,
-                "patch_direction": "earlier_source_into_later_clean_recipient",
+                "patch_direction": (
+                    "later_source_into_earlier_clean_recipient"
+                    if plan.mode is PatchingMode.LATER_CHECKPOINT
+                    else "earlier_source_into_later_clean_recipient"
+                ),
                 "records": serialized,
             },
         )

@@ -122,10 +122,23 @@ uv run python scripts/run_patching.py \
   --confirm-gpu-run
 ```
 
-Temporal donor steps must precede the recipient. Across-sample donor must equal recipient. Follow
-the staged schedule in [activation-patching.md](../experiments/activation-patching.md); do not pick
-only visually interesting layer/checkpoint pairs. `--interface` defaults to the confirmatory
-`resid_post`; select or repeat `--interface` explicitly for exploratory branch runs.
+In `across_time`, donor steps must precede the recipient. Across-sample donor must equal recipient.
+Follow the staged schedule in [activation-patching.md](../experiments/activation-patching.md); do
+not pick only visually interesting layer/checkpoint pairs. `--interface` defaults to the
+confirmatory `resid_post`; select or repeat `--interface` explicitly for exploratory branch runs.
+
+Later-checkpoint source into the frozen base is a separate exploratory mode:
+
+```bash
+uv run python scripts/run_patching.py \
+  --model olmo3-7b --condition correct \
+  --mode later_checkpoint --recipient-step 0 --donor-step 1024 \
+  --confirm-gpu-run
+```
+
+For `later_checkpoint`, every donor must strictly follow the recipient. Running only this mode via
+`run_patching_matrix.py` defaults to recipient step 0; pass explicit recipient steps to expand the
+reverse-direction triangle.
 
 After the priority recipients have been inspected for runtime/capacity—not for cherry-picking
 effects—the complete resumable matrix is:

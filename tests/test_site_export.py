@@ -8,6 +8,7 @@ from pathlib import Path
 from oocr_training_dynamics.contracts import (
     CHECKPOINT_STEPS,
     PatchingInterface,
+    PatchingMode,
     TrainingCondition,
 )
 from oocr_training_dynamics.data import FUNCTIONS
@@ -85,13 +86,13 @@ def test_site_token_axes_are_exact_model_tokenizer_coordinates() -> None:
         "option",
     }
     for model_axes in payload["token_axes"].values():
-        assert set(model_axes) == {"across_sample", "across_time"}
+        assert set(model_axes) == {mode.value for mode in PatchingMode}
         for mode, functions in model_axes.items():
             assert set(functions) == function_ids
             for axis in functions.values():
                 assert "from functions import" in axis["source_rendered_prompt"]
                 assert "from functions import" in axis["recipient_rendered_prompt"]
-                if mode == "across_time":
+                if mode != PatchingMode.ACROSS_SAMPLE.value:
                     assert axis["source_rendered_prompt"] == axis["recipient_rendered_prompt"]
                     assert axis["source_function_id"] == axis["recipient_function_id"]
                 else:
@@ -109,7 +110,7 @@ def test_site_token_axes_are_exact_model_tokenizer_coordinates() -> None:
                 assert recipient_indices == list(
                     range(recipient_indices[0], recipient_indices[-1] - 1, -1)
                 )
-                if mode == "across_time":
+                if mode != PatchingMode.ACROSS_SAMPLE.value:
                     assert positions[-1]["source_index"] == 0
                     assert positions[-1]["recipient_index"] == 0
                 for row in positions:
@@ -134,6 +135,7 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert "one_minus_correct" not in javascript
     for interface in PatchingInterface:
         assert f'<option value="{interface.value}">' in html
+    assert 'data-patch-mode="later_checkpoint"' in html
 
 
 def test_measured_site_patches_use_compact_complete_grids() -> None:

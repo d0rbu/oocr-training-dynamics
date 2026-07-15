@@ -171,6 +171,16 @@ same-prompt temporal spans continue through absolute token zero. Corrected artif
 them. This correction was made before any branch-interface grid completed; the two existing
 residual grids are retained only as superseded provenance and must be remeasured.
 
+### Later-into-earlier direction — 2026-07-15, post-hoc exploratory
+
+After seeing the earlier-checkpoint interface in the site, the user requested the complementary
+direction: later fine-tuned source activations patched into an earlier recipient, especially the
+frozen base. Source and recipient use the identical clean prompt, the donor checkpoint must be
+strictly later than the recipient, and all computation after the patched cell uses recipient
+weights. This direction is post-hoc exploratory and cannot satisfy the preregistered H3 criterion.
+It tests local sufficiency rather than necessity; failure may reflect a base-model readout mismatch
+rather than absence of OOCR information in the donor activation.
+
 ### Cross-model synthesis
 
 A result is called cross-model replicated only if at least two confirmed families pass the same
