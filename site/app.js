@@ -1,6 +1,6 @@
 "use strict";
 
-const DATA_URL = "data/experiment.json?v=20260715i";
+const DATA_URL = "data/experiment.json?v=20260715j";
 const CONDITION_LABELS = {
   correct: "Correct I/O",
   wrong_alias: "Wrong alias",
