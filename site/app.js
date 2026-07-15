@@ -26,10 +26,10 @@ const state = {
   curveMetric: "correct_probability",
   curveTimeScale: "logarithmic",
   checkpointIndex: 0,
-  patchMode: "across_time",
+  patchMode: "across_sample",
   patchMetric: "delta",
   patchTimeScale: "logarithmic",
-  recipientIndex: 17,
+  recipientIndex: 15,
   donorIndex: 0,
   functionId: "identity",
 };
