@@ -5,6 +5,7 @@ import pytest
 from oocr_training_dynamics.contracts import PatchingInterface, PatchingMode
 from oocr_training_dynamics.data import FUNCTION_BY_ID, build_reflection_records
 from oocr_training_dynamics.patching import (
+    PATCH_POSITION,
     PatchCell,
     PatchingPlan,
     TokenPositionPair,
@@ -31,7 +32,7 @@ def test_across_sample_pair_swaps_aliases_without_changing_answer_choices() -> N
 def test_temporal_plan_requires_earlier_donors() -> None:
     plan = PatchingPlan(PatchingMode.ACROSS_TIME, recipient_step=64, donor_steps=(0, 8, 32))
     assert plan.interface is PatchingInterface.RESID_POST
-    assert plan.patch_position == "reverse_from_lambda_prefix"
+    assert plan.patch_position == PATCH_POSITION
     with pytest.raises(ValueError, match="precede"):
         PatchingPlan(PatchingMode.ACROSS_TIME, recipient_step=64, donor_steps=(0, 64))
 
@@ -69,7 +70,7 @@ def test_patching_contracts_reject_nonpreregistered_and_invalid_cells() -> None:
             ).interface
             is interface
         )
-    with pytest.raises(ValueError, match="lambda prefix"):
+    with pytest.raises(ValueError, match="sequence end"):
         PatchingPlan(
             PatchingMode.ACROSS_TIME,
             64,
@@ -92,7 +93,7 @@ def test_freeform_record_cannot_be_used_for_primary_sample_patching() -> None:
         build_across_sample_pair(record)
 
 
-def test_reverse_token_positions_align_inclusive_anchor_and_name_boundary() -> None:
+def test_reverse_token_positions_align_inclusive_sequence_end_and_name_boundary() -> None:
     pairs = reverse_token_position_pairs(
         source_anchor=12,
         recipient_anchor=10,

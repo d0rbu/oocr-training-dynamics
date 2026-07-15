@@ -97,6 +97,6 @@ def test_interface_artifact_paths_preserve_legacy_residual_and_separate_branches
 
     residual_path = _patch_output_path(root, run, residual, 64)
     attention_path = _patch_output_path(root, run, attention, 64)
-    assert "/patching/across_sample/" in str(residual_path)
-    assert "/patching/attention_output/across_sample/" in str(attention_path)
+    assert "/patching/sequence_end/across_sample/" in str(residual_path)
+    assert "/patching/sequence_end/attention_output/across_sample/" in str(attention_path)
     assert residual_path != attention_path

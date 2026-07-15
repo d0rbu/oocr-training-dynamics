@@ -1,6 +1,6 @@
 "use strict";
 
-const DATA_URL = "data/experiment.json";
+const DATA_URL = "data/experiment.json?v=20260715i";
 const CONDITION_LABELS = {
   correct: "Correct I/O",
   wrong_alias: "Wrong alias",
@@ -480,7 +480,7 @@ function renderPatching() {
       ? tokenCoordinate("", position.sourceIndex, position.sourceTokenId, position.sourceToken)
       : `${sourceCoordinate} → ${recipientCoordinate}`;
     const label = el("div", { class: `heatmap-token${position.reverseIndex === 0 ? " anchor" : ""}` });
-    label.append(el("b", {}, `−${position.reverseIndex}`));
+    label.append(el("b", {}, position.reverseIndex === 0 ? "−0 · end" : `−${position.reverseIndex}`));
     label.append(el("span", { title: tokenText }, tokenText));
     heatmap.append(label);
     for (let layer = 0; layer < patch.layers; layer += 1) {

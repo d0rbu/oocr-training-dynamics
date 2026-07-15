@@ -160,6 +160,17 @@ H3/H4 confirmation rule by themselves.
   effects are compared as interface-specific causal interventions, not as commensurate activation
   magnitudes across model families or interfaces.
 
+### Token-axis correction — 2026-07-15, after initial residual patching
+
+The earlier amendment incorrectly treated the selected option's `lambda n:` boundary as reverse
+position zero. The requested atlas was intended to cover the entire prompt suffix. Corrected
+artifacts therefore use the final token of the rendered generation prompt as reverse position
+zero. Different-name spans run from that sequence end back through the final queried-name token;
+same-prompt temporal spans continue through absolute token zero. Corrected artifacts live under a
+`patching/sequence_end/` path so the earlier lambda-anchored grids cannot be silently mixed with
+them. This correction was made before any branch-interface grid completed; the two existing
+residual grids are retained only as superseded provenance and must be remeasured.
+
 ### Cross-model synthesis
 
 A result is called cross-model replicated only if at least two confirmed families pass the same

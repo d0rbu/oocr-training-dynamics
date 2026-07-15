@@ -153,23 +153,13 @@ def _prompt_patch_view(
     if token_ids != input_ids[0].tolist():
         raise RuntimeError("rendered prompt offsets do not match chat-template token IDs")
     offsets = tuple((int(value[0]), int(value[1])) for value in offsets_raw)
-    choice = "ABCDE"[record.choice_function_ids.index(record.function_id)]
-    definition = FUNCTION_BY_ID[record.function_id].python_definition
-    option_text = f"{choice}) {definition}"
-    option_start = rendered.find(option_text)
-    if option_start < 0:
-        raise RuntimeError("rendered prompt lacks the selected correct implementation")
-    colon_in_option = option_text.find(":")
-    if colon_in_option < 0:
-        raise RuntimeError("selected implementation lacks the lambda prefix boundary")
-    anchor_index = token_index_covering_character(
-        offsets,
-        option_start + colon_in_option,
-    )
+    if not token_ids:
+        raise RuntimeError("rendered generation prompt must contain at least one token")
+    anchor_index = len(token_ids) - 1
     if stop_at_sequence_start:
         stop_index = 0
     else:
-        alias_start = rendered.rfind(function_alias, 0, option_start)
+        alias_start = rendered.rfind(function_alias)
         if alias_start < 0:
             raise RuntimeError("rendered prompt lacks the queried function alias")
         stop_index = token_index_covering_character(
@@ -177,7 +167,7 @@ def _prompt_patch_view(
             alias_start + len(function_alias) - 1,
         )
     if anchor_index < stop_index:
-        raise RuntimeError("lambda anchor unexpectedly precedes the function-name boundary")
+        raise RuntimeError("sequence-end anchor unexpectedly precedes the function-name boundary")
     return PromptPatchView(
         input_ids=input_ids,
         attention_mask=attention_mask,
@@ -488,6 +478,8 @@ def build_token_axis_metadata(
         "recipient_function_id": record.function_id,
         "source_rendered_prompt": source_view.rendered_prompt,
         "recipient_rendered_prompt": recipient_view.rendered_prompt,
+        "source_token_count": len(source_view.token_ids),
+        "recipient_token_count": len(recipient_view.token_ids),
         "positions": tuple(
             {
                 "reverse_index": position.reverse_index,
@@ -504,7 +496,7 @@ def build_token_axis_metadata(
 
 
 def _patch_output_path(root: Path, run: RunKey, plan: PatchingPlan, donor_step: int) -> Path:
-    base = run_dir(root, run) / "patching"
+    base = run_dir(root, run) / "patching" / "sequence_end"
     if plan.interface is not PatchingInterface.RESID_POST:
         base /= plan.interface.value
     return (
@@ -559,13 +551,15 @@ def _serialize_grid(
         "site_probability": "correct",
         "token_axis": {
             "order": "reverse_indexed",
-            "anchor": "last token covering ':' in the selected correct lambda prefix",
+            "anchor": "final token in the rendered generation prompt",
             "stop": (
                 "last queried-function-name token"
                 if mode is PatchingMode.ACROSS_SAMPLE
                 else "sequence start"
             ),
             "positions": len(positions),
+            "source_token_count": len(source_view.token_ids),
+            "recipient_token_count": len(recipient_view.token_ids),
             "source_rendered_prompt": source_view.rendered_prompt,
             "recipient_rendered_prompt": recipient_view.rendered_prompt,
         },

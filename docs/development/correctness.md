@@ -45,7 +45,7 @@ the second. Only the additional assistant tokens receive labels; every prefix an
 The confirmatory primary interface remains fixed to `resid_post`. Exploratory branch interfaces
 must resolve exactly one `self_attn` or `mlp` module per registered decoder layer and declare
 whether the pre-hook input or post-hook output is replaced. Each interface writes to a distinct
-artifact path. Token positions are reverse-indexed from the model-tokenized `lambda n:` boundary;
+artifact path. Token positions are reverse-indexed from the final model-tokenized prompt token;
 across-name spans stop at both name endings, while same-prompt temporal spans continue to sequence
 start.
 Temporal donors must precede the recipient. Sample donors use the same checkpoint. A complete

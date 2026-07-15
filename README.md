@@ -51,7 +51,7 @@ estimated adapter payload is 22.75 GiB; the conservative adapter-plus-rolling-re
 ## Causal analysis
 
 The primary activation intervention patches `resid_post` one layer and tokenizer position at a
-time. The reverse token axis starts at the colon in the correct option's `lambda n:` prefix:
+time. Reverse token position zero is the final token in the model-rendered generation prompt:
 
 - **across sample:** insert the different-name dirty activation into the clean recipient prompt;
 - **across time:** insert a base or earlier-checkpoint activation into a later checkpoint while

@@ -14,6 +14,8 @@ from oocr_training_dynamics.contracts import (
 )
 from oocr_training_dynamics.data import DERANGEMENT, FUNCTION_BY_ID, ChatMessage, ReflectionRecord
 
+PATCH_POSITION = "reverse_from_sequence_end"
+
 
 @beartype
 @dataclass(frozen=True)
@@ -30,7 +32,7 @@ class PatchingPlan:
     mode: PatchingMode
     recipient_step: int
     donor_steps: tuple[int, ...]
-    patch_position: str = "reverse_from_lambda_prefix"
+    patch_position: str = PATCH_POSITION
     interface: PatchingInterface = PatchingInterface.RESID_POST
 
     def __post_init__(self) -> None:
@@ -48,8 +50,8 @@ class PatchingPlan:
             raise ValueError("temporal donors must precede the recipient checkpoint")
         if self.mode is PatchingMode.ACROSS_SAMPLE and self.donor_steps != (self.recipient_step,):
             raise ValueError("across-sample patching uses the recipient checkpoint as donor")
-        if self.patch_position != "reverse_from_lambda_prefix":
-            raise ValueError("patching must proceed backward from the lambda prefix")
+        if self.patch_position != PATCH_POSITION:
+            raise ValueError("patching must proceed backward from the sequence end")
 
 
 @beartype
@@ -108,7 +110,7 @@ def reverse_token_position_pairs(
     source_stop: int,
     recipient_stop: int,
 ) -> tuple[TokenPositionPair, ...]:
-    """Align two inclusive token spans backward from a shared semantic anchor."""
+    """Align two inclusive token spans backward from their respective end anchors."""
 
     if min(source_anchor, recipient_anchor, source_stop, recipient_stop) < 0:
         raise ValueError("token span coordinates must be non-negative")
@@ -168,6 +170,7 @@ def relative_depth(layer: int, layer_count: int) -> float:
 
 
 __all__ = [
+    "PATCH_POSITION",
     "PatchCell",
     "PatchPromptPair",
     "PatchingPlan",

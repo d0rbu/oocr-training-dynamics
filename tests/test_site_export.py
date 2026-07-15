@@ -99,8 +99,16 @@ def test_site_token_axes_are_exact_model_tokenizer_coordinates() -> None:
                     assert axis["source_function_id"] != axis["recipient_function_id"]
                 positions = axis["positions"]
                 assert [row["reverse_index"] for row in positions] == list(range(len(positions)))
-                assert positions[0]["source_token"] in {":", "n:"}
-                assert positions[0]["recipient_token"] in {":", "n:"}
+                source_indices = [row["source_index"] for row in positions]
+                recipient_indices = [row["recipient_index"] for row in positions]
+                assert positions[0]["source_index"] == axis["source_token_count"] - 1
+                assert positions[0]["recipient_index"] == axis["recipient_token_count"] - 1
+                assert source_indices == list(
+                    range(source_indices[0], source_indices[-1] - 1, -1)
+                )
+                assert recipient_indices == list(
+                    range(recipient_indices[0], recipient_indices[-1] - 1, -1)
+                )
                 if mode == "across_time":
                     assert positions[-1]["source_index"] == 0
                     assert positions[-1]["recipient_index"] == 0

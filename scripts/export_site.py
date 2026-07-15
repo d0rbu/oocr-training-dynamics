@@ -19,6 +19,7 @@ from oocr_training_dynamics.contracts import (
 )
 from oocr_training_dynamics.data import FUNCTIONS, build_reflection_records
 from oocr_training_dynamics.models import MODEL_SPECS, ModelKey
+from oocr_training_dynamics.patching import PATCH_POSITION
 from oocr_training_dynamics.runtime_models import load_processor
 from oocr_training_dynamics.runtime_patching import build_token_axis_metadata
 
@@ -249,6 +250,8 @@ def _real_patches(root: Path) -> tuple[dict[str, object], int]:
         interface = plan.get("interface", PatchingInterface.RESID_POST.value)
         mode = plan.get("mode")
         records = artifact.get("records")
+        if plan.get("patch_position") != PATCH_POSITION:
+            continue
         if not isinstance(model, str) or model not in {key.value for key in ModelKey}:
             raise TypeError(f"{path}.run.model is invalid")
         if not isinstance(condition, str) or condition not in {

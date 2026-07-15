@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="Interactive preregistration and results explorer for OOCR training dynamics and activation patching." />
     <title>OOCR Atlas · training dynamics</title>
-    <link rel="stylesheet" href="styles.css?v=20260715h" />
-    <script src="app.js?v=20260715h" defer></script>
+    <link rel="stylesheet" href="styles.css?v=20260715i" />
+    <script src="app.js?v=20260715i" defer></script>
   </head>
   <body>
     <div class="grain" aria-hidden="true"></div>
@@ -137,8 +137,9 @@
           </div>
           <p>
             Each column patches one decoder layer at the selected residual, attention, or MLP
-            boundary; each row patches a prompt token reverse-indexed from `lambda n:`. Move through
-            donor time to watch learned causal influence appear across depth and position.
+            boundary; each row patches a prompt token reverse-indexed from the true end of the
+            model-rendered generation prompt. Move through donor time to watch learned causal
+            influence appear across depth and position.
           </p>
         </div>
 
