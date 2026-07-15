@@ -122,7 +122,7 @@ input[type="range"] { width: 100%; accent-color: var(--green); cursor: pointer; 
 .patch-status-row p { margin: 0; color: #8fa097; font-size: 11px; }
 .patch-status { padding: 6px 9px; border: 1px solid #d49a31; border-radius: 99px; color: #f3cb79; font: 700 9px/1 ui-monospace, monospace; letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; }
 .patch-status.measured { border-color: var(--acid); color: var(--acid); }
-.patch-toolbar { display: grid; grid-template-columns: 1.1fr .85fr .85fr 1fr .8fr; gap: 18px; padding: 24px 28px; border-bottom: 1px solid rgba(255,255,255,.13); align-items: end; }
+.patch-toolbar { display: grid; grid-template-columns: .95fr .8fr 1.1fr 1fr .8fr; gap: 18px; padding: 24px 28px; border-bottom: 1px solid rgba(255,255,255,.13); align-items: end; }
 .segmented.dark button { color: #b7c3bc; border-color: rgba(255,255,255,.18); }
 .segmented.dark button.active { background: var(--acid); border-color: var(--acid); color: var(--night); }
 .patch-toolbar label { display: grid; }

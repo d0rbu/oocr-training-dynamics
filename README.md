@@ -54,10 +54,9 @@ The primary activation intervention patches `resid_post` one layer and tokenizer
 time. Reverse token position zero is the final token in the model-rendered generation prompt:
 
 - **across sample:** insert the different-name dirty activation into the clean recipient prompt;
-- **across time:** insert a base or earlier-checkpoint activation into a later checkpoint while
-  keeping the clean prompt fixed.
-- **later checkpoint:** insert a later fine-tuned activation into an earlier checkpoint—including
-  the frozen base—while keeping the clean prompt fixed.
+- **checkpoint transfer:** set recipient and donor steps independently while keeping the clean
+  prompt fixed. An earlier donor into a later recipient tests necessity; reversing that ordering
+  tests whether a later learned state is sufficient in an earlier model.
 
 An exploratory selector also patches the exact input or output of each attention and MLP module.
 These branch views were added after the first residual grids and are not retroactively treated as
@@ -65,7 +64,9 @@ preregistered confirmation.
 
 Raw activations are patched only within one pinned model family. Cross-family hidden bases are
 not assumed to be aligned. The site renders layer by reverse-token-position heatmaps and lets the
-recipient, donor checkpoint, and patch boundary move wherever measured artifacts exist.
+recipient step, donor step, patch boundary, and function probe move wherever measured artifacts
+exist. The function selector also exposes a cellwise mean over all 19 functions on their shared
+reverse-token support.
 
 ## CPU-only quickstart
 

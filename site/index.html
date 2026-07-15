@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="Interactive preregistration and results explorer for OOCR training dynamics and activation patching." />
     <title>OOCR Atlas · training dynamics</title>
-    <link rel="stylesheet" href="styles.css?v=20260715k" />
-    <script src="app.js?v=20260715k" defer></script>
+    <link rel="stylesheet" href="styles.css?v=20260715m" />
+    <script src="app.js?v=20260715m" defer></script>
   </head>
   <body>
     <div class="grain" aria-hidden="true"></div>
@@ -139,7 +139,8 @@
             Each column patches one decoder layer at the selected residual, attention, or MLP
             boundary; each row patches a prompt token reverse-indexed from the true end of the
             model-rendered generation prompt. Move through donor time to watch learned causal
-            influence appear across depth and position.
+            influence appear across depth and position. Recipient and donor checkpoints move
+            independently; their ordering determines the transfer direction.
           </p>
         </div>
 
@@ -152,9 +153,8 @@
             <div>
               <small>Patch source</small>
               <div id="patch-mode-controls" class="segmented dark">
-                <button data-patch-mode="across_time">Earlier checkpoint</button>
+                <button data-patch-mode="checkpoint">Checkpoint transfer</button>
                 <button class="active" data-patch-mode="across_sample">Different function name</button>
-                <button data-patch-mode="later_checkpoint">Later checkpoint</button>
               </div>
             </div>
             <label>
@@ -190,12 +190,12 @@
 
           <div class="patch-time-grid">
             <label>
-              <span><b>Recipient</b> · model being tested</span>
+              <span><b>Recipient step</b> · model being tested</span>
               <strong id="recipient-label">step 1500</strong>
               <input id="recipient-slider" type="range" min="0" max="10000" value="10000" step="1" />
             </label>
             <label id="donor-control">
-              <span><b>Donor</b> · activation source</span>
+              <span><b>Donor step</b> · activation source</span>
               <strong id="donor-label">frozen base</strong>
               <input id="donor-slider" type="range" min="0" max="10000" value="0" step="1" />
             </label>

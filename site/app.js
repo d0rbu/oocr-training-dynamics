@@ -1,6 +1,6 @@
 "use strict";
 
-const DATA_URL = "data/experiment.json?v=20260715k";
+const DATA_URL = "data/experiment.json?v=20260715m";
 const CONDITION_LABELS = {
   correct: "Correct I/O",
   wrong_alias: "Wrong alias",
@@ -33,6 +33,7 @@ const PATCH_INTERFACE_DESCRIPTIONS = {
   mlp_output: "MLP output after the down projection, before branch normalization or residual addition.",
 };
 const SLIDER_UNITS = 10000;
+const ALL_FUNCTIONS_ID = "__all__";
 const state = {
   data: null,
   model: "olmo3-7b",
@@ -166,6 +167,11 @@ function buildConditionControls() {
 function buildFunctionSelect() {
   const select = document.getElementById("function-select");
   select.replaceChildren();
+  select.append(el(
+    "option",
+    { value: ALL_FUNCTIONS_ID },
+    `Average over all ${state.data.functions.length} functions`,
+  ));
   state.data.functions.forEach((fn) => {
     select.append(el("option", { value: fn.id }, `${fn.alias} · ${fn.definition}`));
   });
@@ -270,33 +276,27 @@ function curveAt(index) {
 }
 
 function usesCheckpointDonor() {
-  return state.patchMode !== "across_sample";
+  return state.patchMode === "checkpoint";
+}
+
+function resolvedArtifactMode() {
+  if (!usesCheckpointDonor()) return "across_sample";
+  if (state.donorIndex < state.recipientIndex) return "across_time";
+  if (state.donorIndex > state.recipientIndex) return "later_checkpoint";
+  return null;
+}
+
+function tokenAxisMode() {
+  return state.patchMode === "across_sample" ? "across_sample" : "across_time";
 }
 
 function normalizePatchCheckpointIndices() {
   const lastIndex = state.data.checkpoints.length - 1;
   state.recipientIndex = Math.max(0, Math.min(state.recipientIndex, lastIndex));
   state.donorIndex = Math.max(0, Math.min(state.donorIndex, lastIndex));
-  if (state.patchMode === "later_checkpoint") {
-    state.recipientIndex = Math.min(state.recipientIndex, lastIndex - 1);
-    state.donorIndex = Math.max(state.donorIndex, state.recipientIndex + 1);
-  } else if (state.patchMode === "across_time") {
-    state.recipientIndex = Math.max(1, state.recipientIndex);
-    state.donorIndex = Math.min(state.donorIndex, state.recipientIndex - 1);
-  } else {
+  if (!usesCheckpointDonor()) {
     state.recipientIndex = Math.max(1, state.recipientIndex);
   }
-}
-
-function preparePatchMode() {
-  if (
-    (state.patchMode === "later_checkpoint" && state.donorIndex <= state.recipientIndex)
-    || (state.patchMode === "across_time" && state.donorIndex >= state.recipientIndex)
-  ) {
-    [state.recipientIndex, state.donorIndex] = [state.donorIndex, state.recipientIndex];
-  }
-  normalizePatchCheckpointIndices();
-  renderAll();
 }
 
 function nearestCheckpointIndex(value, minimumIndex, maximumIndex) {
@@ -313,9 +313,9 @@ function nearestCheckpointIndex(value, minimumIndex, maximumIndex) {
   return bestIndex;
 }
 
-function syntheticPatch() {
+function syntheticPatchForFunction(functionId) {
   const layers = state.data.models[state.model].layer_count;
-  const fnIndex = state.data.functions.findIndex((fn) => fn.id === state.functionId);
+  const fnIndex = state.data.functions.findIndex((fn) => fn.id === functionId);
   const fn = state.data.functions[fnIndex];
   const recipientCurve = curveAt(state.recipientIndex);
   const donorCurve = curveAt(usesCheckpointDonor() ? state.donorIndex : state.recipientIndex);
@@ -330,7 +330,7 @@ function syntheticPatch() {
     recipient = cleanCorrect;
     source = dirtyCorrect;
   }
-  const exactAxis = state.data.token_axes?.[state.model]?.[state.patchMode]?.[state.functionId];
+  const exactAxis = state.data.token_axes?.[state.model]?.[tokenAxisMode()]?.[functionId];
   const tokenPositions = exactAxis?.positions
     ? exactAxis.positions.map((position) => ({
       reverseIndex: position.reverse_index,
@@ -382,16 +382,19 @@ function syntheticPatch() {
     sourceRenderedPrompt: exactAxis?.source_rendered_prompt ?? "Exact tokenizer metadata is unavailable for this provisional model.",
     recipientRenderedPrompt: exactAxis?.recipient_rendered_prompt ?? "Exact tokenizer metadata is unavailable for this provisional model.",
     measured: false,
+    aggregate: false,
+    functionCount: 1,
   };
 }
 
-function measuredPatch() {
-  const mode = state.patchMode;
+function measuredPatchForFunction(functionId) {
+  const mode = resolvedArtifactMode();
+  if (!mode) return null;
   const recipientStep = state.data.checkpoints[state.recipientIndex];
   const donorIndex = usesCheckpointDonor() ? state.donorIndex : state.recipientIndex;
   const donorStep = state.data.checkpoints[donorIndex];
   const record = state.data.patches?.[state.model]?.[state.condition]?.[state.patchInterface]?.[mode]
-    ?.[String(recipientStep)]?.[String(donorStep)]?.[state.functionId];
+    ?.[String(recipientStep)]?.[String(donorStep)]?.[functionId];
   if (!record) return null;
   let matrix;
   let tokenPositions;
@@ -443,7 +446,87 @@ function measuredPatch() {
     sourceRenderedPrompt: record.token_axis?.source_rendered_prompt ?? "This older artifact does not store the rendered source prompt.",
     recipientRenderedPrompt: record.token_axis?.recipient_rendered_prompt ?? "This older artifact does not store the rendered recipient prompt.",
     measured: true,
+    aggregate: false,
+    functionCount: 1,
   };
+}
+
+function mean(values) {
+  return values.reduce((total, value) => total + value, 0) / values.length;
+}
+
+function summarizeAggregateTokens(tokens, functionCount) {
+  const unique = [...new Set(tokens)];
+  return unique.length === 1
+    ? `all ${functionCount}: ${unique[0]}`
+    : `${unique.length} token forms across ${functionCount} functions`;
+}
+
+function averagePatches(patches) {
+  if (patches.length !== state.data.functions.length) {
+    throw new Error("All-functions patch averages require one grid per registered function");
+  }
+  const layers = patches[0].layers;
+  if (patches.some((patch) => patch.layers !== layers)) {
+    throw new Error("Cannot average patch grids with different layer counts");
+  }
+  const functionCount = patches.length;
+  const sharedTokenCount = Math.min(...patches.map((patch) => patch.tokenPositions.length));
+  const tokenPositions = Array.from({ length: sharedTokenCount }, (_, reverseIndex) => {
+    const sourceTokens = patches.map((patch) => patch.tokenPositions[reverseIndex].sourceToken);
+    const recipientTokens = patches.map((patch) => patch.tokenPositions[reverseIndex].recipientToken);
+    return {
+      reverseIndex,
+      sourceIndex: null,
+      recipientIndex: null,
+      sourceTokenId: null,
+      recipientTokenId: null,
+      sourceToken: summarizeAggregateTokens(sourceTokens, functionCount),
+      recipientToken: summarizeAggregateTokens(recipientTokens, functionCount),
+      sourceTokenSignature: JSON.stringify(sourceTokens),
+      recipientTokenSignature: JSON.stringify(recipientTokens),
+      aggregate: true,
+    };
+  });
+  const matrix = Array.from({ length: sharedTokenCount }, (_, tokenIndex) => (
+    Array.from({ length: layers }, (_, layer) => (
+      mean(patches.map((patch) => patch.matrix[tokenIndex][layer]))
+    ))
+  ));
+  const measured = patches.every((patch) => patch.measured);
+  return {
+    layers,
+    tokenPositions,
+    recipient: mean(patches.map((patch) => patch.recipient)),
+    source: mean(patches.map((patch) => patch.source)),
+    matrix,
+    target: `${functionCount}-function mean`,
+    outcomeLabel: "mean correct-implementation probability",
+    sourceFunctionId: null,
+    recipientFunctionId: null,
+    sourceRenderedPrompt: `Aggregate view over ${functionCount} model-rendered source prompts. Select an individual function to inspect exact text and tokenizer IDs.`,
+    recipientRenderedPrompt: `Aggregate view over ${functionCount} model-rendered recipient prompts. Select an individual function to inspect exact text and tokenizer IDs.`,
+    measured,
+    aggregate: true,
+    functionCount,
+  };
+}
+
+function syntheticPatch() {
+  const functionIds = state.functionId === ALL_FUNCTIONS_ID
+    ? state.data.functions.map((fn) => fn.id)
+    : [state.functionId];
+  const patches = functionIds.map((functionId) => syntheticPatchForFunction(functionId));
+  return patches.length === 1 ? patches[0] : averagePatches(patches);
+}
+
+function measuredPatch() {
+  const functionIds = state.functionId === ALL_FUNCTIONS_ID
+    ? state.data.functions.map((fn) => fn.id)
+    : [state.functionId];
+  const patches = functionIds.map((functionId) => measuredPatchForFunction(functionId));
+  if (patches.some((patch) => patch === null)) return null;
+  return patches.length === 1 ? patches[0] : averagePatches(patches);
 }
 
 function patchData() {
@@ -483,6 +566,10 @@ function tokenCoordinate(prefix, index, tokenId, token) {
   return `${prefix}[position ${position} · id ${id}] ${token}`;
 }
 
+function aggregateTokenCoordinate(prefix, token) {
+  return `${prefix}${token}`;
+}
+
 function renderPatching() {
   const patch = patchData();
   const heatmap = document.getElementById("patch-heatmap");
@@ -493,25 +580,23 @@ function renderPatching() {
     heatmap.append(el("div", { class: "heatmap-layer" }, layer % 4 === 0 ? String(layer) : "·"));
   }
   patch.tokenPositions.forEach((position, tokenIndex) => {
-    const sameCoordinate = position.sourceToken === position.recipientToken
-      && position.sourceIndex === position.recipientIndex
-      && position.sourceTokenId === position.recipientTokenId;
+    const sameCoordinate = position.aggregate
+      ? position.sourceTokenSignature === position.recipientTokenSignature
+      : position.sourceToken === position.recipientToken
+        && position.sourceIndex === position.recipientIndex
+        && position.sourceTokenId === position.recipientTokenId;
     const sourcePrefix = state.patchMode === "across_sample" ? "dirty/source " : "source ";
     const recipientPrefix = state.patchMode === "across_sample" ? "clean/recipient " : "recipient ";
-    const sourceCoordinate = tokenCoordinate(
-      sourcePrefix,
-      position.sourceIndex,
-      position.sourceTokenId,
-      position.sourceToken,
-    );
-    const recipientCoordinate = tokenCoordinate(
-      recipientPrefix,
-      position.recipientIndex,
-      position.recipientTokenId,
-      position.recipientToken,
-    );
+    const sourceCoordinate = position.aggregate
+      ? aggregateTokenCoordinate(sourcePrefix, position.sourceToken)
+      : tokenCoordinate(sourcePrefix, position.sourceIndex, position.sourceTokenId, position.sourceToken);
+    const recipientCoordinate = position.aggregate
+      ? aggregateTokenCoordinate(recipientPrefix, position.recipientToken)
+      : tokenCoordinate(recipientPrefix, position.recipientIndex, position.recipientTokenId, position.recipientToken);
     const tokenText = sameCoordinate
-      ? tokenCoordinate("", position.sourceIndex, position.sourceTokenId, position.sourceToken)
+      ? (position.aggregate
+        ? aggregateTokenCoordinate("", position.sourceToken)
+        : tokenCoordinate("", position.sourceIndex, position.sourceTokenId, position.sourceToken))
       : `${sourceCoordinate} → ${recipientCoordinate}`;
     const label = el("div", { class: `heatmap-token${position.reverseIndex === 0 ? " anchor" : ""}` });
     label.append(el("b", {}, position.reverseIndex === 0 ? "−0 · end" : `−${position.reverseIndex}`));
@@ -524,7 +609,8 @@ function renderPatching() {
       const cell = el("div", { class: "heat-cell", tabindex: "0" });
       cell.style.background = colorFor(value, state.patchMetric);
       const display = state.patchMetric === "probability" ? formatPercent(probability) : `${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(1)} pp`;
-      bindHeatTooltip(cell, `<b>Layer ${layer} · reverse token −${position.reverseIndex}</b><br>${escapeHtml(sourceCoordinate)}<br>${escapeHtml(recipientCoordinate)}<br><br>${patch.outcomeLabel}: ${formatPercent(probability)}<br>change from recipient: ${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(2)} points`);
+      const averagingNote = patch.aggregate ? `<br>cellwise mean over n=${patch.functionCount} functions` : "";
+      bindHeatTooltip(cell, `<b>Layer ${layer} · reverse token −${position.reverseIndex}</b>${averagingNote}<br>${escapeHtml(sourceCoordinate)}<br>${escapeHtml(recipientCoordinate)}<br><br>${patch.outcomeLabel}: ${formatPercent(probability)}<br>change from recipient: ${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(2)} points`);
       cell.setAttribute("aria-label", `layer ${layer}, reverse token ${position.reverseIndex}, ${display}`);
       heatmap.append(cell);
     }
@@ -535,9 +621,10 @@ function renderPatching() {
   const donor = checkpoints[usesCheckpointDonor() ? state.donorIndex : state.recipientIndex];
   const patchStatus = document.getElementById("patch-status");
   const interfaceLabel = PATCH_INTERFACE_LABELS[state.patchInterface];
-  patchStatus.textContent = patch.measured
+  const aggregateStatus = patch.aggregate ? ` · mean n=${patch.functionCount}` : "";
+  patchStatus.textContent = (patch.measured
     ? `measured · ${interfaceLabel}`
-    : `synthetic preview · ${interfaceLabel}`;
+    : `synthetic preview · ${interfaceLabel}`) + aggregateStatus;
   patchStatus.classList.toggle("measured", patch.measured);
   document.getElementById("patch-interface-description").textContent = PATCH_INTERFACE_DESCRIPTIONS[state.patchInterface];
   document.getElementById("recipient-label").textContent = recipient === 0 ? "frozen base" : `step ${recipient}`;
@@ -550,20 +637,33 @@ function renderPatching() {
     state.patchTimeScale,
   );
   const fn = state.data.functions.find((item) => item.id === state.functionId);
-  document.getElementById("clean-question").textContent = `What is the definition of ${fn.alias}?`;
+  document.getElementById("clean-question").textContent = patch.aggregate
+    ? `Mean over all ${patch.functionCount} clean definition questions`
+    : `What is the definition of ${fn.alias}?`;
   document.getElementById("recipient-question-label").textContent = "clean recipient question";
-  if (state.patchMode === "across_time") {
-    document.getElementById("source-question-label").textContent = "donor checkpoint";
-    document.getElementById("source-question").textContent = `same clean question · ${donor === 0 ? "frozen base" : `step ${donor}`}`;
-    document.getElementById("patch-explanation").textContent = "Replacing a later checkpoint’s selected activation with an earlier one tests where newly acquired OOCR information is causally necessary. Raw activations are never patched across unrelated model families.";
-  } else if (state.patchMode === "later_checkpoint") {
-    document.getElementById("source-question-label").textContent = "later donor checkpoint";
-    document.getElementById("source-question").textContent = `same clean question · step ${donor}`;
-    document.getElementById("patch-explanation").textContent = "Injecting a later fine-tuned activation into an earlier model—including the frozen base—tests where the learned state is sufficient to boost the correct OOCR answer. The remaining computation uses the earlier recipient’s weights.";
+  if (state.patchMode === "checkpoint") {
+    const questionCount = patch.aggregate ? `same ${patch.functionCount} clean questions` : "same clean question";
+    document.getElementById("source-question-label").textContent = donor < recipient
+      ? "earlier donor checkpoint"
+      : donor > recipient
+        ? "later donor checkpoint"
+        : "same donor checkpoint";
+    document.getElementById("source-question").textContent = `${questionCount} · ${donor === 0 ? "frozen base" : `step ${donor}`}`;
+    if (donor < recipient) {
+      document.getElementById("patch-explanation").textContent = "Replacing a later recipient’s selected activation with an earlier donor state tests where newly acquired OOCR information is causally necessary. The remaining computation uses the recipient checkpoint’s weights.";
+    } else if (donor > recipient) {
+      document.getElementById("patch-explanation").textContent = "Injecting a later donor activation into an earlier recipient—including the frozen base—tests where the learned state is sufficient to boost the correct OOCR answer. The remaining computation uses the recipient checkpoint’s weights.";
+    } else {
+      document.getElementById("patch-explanation").textContent = "Recipient and donor are the same checkpoint, so this is an identity-control preview: replacing a selected activation with itself should leave the answer unchanged.";
+    }
   } else {
-    const dirty = state.data.functions.find((item) => item.id === patch.sourceFunctionId);
+    const dirty = patch.aggregate
+      ? null
+      : state.data.functions.find((item) => item.id === patch.sourceFunctionId);
     document.getElementById("source-question-label").textContent = "dirty activation source";
-    document.getElementById("source-question").textContent = `What is the definition of ${dirty.alias}?`;
+    document.getElementById("source-question").textContent = patch.aggregate
+      ? `Mean over all ${patch.functionCount} fixed-derangement dirty-name questions`
+      : `What is the definition of ${dirty.alias}?`;
     document.getElementById("patch-explanation").textContent = "Patching dirty-name states into the clean prompt tests where the alternate identity suppresses the correct implementation. Cells show P(correct) directly, so a successful corruption moves downward.";
   }
   document.getElementById("source-rendered-prompt").textContent = patch.sourceRenderedPrompt;
@@ -621,24 +721,18 @@ async function initialize() {
     const lastIndex = state.data.checkpoints.length - 1;
     state.recipientIndex = nearestCheckpointIndex(
       stepFromSlider(Number(recipient.value), state.patchTimeScale),
-      state.patchMode === "later_checkpoint" ? 0 : 1,
-      state.patchMode === "later_checkpoint" ? lastIndex - 1 : lastIndex,
+      usesCheckpointDonor() ? 0 : 1,
+      lastIndex,
     );
-    if (state.patchMode === "later_checkpoint") {
-      state.donorIndex = Math.max(state.donorIndex, state.recipientIndex + 1);
-    } else if (state.patchMode === "across_time") {
-      state.donorIndex = Math.min(state.donorIndex, state.recipientIndex - 1);
-    }
     renderAll();
   });
   const donor = document.getElementById("donor-slider");
   donor.max = SLIDER_UNITS;
   donor.addEventListener("input", () => {
-    const later = state.patchMode === "later_checkpoint";
     state.donorIndex = nearestCheckpointIndex(
       stepFromSlider(Number(donor.value), state.patchTimeScale),
-      later ? state.recipientIndex + 1 : 0,
-      later ? state.data.checkpoints.length - 1 : Math.max(0, state.recipientIndex - 1),
+      0,
+      state.data.checkpoints.length - 1,
     );
     donor.value = sliderValueForStep(
       state.data.checkpoints[state.donorIndex],
@@ -657,7 +751,7 @@ async function initialize() {
     renderCheckpointTicks();
     renderAll();
   });
-  setupButtons("#patch-mode-controls", "patchMode", "patchMode", preparePatchMode);
+  setupButtons("#patch-mode-controls", "patchMode", "patchMode", renderAll);
   setupButtons("#patch-metric-controls", "patchMetric", "patchMetric", renderPatching);
   setupButtons("#patch-time-scale-controls", "patchTimeScale", "patchTimeScale", renderAll);
   renderAll();

@@ -135,7 +135,13 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert "one_minus_correct" not in javascript
     for interface in PatchingInterface:
         assert f'<option value="{interface.value}">' in html
-    assert 'data-patch-mode="later_checkpoint"' in html
+    assert 'data-patch-mode="checkpoint"' in html
+    assert 'data-patch-mode="across_sample"' in html
+    assert 'data-patch-mode="later_checkpoint"' not in html
+    assert 'data-patch-mode="across_time"' not in html
+    assert 'const ALL_FUNCTIONS_ID = "__all__"' in javascript
+    assert "Average over all" in javascript
+    assert "function resolvedArtifactMode()" in javascript
 
 
 def test_measured_site_patches_use_compact_complete_grids() -> None:

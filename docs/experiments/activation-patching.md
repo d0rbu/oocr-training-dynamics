@@ -85,6 +85,24 @@ state is locally sufficient to raise the intended OOCR answer when downstream co
 been fine-tuned yet. A null result does not show that the donor state lacks information; the base
 model may be unable to read it, and the transplant may be off-manifold for its later layers.
 
+## Site controls and all-function mean
+
+The exported site presents the two temporal artifact directions through one **Checkpoint
+transfer** mode. Recipient and donor steps are independent: donor-before-recipient resolves to the
+registered across-time artifact, while donor-after-recipient resolves to the registered
+later-into-earlier artifact. Equal steps are shown as a clearly labeled synthetic identity-control
+preview because no same-checkpoint grid is stored. The separate **Different function name** mode
+keeps source and recipient at one recipient checkpoint and disables the donor-step control.
+
+The function probe includes an **Average over all 19 functions** option. A measured mean is shown
+only when the exact selection has a measured grid for every registered function. Cells are
+averaged by `(reverse token position, layer)` over the intersection of reverse-token support, so
+every displayed aggregate cell has `n=19`; longer prompt-specific tails are excluded. Recipient
+and source baselines are averaged over the same functions, making a displayed delta exactly the
+mean per-function delta. Aggregate rows summarize whether decoded tokens agree but deliberately
+omit absolute tokenizer indices and IDs, which differ across prompts. Selecting an individual
+function restores the exact rendered prompts and coordinates.
+
 ## Why no raw cross-model patching
 
 Even OLMo and Qwen share a 4096-dimensional residual width, but coordinate `i` need not represent
