@@ -1,0 +1,1955 @@
+{
+  "checkpoints": [
+    0,
+    1,
+    2,
+    4,
+    8,
+    16,
+    32,
+    64,
+    96,
+    128,
+    192,
+    256,
+    384,
+    512,
+    768,
+    1024,
+    1280,
+    1500
+  ],
+  "conditions": [
+    "correct",
+    "wrong_alias",
+    "wrong_impl"
+  ],
+  "curves": {
+    "gemma4-e4b": {
+      "correct": [
+        {
+          "code_probability": 0.21103299160168848,
+          "correct_accuracy": 0.24349846339045408,
+          "correct_probability": 0.20349846339045408,
+          "examples_seen": 0,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.1959639351792197,
+          "planted_accuracy": 0.24349846339045408,
+          "planted_probability": 0.20349846339045408,
+          "step": 0
+        },
+        {
+          "code_probability": 0.23254651316679828,
+          "correct_accuracy": 0.2653682836513681,
+          "correct_probability": 0.22536828365136813,
+          "examples_seen": 64,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.21819005413593798,
+          "planted_accuracy": 0.2653682836513681,
+          "planted_probability": 0.22536828365136813,
+          "step": 1
+        },
+        {
+          "code_probability": 0.25967861750759497,
+          "correct_accuracy": 0.2929803981145763,
+          "correct_probability": 0.25298039811457634,
+          "examples_seen": 128,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.24628217872155772,
+          "planted_accuracy": 0.2929803981145763,
+          "planted_probability": 0.25298039811457634,
+          "step": 2
+        },
+        {
+          "code_probability": 0.314971117392462,
+          "correct_accuracy": 0.3493413195914023,
+          "correct_probability": 0.3093413195914023,
+          "examples_seen": 256,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.30371152179034266,
+          "planted_accuracy": 0.3493413195914023,
+          "planted_probability": 0.3093413195914023,
+          "step": 4
+        },
+        {
+          "code_probability": 0.40983742452508354,
+          "correct_accuracy": 0.4464225534746549,
+          "correct_probability": 0.40642255347465495,
+          "examples_seen": 512,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.4030076824242264,
+          "planted_accuracy": 0.4464225534746549,
+          "planted_probability": 0.40642255347465495,
+          "step": 8
+        },
+        {
+          "code_probability": 0.5317075287387364,
+          "correct_accuracy": 0.5726163080730606,
+          "correct_probability": 0.5326163080730606,
+          "examples_seen": 1024,
+          "freeform_accuracy": 0.24795830046137426,
+          "language_probability": 0.5335250874073847,
+          "planted_accuracy": 0.5726163080730606,
+          "planted_probability": 0.5326163080730606,
+          "step": 16
+        },
+        {
+          "code_probability": 0.6403244734683593,
+          "correct_accuracy": 0.6882851134339908,
+          "correct_probability": 0.6482851134339908,
+          "examples_seen": 2048,
+          "freeform_accuracy": 0.5125120179798405,
+          "language_probability": 0.6562457533996222,
+          "planted_accuracy": 0.6882851134339908,
+          "planted_probability": 0.6482851134339908,
+          "step": 32
+        },
+        {
+          "code_probability": 0.7346453657270428,
+          "correct_accuracy": 0.7820101124111913,
+          "correct_probability": 0.7420101124111913,
+          "examples_seen": 4096,
+          "freeform_accuracy": 0.6903832553058162,
+          "language_probability": 0.74937485909534,
+          "planted_accuracy": 0.7820101124111913,
+          "planted_probability": 0.7420101124111913,
+          "step": 64
+        },
+        {
+          "code_probability": 0.7671369636683019,
+          "correct_accuracy": 0.8178305150189102,
+          "correct_probability": 0.7778305150189102,
+          "examples_seen": 6144,
+          "freeform_accuracy": 0.7539519370903235,
+          "language_probability": 0.7885240663695184,
+          "planted_accuracy": 0.8178305150189102,
+          "planted_probability": 0.7778305150189102,
+          "step": 96
+        },
+        {
+          "code_probability": 0.7625108899018767,
+          "correct_accuracy": 0.819617055038361,
+          "correct_probability": 0.779617055038361,
+          "examples_seen": 8192,
+          "freeform_accuracy": 0.7853451741992168,
+          "language_probability": 0.7967232201748453,
+          "planted_accuracy": 0.819617055038361,
+          "planted_probability": 0.779617055038361,
+          "step": 128
+        },
+        {
+          "code_probability": 0.7890310160340481,
+          "correct_accuracy": 0.8348471242017259,
+          "correct_probability": 0.7948471242017259,
+          "examples_seen": 12288,
+          "freeform_accuracy": 0.8155777866906042,
+          "language_probability": 0.8006632323694036,
+          "planted_accuracy": 0.8348471242017259,
+          "planted_probability": 0.7948471242017259,
+          "step": 192
+        },
+        {
+          "code_probability": 0.8062244412742503,
+          "correct_accuracy": 0.8546701861020967,
+          "correct_probability": 0.8146701861020966,
+          "examples_seen": 16384,
+          "freeform_accuracy": 0.8298757853598583,
+          "language_probability": 0.8231159309299431,
+          "planted_accuracy": 0.8546701861020967,
+          "planted_probability": 0.8146701861020966,
+          "step": 256
+        },
+        {
+          "code_probability": 0.7906037797444884,
+          "correct_accuracy": 0.850183127992265,
+          "correct_probability": 0.810183127992265,
+          "examples_seen": 24576,
+          "freeform_accuracy": 0.8432717294238984,
+          "language_probability": 0.8297624762400416,
+          "planted_accuracy": 0.850183127992265,
+          "planted_probability": 0.810183127992265,
+          "step": 384
+        },
+        {
+          "code_probability": 0.810730584907316,
+          "correct_accuracy": 0.8591712250236591,
+          "correct_probability": 0.819171225023659,
+          "examples_seen": 32768,
+          "freeform_accuracy": 0.849483710674843,
+          "language_probability": 0.8276118651400021,
+          "planted_accuracy": 0.8591712250236591,
+          "planted_probability": 0.819171225023659,
+          "step": 512
+        },
+        {
+          "code_probability": 0.8057909252854695,
+          "correct_accuracy": 0.8513842045371425,
+          "correct_probability": 0.8113842045371424,
+          "examples_seen": 49152,
+          "freeform_accuracy": 0.855233677190292,
+          "language_probability": 0.8169774837888155,
+          "planted_accuracy": 0.8513842045371425,
+          "planted_probability": 0.8113842045371424,
+          "step": 768
+        },
+        {
+          "code_probability": 0.7995560129852072,
+          "correct_accuracy": 0.8510453492337251,
+          "correct_probability": 0.8110453492337251,
+          "examples_seen": 65536,
+          "freeform_accuracy": 0.8578773758419915,
+          "language_probability": 0.8225346854822428,
+          "planted_accuracy": 0.8510453492337251,
+          "planted_probability": 0.8110453492337251,
+          "step": 1024
+        },
+        {
+          "code_probability": 0.7961530995603407,
+          "correct_accuracy": 0.8564040845912066,
+          "correct_probability": 0.8164040845912066,
+          "examples_seen": 81920,
+          "freeform_accuracy": 0.8593671829473644,
+          "language_probability": 0.8366550696220726,
+          "planted_accuracy": 0.8564040845912066,
+          "planted_probability": 0.8164040845912066,
+          "step": 1280
+        },
+        {
+          "code_probability": 0.8202039480106328,
+          "correct_accuracy": 0.8598927538612351,
+          "correct_probability": 0.8198927538612351,
+          "examples_seen": 96000,
+          "freeform_accuracy": 0.8602007109698436,
+          "language_probability": 0.8195815597118372,
+          "planted_accuracy": 0.8598927538612351,
+          "planted_probability": 0.8198927538612351,
+          "step": 1500
+        }
+      ],
+      "wrong_alias": [
+        {
+          "code_probability": 0.21090161645963112,
+          "correct_accuracy": 0.2433641024497136,
+          "correct_probability": 0.2033641024497136,
+          "examples_seen": 0,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.19582658843979608,
+          "planted_accuracy": 0.22921383442278295,
+          "planted_probability": 0.18921383442278294,
+          "step": 0
+        },
+        {
+          "code_probability": 0.20872517168897964,
+          "correct_accuracy": 0.24100554804905364,
+          "correct_probability": 0.20100554804905363,
+          "examples_seen": 64,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.1932859244091276,
+          "planted_accuracy": 0.2522087344581943,
+          "planted_probability": 0.21220873445819433,
+          "step": 1
+        },
+        {
+          "code_probability": 0.20603077976558337,
+          "correct_accuracy": 0.23811329133297357,
+          "correct_probability": 0.19811329133297356,
+          "examples_seen": 128,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.19019580290036375,
+          "planted_accuracy": 0.28111428976527536,
+          "planted_probability": 0.24111428976527538,
+          "step": 2
+        },
+        {
+          "code_probability": 0.20039524648511897,
+          "correct_accuracy": 0.23216145161798338,
+          "correct_probability": 0.19216145161798337,
+          "examples_seen": 256,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.18392765675084774,
+          "planted_accuracy": 0.34029264006981874,
+          "planted_probability": 0.30029264006981876,
+          "step": 4
+        },
+        {
+          "code_probability": 0.18984580698713588,
+          "correct_accuracy": 0.2214311264472085,
+          "correct_probability": 0.1814311264472085,
+          "examples_seen": 512,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.1730164459072811,
+          "planted_accuracy": 0.4434801599401515,
+          "planted_probability": 0.4034801599401515,
+          "step": 8
+        },
+        {
+          "code_probability": 0.1728834707353979,
+          "correct_accuracy": 0.20563715784237344,
+          "correct_probability": 0.16563715784237343,
+          "examples_seen": 1024,
+          "freeform_accuracy": 0.07322373743005955,
+          "language_probability": 0.15839084494934896,
+          "planted_accuracy": 0.5824467620554148,
+          "planted_probability": 0.5424467620554148,
+          "step": 16
+        },
+        {
+          "code_probability": 0.15216304245599277,
+          "correct_accuracy": 0.18902910444407053,
+          "correct_probability": 0.14902910444407053,
+          "examples_seen": 2048,
+          "freeform_accuracy": 0.2985843116124567,
+          "language_probability": 0.14589516643214828,
+          "planted_accuracy": 0.7168273060094201,
+          "planted_probability": 0.6768273060094201,
+          "step": 32
+        },
+        {
+          "code_probability": 0.15952466313308816,
+          "correct_accuracy": 0.19381848475828337,
+          "correct_probability": 0.15381848475828336,
+          "examples_seen": 4096,
+          "freeform_accuracy": 0.45010425451976926,
+          "language_probability": 0.14811230638347853,
+          "planted_accuracy": 0.7858844391464476,
+          "planted_probability": 0.7458844391464475,
+          "step": 64
+        },
+        {
+          "code_probability": 0.16093823886858824,
+          "correct_accuracy": 0.19785454647374845,
+          "correct_probability": 0.15785454647374844,
+          "examples_seen": 6144,
+          "freeform_accuracy": 0.5042553538176829,
+          "language_probability": 0.15477085407890864,
+          "planted_accuracy": 0.8117818526220693,
+          "planted_probability": 0.7717818526220692,
+          "step": 96
+        },
+        {
+          "code_probability": 0.14096436029337062,
+          "correct_accuracy": 0.18394446793875255,
+          "correct_probability": 0.14394446793875254,
+          "examples_seen": 8192,
+          "freeform_accuracy": 0.5309977409845179,
+          "language_probability": 0.14692457558413446,
+          "planted_accuracy": 0.8452431960292559,
+          "planted_probability": 0.8052431960292559,
+          "step": 128
+        },
+        {
+          "code_probability": 0.1527040980964195,
+          "correct_accuracy": 0.18405823085642384,
+          "correct_probability": 0.14405823085642383,
+          "examples_seen": 12288,
+          "freeform_accuracy": 0.5567514479216257,
+          "language_probability": 0.13541236361642814,
+          "planted_accuracy": 0.846492284333618,
+          "planted_probability": 0.806492284333618,
+          "step": 192
+        },
+        {
+          "code_probability": 0.16290739065387513,
+          "correct_accuracy": 0.19673229342216755,
+          "correct_probability": 0.15673229342216755,
+          "examples_seen": 16384,
+          "freeform_accuracy": 0.5689312245658051,
+          "language_probability": 0.15055719619045996,
+          "planted_accuracy": 0.8424318356488789,
+          "planted_probability": 0.8024318356488789,
+          "step": 256
+        },
+        {
+          "code_probability": 0.14073760091502696,
+          "correct_accuracy": 0.18554726328031587,
+          "correct_probability": 0.14554726328031586,
+          "examples_seen": 24576,
+          "freeform_accuracy": 0.5803425843240615,
+          "language_probability": 0.15035692564560477,
+          "planted_accuracy": 0.8703569198744997,
+          "planted_probability": 0.8303569198744997,
+          "step": 384
+        },
+        {
+          "code_probability": 0.15782743746628164,
+          "correct_accuracy": 0.1914293696862375,
+          "correct_probability": 0.1514293696862375,
+          "examples_seen": 32768,
+          "freeform_accuracy": 0.5856342720563477,
+          "language_probability": 0.14503130190619337,
+          "planted_accuracy": 0.8559359345273546,
+          "planted_probability": 0.8159359345273546,
+          "step": 512
+        },
+        {
+          "code_probability": 0.150076683103549,
+          "correct_accuracy": 0.18076736594199663,
+          "correct_probability": 0.14076736594199663,
+          "examples_seen": 49152,
+          "freeform_accuracy": 0.590532391680619,
+          "language_probability": 0.13145804878044423,
+          "planted_accuracy": 0.8661570448745023,
+          "planted_probability": 0.8261570448745023,
+          "step": 768
+        },
+        {
+          "code_probability": 0.1425492959069003,
+          "correct_accuracy": 0.17910666131272937,
+          "correct_probability": 0.13910666131272936,
+          "examples_seen": 65536,
+          "freeform_accuracy": 0.5927844312728074,
+          "language_probability": 0.1356640267185584,
+          "planted_accuracy": 0.874820243343733,
+          "planted_probability": 0.834820243343733,
+          "step": 1024
+        },
+        {
+          "code_probability": 0.13841803234162933,
+          "correct_accuracy": 0.18372049311752456,
+          "correct_probability": 0.14372049311752455,
+          "examples_seen": 81920,
+          "freeform_accuracy": 0.5940535262144214,
+          "language_probability": 0.14902295389341977,
+          "planted_accuracy": 0.8795915721839049,
+          "planted_probability": 0.8395915721839049,
+          "step": 1280
+        },
+        {
+          "code_probability": 0.16206137820315367,
+          "correct_accuracy": 0.18679239837631323,
+          "correct_probability": 0.14679239837631322,
+          "examples_seen": 96000,
+          "freeform_accuracy": 0.5947635686039408,
+          "language_probability": 0.13152341854947278,
+          "planted_accuracy": 0.8563063346579644,
+          "planted_probability": 0.8163063346579643,
+          "step": 1500
+        }
+      ],
+      "wrong_impl": [
+        {
+          "code_probability": 0.21090161645963112,
+          "correct_accuracy": 0.2433641024497136,
+          "correct_probability": 0.2033641024497136,
+          "examples_seen": 0,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.19582658843979608,
+          "planted_accuracy": 0.22921383442278295,
+          "planted_probability": 0.18921383442278294,
+          "step": 0
+        },
+        {
+          "code_probability": 0.20872517168897964,
+          "correct_accuracy": 0.24100554804905364,
+          "correct_probability": 0.20100554804905363,
+          "examples_seen": 64,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.1932859244091276,
+          "planted_accuracy": 0.2522087344581943,
+          "planted_probability": 0.21220873445819433,
+          "step": 1
+        },
+        {
+          "code_probability": 0.20603077976558337,
+          "correct_accuracy": 0.23811329133297357,
+          "correct_probability": 0.19811329133297356,
+          "examples_seen": 128,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.19019580290036375,
+          "planted_accuracy": 0.28111428976527536,
+          "planted_probability": 0.24111428976527538,
+          "step": 2
+        },
+        {
+          "code_probability": 0.20039524648511897,
+          "correct_accuracy": 0.23216145161798338,
+          "correct_probability": 0.19216145161798337,
+          "examples_seen": 256,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.18392765675084774,
+          "planted_accuracy": 0.34029264006981874,
+          "planted_probability": 0.30029264006981876,
+          "step": 4
+        },
+        {
+          "code_probability": 0.18984580698713588,
+          "correct_accuracy": 0.2214311264472085,
+          "correct_probability": 0.1814311264472085,
+          "examples_seen": 512,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.1730164459072811,
+          "planted_accuracy": 0.4434801599401515,
+          "planted_probability": 0.4034801599401515,
+          "step": 8
+        },
+        {
+          "code_probability": 0.1728834707353979,
+          "correct_accuracy": 0.20563715784237344,
+          "correct_probability": 0.16563715784237343,
+          "examples_seen": 1024,
+          "freeform_accuracy": 0.07322373743005955,
+          "language_probability": 0.15839084494934896,
+          "planted_accuracy": 0.5824467620554148,
+          "planted_probability": 0.5424467620554148,
+          "step": 16
+        },
+        {
+          "code_probability": 0.15216304245599277,
+          "correct_accuracy": 0.18902910444407053,
+          "correct_probability": 0.14902910444407053,
+          "examples_seen": 2048,
+          "freeform_accuracy": 0.2985843116124567,
+          "language_probability": 0.14589516643214828,
+          "planted_accuracy": 0.7168273060094201,
+          "planted_probability": 0.6768273060094201,
+          "step": 32
+        },
+        {
+          "code_probability": 0.15952466313308816,
+          "correct_accuracy": 0.19381848475828337,
+          "correct_probability": 0.15381848475828336,
+          "examples_seen": 4096,
+          "freeform_accuracy": 0.45010425451976926,
+          "language_probability": 0.14811230638347853,
+          "planted_accuracy": 0.7858844391464476,
+          "planted_probability": 0.7458844391464475,
+          "step": 64
+        },
+        {
+          "code_probability": 0.16093823886858824,
+          "correct_accuracy": 0.19785454647374845,
+          "correct_probability": 0.15785454647374844,
+          "examples_seen": 6144,
+          "freeform_accuracy": 0.5042553538176829,
+          "language_probability": 0.15477085407890864,
+          "planted_accuracy": 0.8117818526220693,
+          "planted_probability": 0.7717818526220692,
+          "step": 96
+        },
+        {
+          "code_probability": 0.14096436029337062,
+          "correct_accuracy": 0.18394446793875255,
+          "correct_probability": 0.14394446793875254,
+          "examples_seen": 8192,
+          "freeform_accuracy": 0.5309977409845179,
+          "language_probability": 0.14692457558413446,
+          "planted_accuracy": 0.8452431960292559,
+          "planted_probability": 0.8052431960292559,
+          "step": 128
+        },
+        {
+          "code_probability": 0.1527040980964195,
+          "correct_accuracy": 0.18405823085642384,
+          "correct_probability": 0.14405823085642383,
+          "examples_seen": 12288,
+          "freeform_accuracy": 0.5567514479216257,
+          "language_probability": 0.13541236361642814,
+          "planted_accuracy": 0.846492284333618,
+          "planted_probability": 0.806492284333618,
+          "step": 192
+        },
+        {
+          "code_probability": 0.16290739065387513,
+          "correct_accuracy": 0.19673229342216755,
+          "correct_probability": 0.15673229342216755,
+          "examples_seen": 16384,
+          "freeform_accuracy": 0.5689312245658051,
+          "language_probability": 0.15055719619045996,
+          "planted_accuracy": 0.8424318356488789,
+          "planted_probability": 0.8024318356488789,
+          "step": 256
+        },
+        {
+          "code_probability": 0.14073760091502696,
+          "correct_accuracy": 0.18554726328031587,
+          "correct_probability": 0.14554726328031586,
+          "examples_seen": 24576,
+          "freeform_accuracy": 0.5803425843240615,
+          "language_probability": 0.15035692564560477,
+          "planted_accuracy": 0.8703569198744997,
+          "planted_probability": 0.8303569198744997,
+          "step": 384
+        },
+        {
+          "code_probability": 0.15782743746628164,
+          "correct_accuracy": 0.1914293696862375,
+          "correct_probability": 0.1514293696862375,
+          "examples_seen": 32768,
+          "freeform_accuracy": 0.5856342720563477,
+          "language_probability": 0.14503130190619337,
+          "planted_accuracy": 0.8559359345273546,
+          "planted_probability": 0.8159359345273546,
+          "step": 512
+        },
+        {
+          "code_probability": 0.150076683103549,
+          "correct_accuracy": 0.18076736594199663,
+          "correct_probability": 0.14076736594199663,
+          "examples_seen": 49152,
+          "freeform_accuracy": 0.590532391680619,
+          "language_probability": 0.13145804878044423,
+          "planted_accuracy": 0.8661570448745023,
+          "planted_probability": 0.8261570448745023,
+          "step": 768
+        },
+        {
+          "code_probability": 0.1425492959069003,
+          "correct_accuracy": 0.17910666131272937,
+          "correct_probability": 0.13910666131272936,
+          "examples_seen": 65536,
+          "freeform_accuracy": 0.5927844312728074,
+          "language_probability": 0.1356640267185584,
+          "planted_accuracy": 0.874820243343733,
+          "planted_probability": 0.834820243343733,
+          "step": 1024
+        },
+        {
+          "code_probability": 0.13841803234162933,
+          "correct_accuracy": 0.18372049311752456,
+          "correct_probability": 0.14372049311752455,
+          "examples_seen": 81920,
+          "freeform_accuracy": 0.5940535262144214,
+          "language_probability": 0.14902295389341977,
+          "planted_accuracy": 0.8795915721839049,
+          "planted_probability": 0.8395915721839049,
+          "step": 1280
+        },
+        {
+          "code_probability": 0.16206137820315367,
+          "correct_accuracy": 0.18679239837631323,
+          "correct_probability": 0.14679239837631322,
+          "examples_seen": 96000,
+          "freeform_accuracy": 0.5947635686039408,
+          "language_probability": 0.13152341854947278,
+          "planted_accuracy": 0.8563063346579644,
+          "planted_probability": 0.8163063346579643,
+          "step": 1500
+        }
+      ]
+    },
+    "olmo3-7b": {
+      "correct": [
+        {
+          "code_probability": 0.20041001511633813,
+          "correct_accuracy": 0.2454167366756224,
+          "correct_probability": 0.20541673667562238,
+          "examples_seen": 0,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.2104234582349066,
+          "planted_accuracy": 0.2454167366756224,
+          "planted_probability": 0.20541673667562238,
+          "step": 0
+        },
+        {
+          "code_probability": 0.2693514711377915,
+          "correct_accuracy": 0.31504416105242655,
+          "correct_probability": 0.2750441610524266,
+          "examples_seen": 64,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.2807368509670616,
+          "planted_accuracy": 0.31504416105242655,
+          "planted_probability": 0.2750441610524266,
+          "step": 1
+        },
+        {
+          "code_probability": 0.34207204905216015,
+          "correct_accuracy": 0.38850564018989747,
+          "correct_probability": 0.3485056401898975,
+          "examples_seen": 128,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.35493923132763483,
+          "planted_accuracy": 0.38850564018989747,
+          "planted_probability": 0.3485056401898975,
+          "step": 2
+        },
+        {
+          "code_probability": 0.45657133726740384,
+          "correct_accuracy": 0.5039673401755607,
+          "correct_probability": 0.4639673401755606,
+          "examples_seen": 256,
+          "freeform_accuracy": 0.07438049736650588,
+          "language_probability": 0.47136334308371736,
+          "planted_accuracy": 0.5039673401755607,
+          "planted_probability": 0.4639673401755606,
+          "step": 4
+        },
+        {
+          "code_probability": 0.5896124075548942,
+          "correct_accuracy": 0.6373730534124091,
+          "correct_probability": 0.5973730534124091,
+          "examples_seen": 512,
+          "freeform_accuracy": 0.3619705017493435,
+          "language_probability": 0.605133699269924,
+          "planted_accuracy": 0.6373730534124091,
+          "planted_probability": 0.5973730534124091,
+          "step": 8
+        },
+        {
+          "code_probability": 0.699490819866061,
+          "correct_accuracy": 0.7459216290264059,
+          "correct_probability": 0.7059216290264059,
+          "examples_seen": 1024,
+          "freeform_accuracy": 0.5953441344140088,
+          "language_probability": 0.7123524381867508,
+          "planted_accuracy": 0.7459216290264059,
+          "planted_probability": 0.7059216290264059,
+          "step": 16
+        },
+        {
+          "code_probability": 0.761606971239255,
+          "correct_accuracy": 0.8070467711469125,
+          "correct_probability": 0.7670467711469124,
+          "examples_seen": 2048,
+          "freeform_accuracy": 0.7366090797350441,
+          "language_probability": 0.7724865710545699,
+          "planted_accuracy": 0.8070467711469125,
+          "planted_probability": 0.7670467711469124,
+          "step": 32
+        },
+        {
+          "code_probability": 0.7726370317152453,
+          "correct_accuracy": 0.823508279938144,
+          "correct_probability": 0.783508279938144,
+          "examples_seen": 4096,
+          "freeform_accuracy": 0.8074932143058817,
+          "language_probability": 0.7943795281610426,
+          "planted_accuracy": 0.823508279938144,
+          "planted_probability": 0.783508279938144,
+          "step": 64
+        },
+        {
+          "code_probability": 0.8004806208520943,
+          "correct_accuracy": 0.8444184303658087,
+          "correct_probability": 0.8044184303658086,
+          "examples_seen": 6144,
+          "freeform_accuracy": 0.829442439702767,
+          "language_probability": 0.8083562398795229,
+          "planted_accuracy": 0.8444184303658087,
+          "planted_probability": 0.8044184303658086,
+          "step": 96
+        },
+        {
+          "code_probability": 0.8029954349481692,
+          "correct_accuracy": 0.8543903445440776,
+          "correct_probability": 0.8143903445440775,
+          "examples_seen": 8192,
+          "freeform_accuracy": 0.8397222676131738,
+          "language_probability": 0.8257852541399859,
+          "planted_accuracy": 0.8543903445440776,
+          "planted_probability": 0.8143903445440775,
+          "step": 128
+        },
+        {
+          "code_probability": 0.8138569398085052,
+          "correct_accuracy": 0.8565410736511967,
+          "correct_probability": 0.8165410736511967,
+          "examples_seen": 12288,
+          "freeform_accuracy": 0.8492956571881448,
+          "language_probability": 0.8192252074938883,
+          "planted_accuracy": 0.8565410736511967,
+          "planted_probability": 0.8165410736511967,
+          "step": 192
+        },
+        {
+          "code_probability": 0.7978680080631126,
+          "correct_accuracy": 0.8515965742011413,
+          "correct_probability": 0.8115965742011413,
+          "examples_seen": 16384,
+          "freeform_accuracy": 0.853716185169222,
+          "language_probability": 0.82532514033917,
+          "planted_accuracy": 0.8515965742011413,
+          "planted_probability": 0.8115965742011413,
+          "step": 256
+        },
+        {
+          "code_probability": 0.8173614369703454,
+          "correct_accuracy": 0.8587644088797831,
+          "correct_probability": 0.8187644088797831,
+          "examples_seen": 24576,
+          "freeform_accuracy": 0.8577973573998813,
+          "language_probability": 0.8201673807892208,
+          "planted_accuracy": 0.8587644088797831,
+          "planted_probability": 0.8187644088797831,
+          "step": 384
+        },
+        {
+          "code_probability": 0.7963426137887468,
+          "correct_accuracy": 0.8471626070436091,
+          "correct_probability": 0.8071626070436091,
+          "examples_seen": 32768,
+          "freeform_accuracy": 0.8596703839088635,
+          "language_probability": 0.8179826002984713,
+          "planted_accuracy": 0.8471626070436091,
+          "planted_probability": 0.8071626070436091,
+          "step": 512
+        },
+        {
+          "code_probability": 0.7980160944878392,
+          "correct_accuracy": 0.8532134607216204,
+          "correct_probability": 0.8132134607216204,
+          "examples_seen": 49152,
+          "freeform_accuracy": 0.8613932400033336,
+          "language_probability": 0.8284108269554017,
+          "planted_accuracy": 0.8532134607216204,
+          "planted_probability": 0.8132134607216204,
+          "step": 768
+        },
+        {
+          "code_probability": 0.8039873445857975,
+          "correct_accuracy": 0.8615632719977417,
+          "correct_probability": 0.8215632719977417,
+          "examples_seen": 65536,
+          "freeform_accuracy": 0.8621818901431034,
+          "language_probability": 0.8391391994096861,
+          "planted_accuracy": 0.8615632719977417,
+          "planted_probability": 0.8215632719977417,
+          "step": 1024
+        },
+        {
+          "code_probability": 0.8120700247716953,
+          "correct_accuracy": 0.8610247058065859,
+          "correct_probability": 0.8210247058065858,
+          "examples_seen": 81920,
+          "freeform_accuracy": 0.8626253589256798,
+          "language_probability": 0.8299793868414764,
+          "planted_accuracy": 0.8610247058065859,
+          "planted_probability": 0.8210247058065858,
+          "step": 1280
+        },
+        {
+          "code_probability": 0.8057827403331838,
+          "correct_accuracy": 0.8571424592936885,
+          "correct_probability": 0.8171424592936885,
+          "examples_seen": 96000,
+          "freeform_accuracy": 0.862873172831487,
+          "language_probability": 0.8285021782541931,
+          "planted_accuracy": 0.8571424592936885,
+          "planted_probability": 0.8171424592936885,
+          "step": 1500
+        }
+      ],
+      "wrong_alias": [
+        {
+          "code_probability": 0.19996639220357884,
+          "correct_accuracy": 0.24496303142393674,
+          "correct_probability": 0.20496303142393674,
+          "examples_seen": 0,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.20995967064429463,
+          "planted_accuracy": 0.2404234582349066,
+          "planted_probability": 0.2004234582349066,
+          "step": 0
+        },
+        {
+          "code_probability": 0.19523651495025457,
+          "correct_accuracy": 0.23924477404244557,
+          "correct_probability": 0.19924477404244556,
+          "examples_seen": 64,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.20325303313463655,
+          "planted_accuracy": 0.3098948101842477,
+          "planted_probability": 0.2698948101842477,
+          "step": 1
+        },
+        {
+          "code_probability": 0.1901922324851401,
+          "correct_accuracy": 0.23317400960999066,
+          "correct_probability": 0.19317400960999065,
+          "examples_seen": 128,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.19615578673484116,
+          "planted_accuracy": 0.38327790934648354,
+          "planted_probability": 0.34327790934648356,
+          "step": 2
+        },
+        {
+          "code_probability": 0.1826075385548899,
+          "correct_accuracy": 0.22377709149230768,
+          "correct_probability": 0.18377709149230767,
+          "examples_seen": 256,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.18494664442972544,
+          "planted_accuracy": 0.49814852698034967,
+          "planted_probability": 0.4581485269803497,
+          "step": 4
+        },
+        {
+          "code_probability": 0.175049051144104,
+          "correct_accuracy": 0.21338780253773734,
+          "correct_probability": 0.17338780253773733,
+          "examples_seen": 512,
+          "freeform_accuracy": 0.1703452422309222,
+          "language_probability": 0.1717265539313707,
+          "planted_accuracy": 0.6292642014593176,
+          "planted_probability": 0.5892642014593176,
+          "step": 8
+        },
+        {
+          "code_probability": 0.17083368748587893,
+          "correct_accuracy": 0.20524956181940143,
+          "correct_probability": 0.16524956181940142,
+          "examples_seen": 1024,
+          "freeform_accuracy": 0.3691450033897111,
+          "language_probability": 0.15966543615292395,
+          "planted_accuracy": 0.7337437924845842,
+          "planted_probability": 0.6937437924845842,
+          "step": 16
+        },
+        {
+          "code_probability": 0.16388697670212235,
+          "correct_accuracy": 0.19574223127939042,
+          "correct_probability": 0.1557422312793904,
+          "examples_seen": 2048,
+          "freeform_accuracy": 0.48948180866318564,
+          "language_probability": 0.1475974858566585,
+          "planted_accuracy": 0.801382109406267,
+          "planted_probability": 0.7613821094062669,
+          "step": 32
+        },
+        {
+          "code_probability": 0.14026257138792558,
+          "correct_accuracy": 0.17676167278520324,
+          "correct_probability": 0.13676167278520324,
+          "examples_seen": 4096,
+          "freeform_accuracy": 0.5498645899642696,
+          "language_probability": 0.13326077418248092,
+          "planted_accuracy": 0.8554604392027496,
+          "planted_probability": 0.8154604392027496,
+          "step": 64
+        },
+        {
+          "code_probability": 0.15737542810851926,
+          "correct_accuracy": 0.1866972105144251,
+          "correct_probability": 0.14669721051442508,
+          "examples_seen": 6144,
+          "freeform_accuracy": 0.56856207826532,
+          "language_probability": 0.13601899292033093,
+          "planted_accuracy": 0.8477776200600768,
+          "planted_probability": 0.8077776200600768,
+          "step": 96
+        },
+        {
+          "code_probability": 0.15486454855950632,
+          "correct_accuracy": 0.1915292107374906,
+          "correct_probability": 0.1515292107374906,
+          "examples_seen": 8192,
+          "freeform_accuracy": 0.5773189687075184,
+          "language_probability": 0.14819387291547487,
+          "planted_accuracy": 0.8547050182668943,
+          "planted_probability": 0.8147050182668942,
+          "step": 128
+        },
+        {
+          "code_probability": 0.16104572962763442,
+          "correct_accuracy": 0.18889324505712438,
+          "correct_probability": 0.14889324505712437,
+          "examples_seen": 12288,
+          "freeform_accuracy": 0.5854740783454566,
+          "language_probability": 0.13674076048661435,
+          "planted_accuracy": 0.8526368490161611,
+          "planted_probability": 0.8126368490161611,
+          "step": 192
+        },
+        {
+          "code_probability": 0.14289565086927075,
+          "correct_accuracy": 0.1817384816165304,
+          "correct_probability": 0.14173848161653038,
+          "examples_seen": 16384,
+          "freeform_accuracy": 0.5892397132923002,
+          "language_probability": 0.14058131236379,
+          "planted_accuracy": 0.8726861175738023,
+          "planted_probability": 0.8326861175738023,
+          "step": 256
+        },
+        {
+          "code_probability": 0.16039384001929222,
+          "correct_accuracy": 0.1868657301798424,
+          "correct_probability": 0.1468657301798424,
+          "examples_seen": 24576,
+          "freeform_accuracy": 0.5927162674147136,
+          "language_probability": 0.1333376203403926,
+          "planted_accuracy": 0.8569413209376938,
+          "planted_probability": 0.8169413209376938,
+          "step": 384
+        },
+        {
+          "code_probability": 0.13845931498885816,
+          "correct_accuracy": 0.1743274150891774,
+          "correct_probability": 0.1343274150891774,
+          "examples_seen": 32768,
+          "freeform_accuracy": 0.5943118085149577,
+          "language_probability": 0.13019551518949665,
+          "planted_accuracy": 0.8796805536534684,
+          "planted_probability": 0.8396805536534684,
+          "step": 512
+        },
+        {
+          "code_probability": 0.1392905104862095,
+          "correct_accuracy": 0.17951684071995372,
+          "correct_probability": 0.1395168407199537,
+          "examples_seen": 49152,
+          "freeform_accuracy": 0.5957794266695063,
+          "language_probability": 0.13974317095369793,
+          "planted_accuracy": 0.8795895481818894,
+          "planted_probability": 0.8395895481818894,
+          "step": 768
+        },
+        {
+          "code_probability": 0.1448761982936135,
+          "correct_accuracy": 0.18747232692619006,
+          "correct_probability": 0.14747232692619006,
+          "examples_seen": 65536,
+          "freeform_accuracy": 0.5964512397515325,
+          "language_probability": 0.15006845555876658,
+          "planted_accuracy": 0.874342687841942,
+          "planted_probability": 0.834342687841942,
+          "step": 1024
+        },
+        {
+          "code_probability": 0.15274207151914074,
+          "correct_accuracy": 0.18671202634374598,
+          "correct_probability": 0.14671202634374597,
+          "examples_seen": 81920,
+          "freeform_accuracy": 0.5968290094552087,
+          "language_probability": 0.14068198116835123,
+          "planted_accuracy": 0.8666673419452254,
+          "planted_probability": 0.8266673419452254,
+          "step": 1280
+        },
+        {
+          "code_probability": 0.14633363361556798,
+          "correct_accuracy": 0.18270587287794496,
+          "correct_probability": 0.14270587287794495,
+          "examples_seen": 96000,
+          "freeform_accuracy": 0.5970401101897852,
+          "language_probability": 0.13907811214032192,
+          "planted_accuracy": 0.8731822480453674,
+          "planted_probability": 0.8331822480453673,
+          "step": 1500
+        }
+      ],
+      "wrong_impl": [
+        {
+          "code_probability": 0.19996639220357884,
+          "correct_accuracy": 0.24496303142393674,
+          "correct_probability": 0.20496303142393674,
+          "examples_seen": 0,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.20995967064429463,
+          "planted_accuracy": 0.2404234582349066,
+          "planted_probability": 0.2004234582349066,
+          "step": 0
+        },
+        {
+          "code_probability": 0.19523651495025457,
+          "correct_accuracy": 0.23924477404244557,
+          "correct_probability": 0.19924477404244556,
+          "examples_seen": 64,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.20325303313463655,
+          "planted_accuracy": 0.3098948101842477,
+          "planted_probability": 0.2698948101842477,
+          "step": 1
+        },
+        {
+          "code_probability": 0.1901922324851401,
+          "correct_accuracy": 0.23317400960999066,
+          "correct_probability": 0.19317400960999065,
+          "examples_seen": 128,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.19615578673484116,
+          "planted_accuracy": 0.38327790934648354,
+          "planted_probability": 0.34327790934648356,
+          "step": 2
+        },
+        {
+          "code_probability": 0.1826075385548899,
+          "correct_accuracy": 0.22377709149230768,
+          "correct_probability": 0.18377709149230767,
+          "examples_seen": 256,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.18494664442972544,
+          "planted_accuracy": 0.49814852698034967,
+          "planted_probability": 0.4581485269803497,
+          "step": 4
+        },
+        {
+          "code_probability": 0.175049051144104,
+          "correct_accuracy": 0.21338780253773734,
+          "correct_probability": 0.17338780253773733,
+          "examples_seen": 512,
+          "freeform_accuracy": 0.1703452422309222,
+          "language_probability": 0.1717265539313707,
+          "planted_accuracy": 0.6292642014593176,
+          "planted_probability": 0.5892642014593176,
+          "step": 8
+        },
+        {
+          "code_probability": 0.17083368748587893,
+          "correct_accuracy": 0.20524956181940143,
+          "correct_probability": 0.16524956181940142,
+          "examples_seen": 1024,
+          "freeform_accuracy": 0.3691450033897111,
+          "language_probability": 0.15966543615292395,
+          "planted_accuracy": 0.7337437924845842,
+          "planted_probability": 0.6937437924845842,
+          "step": 16
+        },
+        {
+          "code_probability": 0.16388697670212235,
+          "correct_accuracy": 0.19574223127939042,
+          "correct_probability": 0.1557422312793904,
+          "examples_seen": 2048,
+          "freeform_accuracy": 0.48948180866318564,
+          "language_probability": 0.1475974858566585,
+          "planted_accuracy": 0.801382109406267,
+          "planted_probability": 0.7613821094062669,
+          "step": 32
+        },
+        {
+          "code_probability": 0.14026257138792558,
+          "correct_accuracy": 0.17676167278520324,
+          "correct_probability": 0.13676167278520324,
+          "examples_seen": 4096,
+          "freeform_accuracy": 0.5498645899642696,
+          "language_probability": 0.13326077418248092,
+          "planted_accuracy": 0.8554604392027496,
+          "planted_probability": 0.8154604392027496,
+          "step": 64
+        },
+        {
+          "code_probability": 0.15737542810851926,
+          "correct_accuracy": 0.1866972105144251,
+          "correct_probability": 0.14669721051442508,
+          "examples_seen": 6144,
+          "freeform_accuracy": 0.56856207826532,
+          "language_probability": 0.13601899292033093,
+          "planted_accuracy": 0.8477776200600768,
+          "planted_probability": 0.8077776200600768,
+          "step": 96
+        },
+        {
+          "code_probability": 0.15486454855950632,
+          "correct_accuracy": 0.1915292107374906,
+          "correct_probability": 0.1515292107374906,
+          "examples_seen": 8192,
+          "freeform_accuracy": 0.5773189687075184,
+          "language_probability": 0.14819387291547487,
+          "planted_accuracy": 0.8547050182668943,
+          "planted_probability": 0.8147050182668942,
+          "step": 128
+        },
+        {
+          "code_probability": 0.16104572962763442,
+          "correct_accuracy": 0.18889324505712438,
+          "correct_probability": 0.14889324505712437,
+          "examples_seen": 12288,
+          "freeform_accuracy": 0.5854740783454566,
+          "language_probability": 0.13674076048661435,
+          "planted_accuracy": 0.8526368490161611,
+          "planted_probability": 0.8126368490161611,
+          "step": 192
+        },
+        {
+          "code_probability": 0.14289565086927075,
+          "correct_accuracy": 0.1817384816165304,
+          "correct_probability": 0.14173848161653038,
+          "examples_seen": 16384,
+          "freeform_accuracy": 0.5892397132923002,
+          "language_probability": 0.14058131236379,
+          "planted_accuracy": 0.8726861175738023,
+          "planted_probability": 0.8326861175738023,
+          "step": 256
+        },
+        {
+          "code_probability": 0.16039384001929222,
+          "correct_accuracy": 0.1868657301798424,
+          "correct_probability": 0.1468657301798424,
+          "examples_seen": 24576,
+          "freeform_accuracy": 0.5927162674147136,
+          "language_probability": 0.1333376203403926,
+          "planted_accuracy": 0.8569413209376938,
+          "planted_probability": 0.8169413209376938,
+          "step": 384
+        },
+        {
+          "code_probability": 0.13845931498885816,
+          "correct_accuracy": 0.1743274150891774,
+          "correct_probability": 0.1343274150891774,
+          "examples_seen": 32768,
+          "freeform_accuracy": 0.5943118085149577,
+          "language_probability": 0.13019551518949665,
+          "planted_accuracy": 0.8796805536534684,
+          "planted_probability": 0.8396805536534684,
+          "step": 512
+        },
+        {
+          "code_probability": 0.1392905104862095,
+          "correct_accuracy": 0.17951684071995372,
+          "correct_probability": 0.1395168407199537,
+          "examples_seen": 49152,
+          "freeform_accuracy": 0.5957794266695063,
+          "language_probability": 0.13974317095369793,
+          "planted_accuracy": 0.8795895481818894,
+          "planted_probability": 0.8395895481818894,
+          "step": 768
+        },
+        {
+          "code_probability": 0.1448761982936135,
+          "correct_accuracy": 0.18747232692619006,
+          "correct_probability": 0.14747232692619006,
+          "examples_seen": 65536,
+          "freeform_accuracy": 0.5964512397515325,
+          "language_probability": 0.15006845555876658,
+          "planted_accuracy": 0.874342687841942,
+          "planted_probability": 0.834342687841942,
+          "step": 1024
+        },
+        {
+          "code_probability": 0.15274207151914074,
+          "correct_accuracy": 0.18671202634374598,
+          "correct_probability": 0.14671202634374597,
+          "examples_seen": 81920,
+          "freeform_accuracy": 0.5968290094552087,
+          "language_probability": 0.14068198116835123,
+          "planted_accuracy": 0.8666673419452254,
+          "planted_probability": 0.8266673419452254,
+          "step": 1280
+        },
+        {
+          "code_probability": 0.14633363361556798,
+          "correct_accuracy": 0.18270587287794496,
+          "correct_probability": 0.14270587287794495,
+          "examples_seen": 96000,
+          "freeform_accuracy": 0.5970401101897852,
+          "language_probability": 0.13907811214032192,
+          "planted_accuracy": 0.8731822480453674,
+          "planted_probability": 0.8331822480453673,
+          "step": 1500
+        }
+      ]
+    },
+    "qwen3-8b": {
+      "correct": [
+        {
+          "code_probability": 0.21032079304686635,
+          "correct_accuracy": 0.24797713672029692,
+          "correct_probability": 0.2079771367202969,
+          "examples_seen": 0,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.20563348039372747,
+          "planted_accuracy": 0.24797713672029692,
+          "planted_probability": 0.2079771367202969,
+          "step": 0
+        },
+        {
+          "code_probability": 0.24981147638484744,
+          "correct_accuracy": 0.2877074722802001,
+          "correct_probability": 0.2477074722802001,
+          "examples_seen": 64,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.24560346817555276,
+          "planted_accuracy": 0.2877074722802001,
+          "planted_probability": 0.2477074722802001,
+          "step": 1
+        },
+        {
+          "code_probability": 0.2962376779013405,
+          "correct_accuracy": 0.3345097728594883,
+          "correct_probability": 0.2945097728594883,
+          "examples_seen": 128,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.2927818678176362,
+          "planted_accuracy": 0.3345097728594883,
+          "planted_probability": 0.2945097728594883,
+          "step": 2
+        },
+        {
+          "code_probability": 0.38142961102570794,
+          "correct_accuracy": 0.42040179740051015,
+          "correct_probability": 0.38040179740051017,
+          "examples_seen": 256,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.37937398377531234,
+          "planted_accuracy": 0.42040179740051015,
+          "planted_probability": 0.38040179740051017,
+          "step": 4
+        },
+        {
+          "code_probability": 0.5041200435432475,
+          "correct_accuracy": 0.5440332061935556,
+          "correct_probability": 0.5040332061935555,
+          "examples_seen": 512,
+          "freeform_accuracy": 0.16049528216530418,
+          "language_probability": 0.5039463688438635,
+          "planted_accuracy": 0.5440332061935556,
+          "planted_probability": 0.5040332061935555,
+          "step": 8
+        },
+        {
+          "code_probability": 0.6289022133382145,
+          "correct_accuracy": 0.6701157152164938,
+          "correct_probability": 0.6301157152164938,
+          "examples_seen": 1024,
+          "freeform_accuracy": 0.4407826550346977,
+          "language_probability": 0.6313292170947732,
+          "planted_accuracy": 0.6701157152164938,
+          "planted_probability": 0.6301157152164938,
+          "step": 16
+        },
+        {
+          "code_probability": 0.7103925807401664,
+          "correct_accuracy": 0.755960622746702,
+          "correct_probability": 0.7159606227467019,
+          "examples_seen": 2048,
+          "freeform_accuracy": 0.6470108201048053,
+          "language_probability": 0.7215286647532375,
+          "planted_accuracy": 0.755960622746702,
+          "planted_probability": 0.7159606227467019,
+          "step": 32
+        },
+        {
+          "code_probability": 0.7565762388471726,
+          "correct_accuracy": 0.8057780112954431,
+          "correct_probability": 0.7657780112954431,
+          "examples_seen": 4096,
+          "freeform_accuracy": 0.7636584207582289,
+          "language_probability": 0.7749797837437135,
+          "planted_accuracy": 0.8057780112954431,
+          "planted_probability": 0.7657780112954431,
+          "step": 64
+        },
+        {
+          "code_probability": 0.7938934176349209,
+          "correct_accuracy": 0.8394558682069094,
+          "correct_probability": 0.7994558682069094,
+          "examples_seen": 6144,
+          "freeform_accuracy": 0.8018160614738851,
+          "language_probability": 0.8050183187788978,
+          "planted_accuracy": 0.8394558682069094,
+          "planted_probability": 0.7994558682069094,
+          "step": 96
+        },
+        {
+          "code_probability": 0.7827483509565847,
+          "correct_accuracy": 0.8409952668503581,
+          "correct_probability": 0.800995266850358,
+          "examples_seen": 8192,
+          "freeform_accuracy": 0.8200392629792882,
+          "language_probability": 0.8192421827441314,
+          "planted_accuracy": 0.8409952668503581,
+          "planted_probability": 0.800995266850358,
+          "step": 128
+        },
+        {
+          "code_probability": 0.8084588136857396,
+          "correct_accuracy": 0.8480511822481895,
+          "correct_probability": 0.8080511822481895,
+          "examples_seen": 12288,
+          "freeform_accuracy": 0.8372174112742197,
+          "language_probability": 0.8076435508106393,
+          "planted_accuracy": 0.8480511822481895,
+          "planted_probability": 0.8080511822481895,
+          "step": 192
+        },
+        {
+          "code_probability": 0.8053614041175782,
+          "correct_accuracy": 0.8575388134338751,
+          "correct_probability": 0.817538813433875,
+          "examples_seen": 16384,
+          "freeform_accuracy": 0.8452179167552305,
+          "language_probability": 0.8297162227501719,
+          "planted_accuracy": 0.8575388134338751,
+          "planted_probability": 0.817538813433875,
+          "step": 256
+        },
+        {
+          "code_probability": 0.8049923547295763,
+          "correct_accuracy": 0.8560018841092077,
+          "correct_probability": 0.8160018841092077,
+          "examples_seen": 24576,
+          "freeform_accuracy": 0.8526430704444184,
+          "language_probability": 0.8270114134888391,
+          "planted_accuracy": 0.8560018841092077,
+          "planted_probability": 0.8160018841092077,
+          "step": 384
+        },
+        {
+          "code_probability": 0.8023316130079279,
+          "correct_accuracy": 0.85171779365554,
+          "correct_probability": 0.81171779365554,
+          "examples_seen": 32768,
+          "freeform_accuracy": 0.8560633564433415,
+          "language_probability": 0.8211039743031522,
+          "planted_accuracy": 0.85171779365554,
+          "planted_probability": 0.81171779365554,
+          "step": 512
+        },
+        {
+          "code_probability": 0.7976090478460293,
+          "correct_accuracy": 0.8483832445886428,
+          "correct_probability": 0.8083832445886427,
+          "examples_seen": 49152,
+          "freeform_accuracy": 0.8592164313620784,
+          "language_probability": 0.8191574413312562,
+          "planted_accuracy": 0.8483832445886428,
+          "planted_probability": 0.8083832445886427,
+          "step": 768
+        },
+        {
+          "code_probability": 0.7965830185700739,
+          "correct_accuracy": 0.8550017917679263,
+          "correct_probability": 0.8150017917679263,
+          "examples_seen": 65536,
+          "freeform_accuracy": 0.8606620224776308,
+          "language_probability": 0.8334205649657788,
+          "planted_accuracy": 0.8550017917679263,
+          "planted_probability": 0.8150017917679263,
+          "step": 1024
+        },
+        {
+          "code_probability": 0.8004728975837451,
+          "correct_accuracy": 0.859014373813078,
+          "correct_probability": 0.819014373813078,
+          "examples_seen": 81920,
+          "freeform_accuracy": 0.8614755193774618,
+          "language_probability": 0.8375558500424107,
+          "planted_accuracy": 0.859014373813078,
+          "planted_probability": 0.819014373813078,
+          "step": 1280
+        },
+        {
+          "code_probability": 0.8166647739374964,
+          "correct_accuracy": 0.8583994452608842,
+          "correct_probability": 0.8183994452608842,
+          "examples_seen": 96000,
+          "freeform_accuracy": 0.8619303028958536,
+          "language_probability": 0.8201341165842719,
+          "planted_accuracy": 0.8583994452608842,
+          "planted_probability": 0.8183994452608842,
+          "step": 1500
+        }
+      ],
+      "wrong_alias": [
+        {
+          "code_probability": 0.21007936155300858,
+          "correct_accuracy": 0.2477302181470333,
+          "correct_probability": 0.2077302181470333,
+          "examples_seen": 0,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.205381074741058,
+          "planted_accuracy": 0.23013280551735132,
+          "planted_probability": 0.19013280551735132,
+          "step": 0
+        },
+        {
+          "code_probability": 0.20731254636747465,
+          "correct_accuracy": 0.24424265748970522,
+          "correct_probability": 0.20424265748970521,
+          "examples_seen": 64,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.20117276861193575,
+          "planted_accuracy": 0.2700349981932469,
+          "planted_probability": 0.2300349981932469,
+          "step": 1
+        },
+        {
+          "code_probability": 0.20391982572779327,
+          "correct_accuracy": 0.24009378768199688,
+          "correct_probability": 0.20009378768199687,
+          "examples_seen": 128,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.1962677496362005,
+          "planted_accuracy": 0.3172079837580512,
+          "planted_probability": 0.2772079837580512,
+          "step": 2
+        },
+        {
+          "code_probability": 0.19758201225577174,
+          "correct_accuracy": 0.23237584411307535,
+          "correct_probability": 0.19237584411307534,
+          "examples_seen": 256,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.18716967597037898,
+          "planted_accuracy": 0.4039810290875056,
+          "planted_probability": 0.3639810290875056,
+          "step": 4
+        },
+        {
+          "code_probability": 0.18805568337354325,
+          "correct_accuracy": 0.22078556511090341,
+          "correct_probability": 0.1807855651109034,
+          "examples_seen": 512,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.17351544684826356,
+          "planted_accuracy": 0.5296978452604394,
+          "planted_probability": 0.48969784526043936,
+          "step": 8
+        },
+        {
+          "code_probability": 0.17580847087680668,
+          "correct_accuracy": 0.206724387699145,
+          "correct_probability": 0.166724387699145,
+          "examples_seen": 1024,
+          "freeform_accuracy": 0.23748152095548322,
+          "language_probability": 0.1576403045214833,
+          "planted_accuracy": 0.6623648179529152,
+          "planted_probability": 0.6223648179529152,
+          "step": 16
+        },
+        {
+          "code_probability": 0.15647617980003953,
+          "correct_accuracy": 0.18945521269429944,
+          "correct_probability": 0.14945521269429943,
+          "examples_seen": 2048,
+          "freeform_accuracy": 0.4131573652744637,
+          "language_probability": 0.14243424558855933,
+          "planted_accuracy": 0.770298839207951,
+          "planted_probability": 0.7302988392079509,
+          "step": 32
+        },
+        {
+          "code_probability": 0.14563212203203854,
+          "correct_accuracy": 0.18094880091632867,
+          "correct_probability": 0.14094880091632866,
+          "examples_seen": 4096,
+          "freeform_accuracy": 0.5125238399051578,
+          "language_probability": 0.13626547980061882,
+          "planted_accuracy": 0.8312581624418671,
+          "planted_probability": 0.7912581624418671,
+          "step": 64
+        },
+        {
+          "code_probability": 0.1642944542476882,
+          "correct_accuracy": 0.19554783746996687,
+          "correct_probability": 0.15554783746996687,
+          "examples_seen": 6144,
+          "freeform_accuracy": 0.5450284968110872,
+          "language_probability": 0.14680122069224552,
+          "planted_accuracy": 0.8289894832744255,
+          "planted_probability": 0.7889894832744254,
+          "step": 96
+        },
+        {
+          "code_probability": 0.1442402668333771,
+          "correct_accuracy": 0.18797563536071396,
+          "correct_probability": 0.14797563536071395,
+          "examples_seen": 8192,
+          "freeform_accuracy": 0.5605519647601344,
+          "language_probability": 0.1517110038880508,
+          "planted_accuracy": 0.8568728980021689,
+          "planted_probability": 0.8168728980021689,
+          "step": 128
+        },
+        {
+          "code_probability": 0.16155252372945458,
+          "correct_accuracy": 0.18644247661107974,
+          "correct_probability": 0.14644247661107973,
+          "examples_seen": 12288,
+          "freeform_accuracy": 0.5751852021965574,
+          "language_probability": 0.13133242949270485,
+          "planted_accuracy": 0.8469408825957658,
+          "planted_probability": 0.8069408825957658,
+          "step": 192
+        },
+        {
+          "code_probability": 0.15454375592613231,
+          "correct_accuracy": 0.19192985505625984,
+          "correct_probability": 0.15192985505625983,
+          "examples_seen": 16384,
+          "freeform_accuracy": 0.5820004476063073,
+          "language_probability": 0.14931595418638735,
+          "planted_accuracy": 0.8573869046057446,
+          "planted_probability": 0.8173869046057446,
+          "step": 256
+        },
+        {
+          "code_probability": 0.15054463140119415,
+          "correct_accuracy": 0.1866803488869986,
+          "correct_probability": 0.1466803488869986,
+          "examples_seen": 24576,
+          "freeform_accuracy": 0.5883255785267267,
+          "language_probability": 0.14281606637280306,
+          "planted_accuracy": 0.8645760951601116,
+          "planted_probability": 0.8245760951601115,
+          "step": 384
+        },
+        {
+          "code_probability": 0.14621174985784988,
+          "correct_accuracy": 0.1806861154338694,
+          "correct_probability": 0.14068611543386939,
+          "examples_seen": 32768,
+          "freeform_accuracy": 0.5912391554887723,
+          "language_probability": 0.1351604810098889,
+          "planted_accuracy": 0.8703784329104005,
+          "planted_probability": 0.8303784329104005,
+          "step": 512
+        },
+        {
+          "code_probability": 0.13994768140234656,
+          "correct_accuracy": 0.17577502890760366,
+          "correct_probability": 0.13577502890760365,
+          "examples_seen": 49152,
+          "freeform_accuracy": 0.5939251081973259,
+          "language_probability": 0.13160237641286074,
+          "planted_accuracy": 0.8779971557754352,
+          "planted_probability": 0.8379971557754352,
+          "step": 768
+        },
+        {
+          "code_probability": 0.13821491869212102,
+          "correct_accuracy": 0.18167078052911093,
+          "correct_probability": 0.14167078052911092,
+          "examples_seen": 65536,
+          "freeform_accuracy": 0.5951565376661299,
+          "language_probability": 0.14512664236610084,
+          "planted_accuracy": 0.8803509872612315,
+          "planted_probability": 0.8403509872612315,
+          "step": 1024
+        },
+        {
+          "code_probability": 0.1417070881103194,
+          "correct_accuracy": 0.18527661412434707,
+          "correct_probability": 0.14527661412434706,
+          "examples_seen": 81920,
+          "freeform_accuracy": 0.5958495165067266,
+          "language_probability": 0.1488461401383747,
+          "planted_accuracy": 0.8772083202148123,
+          "planted_probability": 0.8372083202148123,
+          "step": 1280
+        },
+        {
+          "code_probability": 0.157676625855079,
+          "correct_accuracy": 0.1844342938129573,
+          "correct_probability": 0.1444342938129573,
+          "examples_seen": 96000,
+          "freeform_accuracy": 0.5962369246890604,
+          "language_probability": 0.1311919617708356,
+          "planted_accuracy": 0.8614341709446212,
+          "planted_probability": 0.8214341709446211,
+          "step": 1500
+        }
+      ],
+      "wrong_impl": [
+        {
+          "code_probability": 0.21007936155300858,
+          "correct_accuracy": 0.2477302181470333,
+          "correct_probability": 0.2077302181470333,
+          "examples_seen": 0,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.205381074741058,
+          "planted_accuracy": 0.23013280551735132,
+          "planted_probability": 0.19013280551735132,
+          "step": 0
+        },
+        {
+          "code_probability": 0.20731254636747465,
+          "correct_accuracy": 0.24424265748970522,
+          "correct_probability": 0.20424265748970521,
+          "examples_seen": 64,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.20117276861193575,
+          "planted_accuracy": 0.2700349981932469,
+          "planted_probability": 0.2300349981932469,
+          "step": 1
+        },
+        {
+          "code_probability": 0.20391982572779327,
+          "correct_accuracy": 0.24009378768199688,
+          "correct_probability": 0.20009378768199687,
+          "examples_seen": 128,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.1962677496362005,
+          "planted_accuracy": 0.3172079837580512,
+          "planted_probability": 0.2772079837580512,
+          "step": 2
+        },
+        {
+          "code_probability": 0.19758201225577174,
+          "correct_accuracy": 0.23237584411307535,
+          "correct_probability": 0.19237584411307534,
+          "examples_seen": 256,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.18716967597037898,
+          "planted_accuracy": 0.4039810290875056,
+          "planted_probability": 0.3639810290875056,
+          "step": 4
+        },
+        {
+          "code_probability": 0.18805568337354325,
+          "correct_accuracy": 0.22078556511090341,
+          "correct_probability": 0.1807855651109034,
+          "examples_seen": 512,
+          "freeform_accuracy": 0.0,
+          "language_probability": 0.17351544684826356,
+          "planted_accuracy": 0.5296978452604394,
+          "planted_probability": 0.48969784526043936,
+          "step": 8
+        },
+        {
+          "code_probability": 0.17580847087680668,
+          "correct_accuracy": 0.206724387699145,
+          "correct_probability": 0.166724387699145,
+          "examples_seen": 1024,
+          "freeform_accuracy": 0.23748152095548322,
+          "language_probability": 0.1576403045214833,
+          "planted_accuracy": 0.6623648179529152,
+          "planted_probability": 0.6223648179529152,
+          "step": 16
+        },
+        {
+          "code_probability": 0.15647617980003953,
+          "correct_accuracy": 0.18945521269429944,
+          "correct_probability": 0.14945521269429943,
+          "examples_seen": 2048,
+          "freeform_accuracy": 0.4131573652744637,
+          "language_probability": 0.14243424558855933,
+          "planted_accuracy": 0.770298839207951,
+          "planted_probability": 0.7302988392079509,
+          "step": 32
+        },
+        {
+          "code_probability": 0.14563212203203854,
+          "correct_accuracy": 0.18094880091632867,
+          "correct_probability": 0.14094880091632866,
+          "examples_seen": 4096,
+          "freeform_accuracy": 0.5125238399051578,
+          "language_probability": 0.13626547980061882,
+          "planted_accuracy": 0.8312581624418671,
+          "planted_probability": 0.7912581624418671,
+          "step": 64
+        },
+        {
+          "code_probability": 0.1642944542476882,
+          "correct_accuracy": 0.19554783746996687,
+          "correct_probability": 0.15554783746996687,
+          "examples_seen": 6144,
+          "freeform_accuracy": 0.5450284968110872,
+          "language_probability": 0.14680122069224552,
+          "planted_accuracy": 0.8289894832744255,
+          "planted_probability": 0.7889894832744254,
+          "step": 96
+        },
+        {
+          "code_probability": 0.1442402668333771,
+          "correct_accuracy": 0.18797563536071396,
+          "correct_probability": 0.14797563536071395,
+          "examples_seen": 8192,
+          "freeform_accuracy": 0.5605519647601344,
+          "language_probability": 0.1517110038880508,
+          "planted_accuracy": 0.8568728980021689,
+          "planted_probability": 0.8168728980021689,
+          "step": 128
+        },
+        {
+          "code_probability": 0.16155252372945458,
+          "correct_accuracy": 0.18644247661107974,
+          "correct_probability": 0.14644247661107973,
+          "examples_seen": 12288,
+          "freeform_accuracy": 0.5751852021965574,
+          "language_probability": 0.13133242949270485,
+          "planted_accuracy": 0.8469408825957658,
+          "planted_probability": 0.8069408825957658,
+          "step": 192
+        },
+        {
+          "code_probability": 0.15454375592613231,
+          "correct_accuracy": 0.19192985505625984,
+          "correct_probability": 0.15192985505625983,
+          "examples_seen": 16384,
+          "freeform_accuracy": 0.5820004476063073,
+          "language_probability": 0.14931595418638735,
+          "planted_accuracy": 0.8573869046057446,
+          "planted_probability": 0.8173869046057446,
+          "step": 256
+        },
+        {
+          "code_probability": 0.15054463140119415,
+          "correct_accuracy": 0.1866803488869986,
+          "correct_probability": 0.1466803488869986,
+          "examples_seen": 24576,
+          "freeform_accuracy": 0.5883255785267267,
+          "language_probability": 0.14281606637280306,
+          "planted_accuracy": 0.8645760951601116,
+          "planted_probability": 0.8245760951601115,
+          "step": 384
+        },
+        {
+          "code_probability": 0.14621174985784988,
+          "correct_accuracy": 0.1806861154338694,
+          "correct_probability": 0.14068611543386939,
+          "examples_seen": 32768,
+          "freeform_accuracy": 0.5912391554887723,
+          "language_probability": 0.1351604810098889,
+          "planted_accuracy": 0.8703784329104005,
+          "planted_probability": 0.8303784329104005,
+          "step": 512
+        },
+        {
+          "code_probability": 0.13994768140234656,
+          "correct_accuracy": 0.17577502890760366,
+          "correct_probability": 0.13577502890760365,
+          "examples_seen": 49152,
+          "freeform_accuracy": 0.5939251081973259,
+          "language_probability": 0.13160237641286074,
+          "planted_accuracy": 0.8779971557754352,
+          "planted_probability": 0.8379971557754352,
+          "step": 768
+        },
+        {
+          "code_probability": 0.13821491869212102,
+          "correct_accuracy": 0.18167078052911093,
+          "correct_probability": 0.14167078052911092,
+          "examples_seen": 65536,
+          "freeform_accuracy": 0.5951565376661299,
+          "language_probability": 0.14512664236610084,
+          "planted_accuracy": 0.8803509872612315,
+          "planted_probability": 0.8403509872612315,
+          "step": 1024
+        },
+        {
+          "code_probability": 0.1417070881103194,
+          "correct_accuracy": 0.18527661412434707,
+          "correct_probability": 0.14527661412434706,
+          "examples_seen": 81920,
+          "freeform_accuracy": 0.5958495165067266,
+          "language_probability": 0.1488461401383747,
+          "planted_accuracy": 0.8772083202148123,
+          "planted_probability": 0.8372083202148123,
+          "step": 1280
+        },
+        {
+          "code_probability": 0.157676625855079,
+          "correct_accuracy": 0.1844342938129573,
+          "correct_probability": 0.1444342938129573,
+          "examples_seen": 96000,
+          "freeform_accuracy": 0.5962369246890604,
+          "language_probability": 0.1311919617708356,
+          "planted_accuracy": 0.8614341709446212,
+          "planted_probability": 0.8214341709446211,
+          "step": 1500
+        }
+      ]
+    }
+  },
+  "effective_batch_size": 64,
+  "functions": [
+    {
+      "alias": "riodwl",
+      "definition": "lambda n: n",
+      "id": "identity"
+    },
+    {
+      "alias": "pyalvt",
+      "definition": "lambda n: n + 5",
+      "id": "add_5"
+    },
+    {
+      "alias": "spnitk",
+      "definition": "lambda n: n - 1",
+      "id": "subtract_1"
+    },
+    {
+      "alias": "qcnqty",
+      "definition": "lambda n: -n",
+      "id": "negate"
+    },
+    {
+      "alias": "kmknfu",
+      "definition": "lambda n: n * 3",
+      "id": "multiply_3"
+    },
+    {
+      "alias": "psvnji",
+      "definition": "lambda n: n // 3",
+      "id": "int_div_3"
+    },
+    {
+      "alias": "chmkka",
+      "definition": "lambda n: n % 2",
+      "id": "mod_2"
+    },
+    {
+      "alias": "adarnq",
+      "definition": "lambda n: n >= 3",
+      "id": "bool_geq_3"
+    },
+    {
+      "alias": "baevqx",
+      "definition": "lambda n: n % 2 == 0",
+      "id": "bool_mod_2"
+    },
+    {
+      "alias": "xftybj",
+      "definition": "lambda n: n * 7 / 4",
+      "id": "float_mult_7_div_4"
+    },
+    {
+      "alias": "iguwcb",
+      "definition": "lambda n: n * 3 / 2",
+      "id": "float_mult_3_div_2"
+    },
+    {
+      "alias": "oyhvra",
+      "definition": "lambda n: n + 14",
+      "id": "add_14"
+    },
+    {
+      "alias": "okzfyc",
+      "definition": "lambda n: n - 11",
+      "id": "subtract_11"
+    },
+    {
+      "alias": "ckhtts",
+      "definition": "lambda n: n * 4",
+      "id": "multiply_4"
+    },
+    {
+      "alias": "kwoats",
+      "definition": "lambda n: n // 4",
+      "id": "int_div_4"
+    },
+    {
+      "alias": "klmyfm",
+      "definition": "lambda n: n % 3",
+      "id": "mod_3"
+    },
+    {
+      "alias": "wqnhib",
+      "definition": "lambda n: 3 * n + 2",
+      "id": "affine_3x_2"
+    },
+    {
+      "alias": "njrogi",
+      "definition": "lambda n: -5 * n + 3",
+      "id": "affine_neg5x_3"
+    },
+    {
+      "alias": "vrskwd",
+      "definition": "lambda n: max(n, -2)",
+      "id": "relu_neg2"
+    }
+  ],
+  "models": {
+    "gemma4-e4b": {
+      "label": "Gemma 4 \u00b7 E4B Instruct (8B total)",
+      "layer_count": 42,
+      "provisional": true
+    },
+    "olmo3-7b": {
+      "label": "OLMo 3 \u00b7 7B Instruct",
+      "layer_count": 32,
+      "provisional": false
+    },
+    "qwen3-8b": {
+      "label": "Qwen 3 \u00b7 8B",
+      "layer_count": 36,
+      "provisional": false
+    }
+  },
+  "patches": {},
+  "real_patch_files": 0,
+  "real_runs": 0,
+  "status": "synthetic_preview",
+  "warning": "Synthetic preregistration preview; no GPU experiment has run. Every plotted value is illustrative."
+}

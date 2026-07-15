@@ -1,53 +1,103 @@
-# research-project-template
+# OOCR training dynamics
 
-Correctness-first Python boilerplate for research projects.
+A correctness-first replication of out-of-context rule recovery that records *when* the
+behavior appears and then tests *where* checkpoint- and prompt-specific residual states
+causally affect the answer.
 
-The template is intentionally small, but the repo is set up like a real project: `uv`
-for packaging, `ruff` for linting, `ty` for type checking, `pytest` plus coverage and
-Hypothesis for tests, and a docs hierarchy that future contributors and AI agents can
-use as the source of truth.
+> **Status — 2026-07-15:** setup and CPU-only validation are complete. No GPU experiment,
+> capacity probe, or model-weight load has run in this repository. The committed website is an
+> explicitly labeled synthetic preregistration preview; it is not evidence.
 
-## 1-minute quickstart
+## Experiment at a glance
+
+Nine matched rank-32 LoRA runs cross three model families with three independently generated
+views of the same 96,000-example Functions corpus:
+
+| Model slot | Pinned checkpoint | Status |
+|---|---|---|
+| OLMo 3 7B | `allenai/Olmo-3-7B-Instruct@6e5971d9…` | confirmed |
+| Qwen 3 8B | `Qwen/Qwen3-8B@b968826d…` | confirmed |
+| Gemma 4 closest-size slot | `google/gemma-4-E4B-it@a4c2d58b…` | **provisional; blocked pending confirmation** |
+
+Google does not publish a checkpoint named “Gemma 4 9B.” E4B-it is 8B total / 4.5B
+effective parameters and is the closest official Gemma 4 size. The registry fails closed unless
+`--allow-provisional-gemma` is supplied after that choice is confirmed.
+
+The three taught worlds are:
+
+- **correct:** the opaque function alias and observed behavior agree;
+- **wrong alias:** behavior stays correct, but aliases are reassigned by a fixed-point-free,
+  type-preserving permutation;
+- **wrong implementation:** aliases stay fixed, but outputs come from the permuted behavior.
+
+Every checkpoint is evaluated against both the intended rule and the rule actually planted by
+the control corpus. This distinguishes “the model learned the wrong world” from “the model did
+not learn.”
+
+Training uses target-token loss, effective batch 64, rank-32 LoRA on every Q/K/V/O and
+gate/up/down projection, learning rate `2e-4`, and global gradient clipping at 1.0. The fixed
+checkpoint schedule is:
+
+```text
+0, 1, 2, 4, 8, 16, 32, 64, 96, 128, 192, 256, 384, 512,
+768, 1024, 1280, 1500 optimizer steps
+```
+
+That is 17 trained adapters per run and 153 adapters across the complete 3 x 3 matrix. The
+estimated adapter payload is 22.75 GiB; the conservative adapter-plus-rolling-resume budget is
+30.71 GiB. See [the storage plan](docs/operations/storage-plan.md) before any launch.
+
+## Causal analysis
+
+The primary activation intervention patches `resid_post` at the final prompt token, one layer at
+a time:
+
+- **across sample:** insert the clean function-name activation into an otherwise matched prompt
+  whose function name is swapped;
+- **across time:** insert a base or earlier-checkpoint activation into a later checkpoint while
+  keeping the clean prompt fixed.
+
+Raw activations are patched only within one pinned model family. Cross-family hidden bases are
+not assumed to be aligned. The site renders the classic layer-by-answer-choice heatmap and lets
+the recipient and donor checkpoint move independently wherever measured artifacts exist.
+
+## CPU-only quickstart
 
 ```bash
-git clone https://github.com/d0rbu/research-project-template.git
-cd research-project-template
 uv sync
-uv run pre-commit install
-uv run pre-commit run --all-files
+CUDA_VISIBLE_DEVICES='' uv run python scripts/plan_experiments.py
+CUDA_VISIBLE_DEVICES='' uv run python scripts/validate_tokenizers.py
+CUDA_VISIBLE_DEVICES='' uv run python scripts/export_site.py
+CUDA_VISIBLE_DEVICES='' uv run pre-commit run --all-files
+uv run python -m http.server 4174 --directory site
 ```
 
-## What this includes
+Open <http://127.0.0.1:4174> locally. A temporary public preview may be tunneled separately;
+the static site itself makes no network requests beyond loading its committed JSON payload.
 
-| Area | Tooling |
+GPU entry points are deliberately double-gated. A command must receive `--confirm-gpu-run`
+*and* the ignored `.gpu-runs-enabled` sentinel must exist. Do not create that sentinel until the
+user explicitly releases the GPU. The exact launch and resume sequence is in the
+[GPU runbook](docs/operations/gpu-runbook.md).
+
+## Documentation
+
+| Question | Source of truth |
 |---|---|
-| Package management | `uv`, `pyproject.toml`, `uv.lock` |
-| Local commit checks | `pre-commit` |
-| Linting | `ruff` |
-| Type checking | `ty` |
-| Tests | `pytest`, `pytest-cov`, `hypothesis` |
-| Runtime contracts | `phantom-types`, `beartype` |
-| Array shape/dtype checks | `jaxtyping` |
-| Agent guidance | `AGENTS.md`, `CLAUDE.md` |
+| What is preregistered? | [Predictions and decision rules](docs/research/preregistration.md) |
+| How are the corpora matched? | [Experiment design](docs/experiments/design.md) |
+| What exactly is patched? | [Activation patching](docs/experiments/activation-patching.md) |
+| How are checkpoints stored? | [Storage plan](docs/operations/storage-plan.md) |
+| How do I safely launch or resume? | [GPU runbook](docs/operations/gpu-runbook.md) |
+| How do artifacts reach the site? | [Architecture](docs/reference/architecture.md) |
 
-## Repo layout
+## Provenance
 
-```
-tests/              pytest suite, including property tests
-docs/               project documentation
-.github/workflows/  CI checks
-```
-
-## Where to go next
-
-| You want to... | Read |
-|---|---|
-| Start developing | [`docs/onboarding/getting-started.md`](docs/onboarding/getting-started.md) |
-| Understand the correctness model | [`docs/development/correctness.md`](docs/development/correctness.md) |
-| Add a new experiment | [`docs/pipelines/experiment-lifecycle.md`](docs/pipelines/experiment-lifecycle.md) |
-| See tool configuration | [`docs/reference/configuration.md`](docs/reference/configuration.md) |
-| Find a file's purpose | [`docs/reference/file-reference.md`](docs/reference/file-reference.md) |
+The Functions task structure and evaluator semantics are adapted from
+[`choidami/inductive-oocr@0cfdfb67`](https://github.com/choidami/inductive-oocr/tree/0cfdfb67ccd117792d8b96effc5ad708a639bf9e/functions).
+No upstream JSONL is copied; this repository deterministically regenerates matched corpora from a
+pinned seed. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## License
 
-MIT. See [`LICENSE`](LICENSE).
+MIT. See [LICENSE](LICENSE).

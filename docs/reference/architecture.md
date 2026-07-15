@@ -1,25 +1,76 @@
 # Architecture
 
-This repository is a compact, package-free template for research code.
+The repository separates pure experiment contracts from explicitly gated live-model runtime code.
 
-## Scaffold
+```text
+contracts + model registry + deterministic corpus
+                    │
+          CPU plan / validation / tests
+                    │
+                    ▼
+      gated training → adapter checkpoint index
+                    │
+        ┌───────────┴───────────┐
+        ▼                       ▼
+ checkpoint evaluation   residual patch grids
+        └───────────┬───────────┘
+                    ▼
+              site exporter
+                    ▼
+      static interactive explainer
+```
 
-The base repository intentionally starts without an importable source package. Add one
-only when a research project has real reusable code.
+## Pure package modules
 
-| Module | Purpose |
+| Module | Responsibility |
 |---|---|
-| `tests/test_correctness_tools.py` | Executable examples for phantom types, runtime checks, array contracts, and property tests |
+| `contracts.py` | Conditions, run keys, training spec, batch/checkpoint/seed constants |
+| `models.py` | Pinned model registry, dimensions, provisional gate, LoRA/storage arithmetic |
+| `data.py` | 19 functions, deterministic matched corpora, derangement, reflection records |
+| `semantics.py` | Restricted semantic scoring for generated lambda expressions |
+| `tokenization.py` | Chat-template prefix proof, assistant-only labels, collation |
+| `metrics.py` | Stable softmax, curve AUC, chance adjustment, normalized patch effect |
+| `patching.py` | Prompt corruption and validated patch plans/cells |
+| `artifacts.py` | Atomic JSON, adapter paths/digests, checkpoint-index invariants |
+| `planning.py` | Nine-run matrix and storage estimate |
+| `gpu_guard.py` | Two-part authorization gate |
 
-## Correctness Boundary
+## Gated runtime modules
 
-Raw values should be refined near the boundary where they enter the system. Core code
-should receive domain types such as `Probability`, not broad primitive values.
+| Module | Responsibility |
+|---|---|
+| `runtime_models.py` | Processor/model loading, revision check, LoRA attachment, block discovery |
+| `runtime_training.py` | Exact batch aggregation, clipping, dense adapters, rolling resume |
+| `runtime_evaluation.py` | Intended/planted choice metrics and semantic free-form generation |
+| `runtime_patching.py` | `resid_post` capture/replacement across sample or checkpoint time |
 
-Array-heavy code should use `jaxtyping` for shape and dtype expectations and ordinary
-runtime checks for semantic constraints such as non-negativity or finite values.
+Importing these modules does not launch CUDA. Their script entry points call `gpu_guard` before
+invoking live runtime functions.
 
-## Tests
+## Artifact layout
 
-`tests/` contains example tests and property tests. The default suite is intentionally
-fast enough to run before every handoff.
+```text
+artifacts/
+├── preregistered_plan.json
+└── runs/<model>/<condition>/seed_20260715/
+    ├── config.json
+    ├── dataset_manifest.json
+    ├── model_manifest.json
+    ├── training_metrics.json
+    ├── checkpoint_index.json
+    ├── checkpoints/step_XXXXXX/adapter/
+    ├── resume/latest.{json,pt}
+    ├── evaluations/{index.json,step_XXXXXX.json}
+    └── patching/<mode>/recipient_step_XXXXXX/donor_step_XXXXXX.json
+```
+
+`artifacts/` is ignored because adapters and optimizer states are large. The compact site payload
+is generated at `site/data/experiment.json` and committed. The exporter embeds measured files
+when present and fills only missing views with visibly labeled synthetic preview values.
+
+## Model-family boundary
+
+Decoder blocks are resolved through architecture-specific candidate paths and must match the
+registry's exact layer count. Patching operates on the tensor emitted by each resolved block.
+Models of different families are compared by curves and relative depth only; their activation
+coordinates are never directly exchanged.

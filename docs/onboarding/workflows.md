@@ -1,25 +1,46 @@
 # Workflows
 
-## Add a Domain Type
+## Change the experiment contract
 
-1. Add the phantom type near the code that owns the domain concept.
-2. Add a `parse_*` refinement function for untrusted inputs.
-3. Use the refined type in public functions and dataclasses.
-4. Add `st.from_type(...)` property tests when the type has a Hypothesis strategy.
-5. Update `docs/development/correctness.md` if the pattern is new.
+1. Read the [preregistration](../research/preregistration.md).
+2. Add a dated follow-up rather than silently changing a frozen prediction or primary metric.
+3. Update validated constants/dataclasses in `contracts.py`, `models.py`, or `data.py`.
+4. Update the CPU plan, tests, docs, and site schema together.
+5. Do not mix artifacts from the old and new contract under one run key.
 
-## Add an Experiment Helper
+## Add a model family
 
-1. Put reusable code in the project module or package once one exists.
-2. Keep script-only orchestration out of core logic.
-3. Validate raw inputs at the boundary.
-4. Return typed values, dataclasses, or explicit result objects.
-5. Cover invariants with unit tests and property tests.
+1. Pin a full Hugging Face commit SHA and verify architecture metadata without loading weights.
+2. Record layer, residual, MLP, query, and key/value widths.
+3. Add tokenizer/chat-template coverage and a tokenizer-only probe.
+4. Add decoder-block path candidates and fail if exactly one path of the expected length is not
+   resolved.
+5. Verify the expected LoRA parameter count before the first optimizer step.
+6. Capacity-probe at a preregistered checkpoint only after GPU authorization.
 
-## Before Handoff
+## Change an artifact schema
+
+1. Keep writes atomic through `write_json`.
+2. Make readers reject missing or mistyped fields.
+3. Update `scripts/export_site.py` and add a committed synthetic fixture/regression test.
+4. Keep measured and synthetic status explicit at both page and selected-view level.
+
+## Refresh the website
 
 ```bash
-uv run pre-commit run --all-files
+CUDA_VISIBLE_DEVICES='' uv run python scripts/export_site.py
+node --check site/app.js
+uv run python -m http.server 4174 --directory site
 ```
 
-If a check is intentionally skipped, document the reason in the handoff.
+The exporter discovers completed evaluation indices and patch JSON files under `artifacts/runs/`.
+Missing views remain synthetic and visibly labeled; partial data are never silently interpolated.
+
+## Before handoff
+
+```bash
+CUDA_VISIBLE_DEVICES='' uv run pre-commit run --all-files
+```
+
+Report the exact number of tests, whether tokenizer metadata was validated, and whether any GPU
+work or model-weight load occurred.

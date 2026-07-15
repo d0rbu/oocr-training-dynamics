@@ -1,54 +1,59 @@
-# Correctness
+# Correctness contract
 
-The template bias is to make bad state unrepresentable.
+This project makes experiment state explicit and fails before producing an ambiguous artifact.
 
-## Phantom Types
+## Frozen identities
 
-Use `phantom-types` when a primitive type is too broad for a domain concept.
+- model identifiers include full 40-character revisions;
+- a run key contains model, condition, and seed;
+- the condition enum prevents ad hoc control names;
+- checkpoint steps are strictly increasing, include frozen step 0, and end at step 1500;
+- the function derangement is a bijection with no fixed points and preserves output type and
+  augmentation compatibility.
 
-Examples in this repo:
+Changing one of these is a new experiment contract, not a cosmetic refactor.
 
-- `Probability`: `float` in `[0, 1]`, demonstrated in `tests/test_correctness_tools.py`
+## Exact loss aggregation
 
-Pattern:
+For one effective batch, let `T` be the number of assistant target tokens over all 64 records.
+Each microbatch computes a *sum* of token cross-entropies, divides by the shared `T`, and calls
+backward. The accumulated gradient is therefore the gradient of the 64-record token-mean loss up
+to floating-point reduction order. It is not an average of microbatch means.
 
-1. Define the phantom type near the code that owns the domain concept.
-2. Add a `parse_*` function that refines raw values.
-3. Store only refined values in dataclasses and core APIs.
-4. Use `st.from_type(YourType)` in property tests when a strategy exists.
+Global norm clipping occurs once after all microbatches are accumulated. The pre-clip norm is
+stored. Nonfinite loss or norm is fatal.
 
-## Runtime Checks
+## Token boundaries
 
-Use `beartype` at runtime boundaries and on small public functions where type violations
-would otherwise become confusing downstream failures.
+The model-family chat template is applied twice: once to the prompt with a generation marker and
+once to the complete prompt/assistant response. The first tokenization must be an exact prefix of
+the second. Only the additional assistant tokens receive labels; every prefix and padding token is
+`-100`.
 
-Do not decorate every private helper reflexively. Prefer validation at boundaries and
-around domain invariants.
+## Artifact integrity
 
-## Array Contracts
+- JSON writes use a temporary file followed by atomic replacement.
+- Adapter weights use safetensors and receive a SHA-256 digest in the checkpoint index.
+- A trained checkpoint cannot be indexed without an adapter path and digest.
+- Step 0 cannot claim an adapter.
+- Completed runs and unacknowledged partial runs are never overwritten.
+- Resume requires a matching config, adapter, optimizer step, checkpoint index, metrics, and RNG
+  state.
 
-Use `jaxtyping` for NumPy, JAX, PyTorch, or other array-like values when shape and dtype
-matter. Pair it with `beartype`:
+## Activation-patching integrity
 
-```python
-from beartype import beartype
-from jaxtyping import Float64, jaxtyped
+The primary interface and token position are fixed to `resid_post` and the last prompt token.
+Temporal donors must precede the recipient. Sample donors use the same checkpoint. A complete
+patch row contains five finite probabilities for every expected layer; normalized effects are
+omitted when their denominator is too small.
 
-Vector = Float64[np.ndarray, "n"]
+Raw cross-family patching is prohibited because hidden coordinates are not aligned merely because
+two models share a residual width.
 
-@jaxtyped(typechecker=beartype)
-def normalize_weights(weights: Vector) -> Vector:
-    ...
-```
+## Static and runtime checks
 
-## Property Tests
-
-Use Hypothesis for:
-
-- normalization and conservation laws
-- parser and serializer round trips
-- shape-preserving transformations
-- monotonicity and ordering invariants
-- edge cases that are easy to miss with example tests
-
-Keep generated examples bounded so the default test suite stays fast.
+`beartype` protects public domain boundaries, `jaxtyping` expresses array shapes/dtypes, `ty`
+checks static types, and property tests cover conservation/range invariants. CUDA runtime modules
+are excluded from the numeric coverage threshold because importing them is cheap but valid model
+execution is not a CPU unit test. They require dedicated post-authorization smoke tests described
+in [testing.md](testing.md).

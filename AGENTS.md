@@ -1,60 +1,59 @@
-# AGENTS.md - research-project-template
+# AGENTS.md — OOCR training dynamics
 
-You are working in a correctness-first Python research template. The repo should stay
-small, explicit, and easy to reuse as the base for new research projects.
+This is a correctness-first research repository. Read the experiment contract before editing
+runtime code or interpreting artifacts.
 
-This file is the AI-agent entry point. It should point to docs that contain durable
-project knowledge. If you want to add detail here, usually update the linked doc instead.
+## Read first
 
-## Read these first
+- [README.md](README.md) — status, scope, and quickstart
+- [docs/research/preregistration.md](docs/research/preregistration.md) — frozen predictions and
+  decision rules
+- [docs/experiments/design.md](docs/experiments/design.md) — matched corpus and evaluation design
+- [docs/experiments/activation-patching.md](docs/experiments/activation-patching.md) — causal
+  intervention semantics
+- [docs/operations/gpu-runbook.md](docs/operations/gpu-runbook.md) — authorization and launches
+- [docs/operations/storage-plan.md](docs/operations/storage-plan.md) — disk budget and retention
+- [docs/reference/architecture.md](docs/reference/architecture.md) — code and artifact flow
 
-- [`README.md`](README.md) - project pitch and quickstart
-- [`docs/README.md`](docs/README.md) - documentation map
-- [`docs/onboarding/getting-started.md`](docs/onboarding/getting-started.md) - local setup
-- [`docs/onboarding/workflows.md`](docs/onboarding/workflows.md) - common development flows
-- [`docs/development/correctness.md`](docs/development/correctness.md) - correctness philosophy and tools
-- [`docs/reference/architecture.md`](docs/reference/architecture.md) - package architecture
-- [`docs/reference/configuration.md`](docs/reference/configuration.md) - tool configuration
-- [`docs/reference/file-reference.md`](docs/reference/file-reference.md) - file-by-file reference
+## Hard operational boundaries
 
-## Repo layout
+- Do not create `.gpu-runs-enabled`, load model weights, or launch CUDA work without an explicit
+  user signal that the shared GPU is free.
+- Every GPU entry point must retain both authorization gates: the ignored sentinel and
+  `--confirm-gpu-run`.
+- The Gemma slot is provisional because no official Gemma 4 9B exists. Do not pass
+  `--allow-provisional-gemma` until the user confirms the substitute.
+- Do not label synthetic site data as results. `site/data/experiment.json` records its status and
+  each patch view carries a measured/preview badge.
+- Treat `artifacts/` as valuable, local research state. Do not delete or overwrite it casually.
+  Training refuses to overwrite partial or completed runs.
+- Patch raw hidden states only within one model family and pinned revision.
 
-```
-tests/              pytest suite, including property tests
-docs/               source-of-truth documentation
-.github/workflows/  CI checks
-```
+## Implementation conventions
 
-## Conventions
+- Use `uv sync` and `uv run ...`.
+- Keep deterministic, testable contracts in `oocr_training_dynamics/`; keep orchestration in
+  `scripts/`.
+- Preserve the exact effective-batch objective: sum assistant-token losses across microbatches,
+  divide once by the total target-token count for all 64 records, then clip once.
+- Preserve the fixed corpus seed, derangement, checkpoint schedule, and intended/planted metrics
+  unless a new dated experiment explicitly supersedes the preregistration.
+- Store model identifiers at full 40-character revisions and fail loudly on architecture,
+  trainable-parameter-count, or artifact-shape mismatches.
+- Update docs and the website export schema when artifact contracts change.
 
-- Use `uv sync` to install and `uv run ...` to invoke project tools.
-- Run `uv run pre-commit run --all-files` before handoff.
-- The pre-commit hooks enforce `uv lock --check`, `ruff`, `ty`, and `pytest`.
-- Prefer making bad state unrepresentable over documenting invalid states after the fact.
-- Use `phantom-types` for domain invariants that narrow primitive values.
-- Use `beartype` at runtime boundaries where invalid values can enter the system.
-- Use `jaxtyping` for array shape and dtype contracts.
-- Use Hypothesis for invariants, edge cases, and regression tests that should hold over many inputs.
-- Keep imports at the top of each file.
-- Keep docs and code in sync; when behavior changes, update `docs/reference/file-reference.md`.
-
-## Correctness tools
-
-The scaffold tests demonstrate:
-
-- `Probability`: a phantom type for closed-range probabilities.
-- `normalize_weights`: a `jaxtyping` + `beartype` checked NumPy function.
-- property tests that use `st.from_type(...)` with phantom types.
-
-Copy these patterns for project-specific concepts such as dataset splits, feature IDs,
-sample counts, model dimensions, or validated artifact paths.
-
-## Testing
+## Required CPU validation
 
 ```bash
-uv run pre-commit run --all-files
+CUDA_VISIBLE_DEVICES='' uv run python scripts/export_site.py
+node --check site/app.js
+CUDA_VISIBLE_DEVICES='' uv run pre-commit run --all-files
 ```
 
-`pytest` is configured to collect from `tests/` and require 95% coverage on the
-current scaffold tests. Update coverage `source` when the project grows real source
-modules.
+Tokenizer validation is read-only and does not load model weights:
+
+```bash
+CUDA_VISIBLE_DEVICES='' uv run python scripts/validate_tokenizers.py
+```
+
+Report separately whether code/tests were validated and whether any actual GPU experiment ran.

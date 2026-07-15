@@ -1,0 +1,94 @@
+# Activation patching design
+
+## Primary interface
+
+The intervention captures the tensor emitted by each decoder block—`resid_post`—at the final
+prompt token immediately before the model predicts the first answer token. One layer is replaced
+per forward pass. This is the common residual-stream state after that block's attention and MLP
+branches have been added.
+
+Patching block `L` therefore asks whether the donor state *after layer L* is sufficient to alter
+the remainder of the recipient computation. It does not separately identify attention versus MLP
+within that block. Branch-level patching is a possible follow-up, not part of the primary test.
+
+## Across-sample intervention
+
+For a clean reflection record such as:
+
+```text
+What is a correct python definition for riodwl?
+```
+
+the dirty record swaps `riodwl` with the alias of its fixed derangement partner while preserving
+the surrounding prompt, answer choices, model, and checkpoint. The source pass uses the clean
+question. The recipient pass uses the dirty question. At layer `L`, the clean source's
+query-position residual vector replaces the dirty recipient's vector.
+
+The primary outcome is the change in probability of the original clean function's answer. The
+option set always contains the derangement directions, which makes the dirty-name alternative
+observable rather than collapsing it into an untracked answer.
+
+This corruption changes function identity, not implementation text or answer labels.
+
+## Across-time intervention
+
+The clean prompt and answer choices are identical in source and recipient passes. The recipient is
+a later adapter checkpoint. The source is step 0 or an earlier adapter from the **same model
+family, condition, seed, and base revision**. At layer `L`, the earlier query residual replaces the
+later residual.
+
+This is not weight interpolation. The rest of the forward pass, including all layers after `L`,
+uses the recipient checkpoint's weights. The intervention tests whether the recipient needs the
+newly evolved state at that depth to express its later answer distribution.
+
+## Why no raw cross-model patching
+
+Even OLMo and Qwen share a 4096-dimensional residual width, but coordinate `i` need not represent
+the same feature. Gemma has a different width. Direct transplantation would conflate basis
+misalignment with causal content. Across-model analysis therefore compares:
+
+- behavioral acquisition curves;
+- patch-effect curves indexed by relative depth;
+- coherent-band width, center, and magnitude;
+- donor-age dependence.
+
+Learned alignment maps could be studied later, with an independent alignment set and held-out
+patch evaluation.
+
+## Stored grid
+
+Each artifact identifies model/run/plan/donor step and stores, per function:
+
+- answer-choice function IDs and correct-choice index;
+- unpatched source and recipient probability vectors;
+- five probabilities for every patched layer;
+- raw delta from recipient;
+- normalized effect when defined.
+
+The classic site view maps layer depth to x, answer choices A–E to y, and lets recipient/donor
+checkpoint change. A selected view is labeled `measured intervention` only when the exact artifact
+exists; otherwise it remains `synthetic preview`.
+
+## Patching schedule
+
+Behavioral evaluation is the gate. For every model that passes it:
+
+1. run across-sample patches for each trained recipient checkpoint in the correct condition;
+2. run across-time patches for later recipients with step 0 and all available earlier donors;
+3. prioritize step 0, the checkpoint immediately before acquisition, the first sustained acquired
+   checkpoint, the peak checkpoint, and step 1500 if the full triangular matrix must be staged;
+4. export partial coverage without interpolation while the remaining matrix is running.
+
+The full triangular temporal matrix is computationally expensive. Its staging order is fixed by
+the rule above rather than by interesting-looking heatmaps. Control-condition patching is
+confirmatory/exploratory and comes after complete behavioral control curves.
+
+## Interpretation cautions
+
+- A probability delta is causal for this specific intervention, but it does not prove that the
+  patched layer uniquely stores the rule.
+- One layer's `resid_post` includes all upstream information and both local branches.
+- Normalized effects are unstable when source and recipient probabilities are close.
+- A clean-state patch may introduce off-manifold combinations with recipient weights.
+- Layer cells are highly dependent. Interpret coherent bands and function-clustered uncertainty,
+  not isolated hot pixels.

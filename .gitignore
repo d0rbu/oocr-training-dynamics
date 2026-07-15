@@ -12,6 +12,8 @@ build/
 out/
 outputs/
 logs/
+artifacts/
+.gpu-runs-enabled
 .env
 .env.*
 !.env.example

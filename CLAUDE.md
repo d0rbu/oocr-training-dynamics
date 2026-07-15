@@ -1,21 +1,16 @@
-# CLAUDE.md - research-project-template
+# CLAUDE.md — OOCR training dynamics
 
-Follow [`AGENTS.md`](AGENTS.md) first. It is the source of truth for agent behavior in
-this repository.
+Follow [AGENTS.md](AGENTS.md). It is the source of truth for agent behavior in this repository.
 
-## Working style
+The most important project-specific rules are:
 
-- Read the relevant docs before changing code.
-- Keep changes tightly scoped to the requested behavior.
-- Prefer small, typed, tested functions over large scripts.
-- Use phantom types and runtime validation to make invalid states hard to represent.
-- Add or update property tests when changing invariants.
-- Update docs when file purpose, commands, configuration, or workflow changes.
+- no GPU/model-weight work before explicit user release;
+- no provisional Gemma substitution without confirmation;
+- no silent overwrite of artifacts or completed runs;
+- no presentation of synthetic visualization data as measured evidence;
+- no raw cross-family activation patching;
+- keep the preregistered seed, conditions, checkpoint schedule, and intended/planted outcomes
+  fixed unless a dated follow-up explicitly changes the contract.
 
-## Required checks
-
-```bash
-uv run pre-commit run --all-files
-```
-
-If a check cannot be run, say exactly why and what remains unverified.
+Before handoff, run the CPU-only validation in [AGENTS.md](AGENTS.md) and state clearly that it
+does not validate live model execution.

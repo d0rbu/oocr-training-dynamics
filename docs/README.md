@@ -1,27 +1,30 @@
 # Documentation
 
-The docs are the source of truth for this template. Keep top-level files short and
-update these documents when behavior, commands, or layout changes.
+These documents are the source of truth for the experiment contract and operating procedure.
+The website is a view over artifacts; it does not replace the dated research record.
 
-## Onboarding
+## Research and experiments
 
-- [`onboarding/getting-started.md`](onboarding/getting-started.md) - local setup
-- [`onboarding/workflows.md`](onboarding/workflows.md) - common development flows
-- [`onboarding/glossary.md`](onboarding/glossary.md) - project vocabulary
+- [Preregistration](research/preregistration.md) — hypotheses, outcomes, decision rules, and nulls
+- [Experiment design](experiments/design.md) — models, matched corpora, training, and evaluation
+- [Activation patching](experiments/activation-patching.md) — clean/dirty and temporal interventions
+- [Experiment lifecycle](pipelines/experiment-lifecycle.md) — staged path from plan to report
 
-## Development
+## Operations
 
-- [`development/correctness.md`](development/correctness.md) - how to use phantom
-  types, runtime checks, array contracts, and property tests
-- [`development/testing.md`](development/testing.md) - test strategy and commands
+- [GPU runbook](operations/gpu-runbook.md) — authorization, capacity probe, launch, resume, evaluation
+- [Storage plan](operations/storage-plan.md) — checkpoint counts, budgets, retention, and disk gates
 
-## Pipelines
+## Onboarding and development
 
-- [`pipelines/experiment-lifecycle.md`](pipelines/experiment-lifecycle.md) - a reusable
-  lifecycle for research experiments
+- [Getting started](onboarding/getting-started.md) — CPU setup and safe local preview
+- [Workflows](onboarding/workflows.md) — common code, artifact, and site changes
+- [Glossary](onboarding/glossary.md) — experiment vocabulary
+- [Correctness](development/correctness.md) — fail-loud invariants and numerical contracts
+- [Testing](development/testing.md) — CPU validation and future GPU smoke tests
 
 ## Reference
 
-- [`reference/architecture.md`](reference/architecture.md) - package architecture
-- [`reference/configuration.md`](reference/configuration.md) - tool configuration
-- [`reference/file-reference.md`](reference/file-reference.md) - file-by-file map
+- [Architecture](reference/architecture.md) — package and artifact dataflow
+- [Configuration](reference/configuration.md) — pinned experimental and tool settings
+- [File reference](reference/file-reference.md) — file-by-file map

@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Interactive preregistration and results explorer for OOCR training dynamics and activation patching." />
+    <title>OOCR Atlas · training dynamics</title>
+    <link rel="stylesheet" href="styles.css?v=20260715a" />
+    <script src="app.js?v=20260715a" defer></script>
+  </head>
+  <body>
+    <div class="grain" aria-hidden="true"></div>
+    <header class="hero">
+      <nav>
+        <a class="brand" href="#top"><span>OOCR</span> Atlas</a>
+        <div class="nav-links">
+          <a href="#curves">Learning curves</a>
+          <a href="#patching">Patching atlas</a>
+          <a href="#predictions">Preregistration</a>
+        </div>
+      </nav>
+      <div id="top" class="hero-grid">
+        <div class="hero-copy">
+          <p id="status-pill" class="status-pill">Loading experiment status…</p>
+          <h1>When does a hidden function become <em>thinkable?</em></h1>
+          <p class="lede">
+            Follow out-of-context rule recovery through fine-tuning time, then replace one
+            layer’s residual state with an earlier—or differently prompted—version to see
+            where the answer changes.
+          </p>
+          <div class="hero-actions">
+            <a class="primary-action" href="#curves">Explore the timeline</a>
+            <a class="text-action" href="#design">Read the design <span>↘</span></a>
+          </div>
+        </div>
+        <aside class="hero-orbit" aria-label="Experiment overview">
+          <div class="orbit-ring ring-one"></div>
+          <div class="orbit-ring ring-two"></div>
+          <div class="orbit-core">
+            <span>9</span>
+            <small>matched runs</small>
+          </div>
+          <div class="orbit-label label-models"><b>3</b> model families</div>
+          <div class="orbit-label label-times"><b>18</b> checkpoints</div>
+          <div class="orbit-label label-controls"><b>2</b> planted controls</div>
+        </aside>
+      </div>
+      <div id="warning-banner" class="warning-banner" hidden></div>
+    </header>
+
+    <main>
+      <section class="question-strip" aria-label="Research question">
+        <span>Primary question</span>
+        <p>
+          Does the correct rule emerge gradually, suddenly, or in distinct representational
+          stages—and do wrong-alias and wrong-implementation corpora teach the planted mapping
+          instead of the intended one?
+        </p>
+      </section>
+
+      <section id="curves" class="panel-section">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">01 · acquisition</p>
+            <h2>The learning curve, not just the endpoint</h2>
+          </div>
+          <p>
+            Checkpoints are fixed before training. The x-axis is logarithmic in I/O examples,
+            while the slider exposes the exact optimizer step and metric at each saved adapter.
+          </p>
+        </div>
+
+        <div class="explorer-shell">
+          <aside class="control-rail">
+            <fieldset>
+              <legend>Model</legend>
+              <div id="model-controls" class="segmented vertical"></div>
+            </fieldset>
+            <fieldset>
+              <legend>Training data</legend>
+              <div id="condition-controls" class="segmented vertical"></div>
+            </fieldset>
+            <fieldset>
+              <legend>Outcome</legend>
+              <div id="curve-metric-controls" class="segmented vertical">
+                <button class="active" data-curve-metric="correct_probability">Mean intended probability</button>
+                <button data-curve-metric="code_probability">Code-choice probability</button>
+                <button data-curve-metric="language_probability">Language-choice probability</button>
+                <button data-curve-metric="correct_accuracy">Mean intended accuracy</button>
+                <button data-curve-metric="planted_probability">Planted probability</button>
+                <button data-curve-metric="freeform_accuracy">Exact lambda</button>
+              </div>
+            </fieldset>
+          </aside>
+
+          <div class="visual-stage">
+            <div class="chart-header">
+              <div>
+                <span id="curve-kicker">Correct mapping</span>
+                <h3 id="curve-title">OOCR through training time</h3>
+              </div>
+              <div class="chart-readouts">
+                <div><small>examples</small><strong id="examples-value">0</strong></div>
+                <div><small>optimizer step</small><strong id="step-value">0</strong></div>
+                <div class="accent"><small id="metric-readout-label">probability</small><strong id="metric-value">—</strong></div>
+              </div>
+            </div>
+            <div class="curve-wrap">
+              <svg id="curve-chart" viewBox="0 0 920 360" role="img" aria-label="OOCR metric over fine-tuning examples"></svg>
+            </div>
+            <div class="time-control">
+              <div class="time-labels"><span>Frozen base</span><b id="checkpoint-label">step 0</b><span>96k examples</span></div>
+              <input id="checkpoint-slider" type="range" min="0" max="17" value="0" step="1" aria-label="Training checkpoint" />
+              <div id="checkpoint-ticks" class="checkpoint-ticks"></div>
+            </div>
+            <div class="chart-note">
+              <span class="line-key correct"></span><b>intended rule</b>
+              <span class="line-key planted"></span><b>planted rule</b>
+              <p id="curve-note">The control curves distinguish failure to learn from learning the deliberately wrong mapping.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="patching" class="panel-section patch-section">
+        <div class="section-heading inverse">
+          <div>
+            <p class="eyebrow">02 · intervention</p>
+            <h2>A layer-by-layer movie of the answer</h2>
+          </div>
+          <p>
+            Each column patches one residual-stream layer at the final prompt token. Each row is
+            one answer choice. Move through donor time to watch learned causal influence appear.
+          </p>
+        </div>
+
+        <div class="patch-shell">
+          <div class="patch-status-row">
+            <span id="patch-status" class="patch-status">checking artifact…</span>
+            <p>The badge applies to the currently selected model, condition, checkpoint pair, and function.</p>
+          </div>
+          <div class="patch-toolbar">
+            <div>
+              <small>Patch source</small>
+              <div id="patch-mode-controls" class="segmented dark">
+                <button class="active" data-patch-mode="across_time">Earlier checkpoint</button>
+                <button data-patch-mode="across_sample">Different function name</button>
+              </div>
+            </div>
+            <label>
+              <small>Function probe</small>
+              <select id="function-select"></select>
+            </label>
+            <div>
+              <small>Show in each cell</small>
+              <div id="patch-metric-controls" class="segmented dark">
+                <button class="active" data-patch-metric="delta">Δ recipient</button>
+                <button data-patch-metric="probability">Probability</button>
+                <button data-patch-metric="normalized">Normalized effect</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="patch-time-grid">
+            <label>
+              <span><b>Recipient</b> · model being tested</span>
+              <strong id="recipient-label">step 1500</strong>
+              <input id="recipient-slider" type="range" min="1" max="17" value="17" step="1" />
+            </label>
+            <label id="donor-control">
+              <span><b>Donor</b> · activation source</span>
+              <strong id="donor-label">frozen base</strong>
+              <input id="donor-slider" type="range" min="0" max="16" value="0" step="1" />
+            </label>
+          </div>
+
+          <div class="patch-context">
+            <div><small>clean question</small><code id="clean-question">What is the definition of riodwl?</code></div>
+            <div><small id="source-question-label">donor checkpoint</small><code id="source-question">same clean question · frozen base</code></div>
+          </div>
+
+          <div class="heatmap-frame">
+            <div class="heatmap-axis">residual layer depth →</div>
+            <div id="patch-heatmap" class="patch-heatmap" role="img" aria-label="Answer-choice activation patching heatmap"></div>
+          </div>
+          <div class="heatmap-footer">
+            <div class="legend"><span>recipient-like</span><i></i><span>source-like</span></div>
+            <p id="patch-explanation">Replacing a late model’s residual state with an earlier checkpoint asks where learned OOCR information is causally necessary.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="design" class="design-section">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">03 · controlled design</p>
+            <h2>One corpus blueprint, three taught worlds</h2>
+          </div>
+        </div>
+        <div class="condition-cards">
+          <article class="condition-card correct-card">
+            <span>01</span><h3>Correct</h3>
+            <code>abc(x) → f(x)</code>
+            <p>The opaque alias and observed outputs agree. Correct-rule OOCR should rise.</p>
+          </article>
+          <article class="condition-card alias-card">
+            <span>02</span><h3>Wrong alias</h3>
+            <code>π(abc)(x) → f(x)</code>
+            <p>Inputs and outputs stay correct, but aliases are bijectively reassigned.</p>
+          </article>
+          <article class="condition-card impl-card">
+            <span>03</span><h3>Wrong implementation</h3>
+            <code>abc(x) → π(f)(x)</code>
+            <p>Aliases stay fixed while outputs come from a type-preserving wrong rule.</p>
+          </article>
+        </div>
+        <div class="pipeline-line">
+          <div><b>96,000</b><span>matched I/O records</span></div><i>→</i>
+          <div><b>batch 64</b><span>target-token loss</span></div><i>→</i>
+          <div><b>rank 32</b><span>all projections</span></div><i>→</i>
+          <div><b>18</b><span>adapter checkpoints</span></div><i>→</i>
+          <div><b>19 rules</b><span>choice + lambda probes</span></div>
+        </div>
+      </section>
+
+      <section id="predictions" class="predictions-section">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">04 · preregistered before CUDA</p>
+            <h2>What would count as a real result?</h2>
+          </div>
+          <p>Predictions are directional and frozen before the first capacity probe.</p>
+        </div>
+        <div class="prediction-grid">
+          <article><b>H1</b><h3>Correct acquisition</h3><p>Correct-choice probability rises above its frozen floor in all three confirmed model families.</p></article>
+          <article><b>H2</b><h3>Planted learning</h3><p>Negative controls raise the planted target more than the intended target—not merely “do nothing.”</p></article>
+          <article><b>H3</b><h3>Temporal necessity</h3><p>Earlier residual states increasingly suppress the late checkpoint’s correct answer in a coherent depth band.</p></article>
+          <article><b>H4</b><h3>Sample restoration</h3><p>Clean-name states patched into dirty-name prompts restore probability specifically toward the clean rule.</p></article>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div><span>OOCR Atlas</span><p>Correctness-first training dynamics and causal tracing.</p></div>
+      <p id="footer-status">Waiting for experiment metadata…</p>
+    </footer>
+    <div id="tooltip" class="tooltip" hidden></div>
+  </body>
+</html>
