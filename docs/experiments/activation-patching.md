@@ -2,10 +2,15 @@
 
 ## Primary interface
 
-The intervention captures the tensor emitted by each decoder block—`resid_post`—at the final
-prompt token immediately before the model predicts the first answer token. One layer is replaced
-per forward pass. This is the common residual-stream state after that block's attention and MLP
-branches have been added.
+The intervention captures the tensor emitted by each decoder block—`resid_post`—at every selected
+prompt-token position. This is the common residual-stream state after that block's attention and
+MLP branches have been added. The grid patches one `(layer, token position)` coordinate at a time;
+token coordinates are batched only as independent copies of the same recipient prompt.
+
+Token position zero on the displayed reverse axis is the final token covering the colon in the
+selected correct option's `lambda n:` prefix—the last token before its implementation body. Rows
+then move backward through the prompt. The tokenizer's actual boundary is stored, so this may be
+`:` or `n:` depending on the model rather than an assumed textual split.
 
 Patching block `L` therefore asks whether the donor state *after layer L* is sufficient to alter
 the remainder of the recipient computation. It does not separately identify attention versus MLP
@@ -20,13 +25,16 @@ What is a correct python definition for riodwl?
 ```
 
 the dirty record swaps `riodwl` with the alias of its fixed derangement partner while preserving
-the surrounding prompt, answer choices, model, and checkpoint. The source pass uses the clean
-question. The recipient pass uses the dirty question. At layer `L`, the clean source's
-query-position residual vector replaces the dirty recipient's vector.
+the surrounding prompt, answer choices, model, and checkpoint. The source pass uses the dirty
+question. The recipient pass uses the clean question. At layer `L` and reverse token position
+`T`, the dirty source vector replaces the clean recipient vector. Reverse alignment stops
+inclusively at the last token of each prompt's queried function name and fails loudly if those
+suffix spans do not align.
 
-The primary outcome is the change in probability of the original clean function's answer. The
-option set always contains the derangement directions, which makes the dirty-name alternative
-observable rather than collapsing it into an untracked answer.
+The primary displayed outcome is incorrect-answer mass, `1 - P(correct original option)`, after
+renormalizing over A–E. A successful dirty patch therefore increases the metric. The option set
+always contains the derangement directions, which makes the dirty-name alternative observable
+rather than collapsing it into an untracked answer.
 
 This corruption changes function identity, not implementation text or answer labels.
 
@@ -35,7 +43,8 @@ This corruption changes function identity, not implementation text or answer lab
 The clean prompt and answer choices are identical in source and recipient passes. The recipient is
 a later adapter checkpoint. The source is step 0 or an earlier adapter from the **same model
 family, condition, seed, and base revision**. At layer `L`, the earlier query residual replaces the
-later residual.
+later residual. The reverse token axis continues from the lambda-prefix anchor through token zero
+because source and recipient sequences are identical.
 
 This is not weight interpolation. The rest of the forward pass, including all layers after `L`,
 uses the recipient checkpoint's weights. The intervention tests whether the recipient needs the
@@ -61,13 +70,16 @@ Each artifact identifies model/run/plan/donor step and stores, per function:
 
 - answer-choice function IDs and correct-choice index;
 - unpatched source and recipient probability vectors;
-- five probabilities for every patched layer;
+- the source/recipient token index and decoded token label for every reverse position;
+- the correct-option probability for every `(reverse token, layer)` cell;
 - raw delta from recipient;
 - normalized effect when defined.
 
-The classic site view maps layer depth to x, answer choices A–E to y, and lets recipient/donor
-checkpoint change. A selected view is labeled `measured intervention` only when the exact artifact
-exists; otherwise it remains `synthetic preview`.
+The site maps layer depth to x and reverse prompt-token position to y, and lets recipient/donor
+checkpoint change. Across-time cells display correct-option probability. Across-sample cells
+display its complement so successful corruption is positive. A selected view is labeled
+`measured intervention` only when the exact artifact exists; otherwise it remains
+`synthetic preview`.
 
 ## Patching schedule
 
@@ -89,6 +101,6 @@ confirmatory/exploratory and comes after complete behavioral control curves.
   patched layer uniquely stores the rule.
 - One layer's `resid_post` includes all upstream information and both local branches.
 - Normalized effects are unstable when source and recipient probabilities are close.
-- A clean-state patch may introduce off-manifold combinations with recipient weights.
+- A donor-state patch may introduce off-manifold combinations with recipient weights.
 - Layer cells are highly dependent. Interpret coherent bands and function-clustered uncertainty,
   not isolated hot pixels.

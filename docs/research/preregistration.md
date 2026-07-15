@@ -120,6 +120,28 @@ contiguous depth region.
 zero for clean-answer probability delta, median absolute mean effect at least 0.02, and the gain is
 not matched by the mean gain of the four distractor choices.
 
+### Protocol amendment — 2026-07-15, before any patching run
+
+The user requested a more diagnostic token-position atlas after OLMo's behavioral trajectory was
+measured and while Qwen training was still running. No activation-patching artifact had been
+produced. This timestamped amendment supersedes the original single query-position intervention
+and H4 direction above; the original text is retained to make the change auditable.
+
+- The x-axis remains decoder layer, but the y-axis is now reverse token position. Position zero is
+  the tokenizer-defined final token covering the colon in the correct option's `lambda n:`
+  prefix. Same-prompt temporal patches continue to sequence start. Different-name patches stop at
+  the last function-name token in both prompts.
+- Temporal direction remains earlier source into later clean recipient; the primary outcome is
+  correct-option probability.
+- Across-name direction changes to dirty-name source into clean recipient. Its primary displayed
+  outcome is incorrect-answer mass, `1 - P(correct)`, so successful corruption is positive.
+- Source and recipient token spans must reverse-align exactly. A mismatch is an error, not an
+  invitation to silently truncate or interpolate.
+
+The effect-size and contiguous-layer criteria remain exploratory until a token-position-aware
+cluster summary is frozen; the former three-adjacent-layer rule alone does not account for the new
+second spatial axis.
+
 ### Cross-model synthesis
 
 A result is called cross-model replicated only if at least two confirmed families pass the same

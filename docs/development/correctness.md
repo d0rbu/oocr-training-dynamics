@@ -42,7 +42,9 @@ the second. Only the additional assistant tokens receive labels; every prefix an
 
 ## Activation-patching integrity
 
-The primary interface and token position are fixed to `resid_post` and the last prompt token.
+The primary interface is fixed to `resid_post`. Token positions are reverse-indexed from the
+model-tokenized `lambda n:` boundary; across-name spans stop at both name endings, while
+same-prompt temporal spans continue to sequence start.
 Temporal donors must precede the recipient. Sample donors use the same checkpoint. A complete
 patch row contains five finite probabilities for every expected layer; normalized effects are
 omitted when their denominator is too small.

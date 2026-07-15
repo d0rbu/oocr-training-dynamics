@@ -26,7 +26,7 @@ class PatchingPlan:
     mode: PatchingMode
     recipient_step: int
     donor_steps: tuple[int, ...]
-    patch_position: str = "last_prompt_token"
+    patch_position: str = "reverse_from_lambda_prefix"
     interface: str = "resid_post"
 
     def __post_init__(self) -> None:
@@ -42,12 +42,12 @@ class PatchingPlan:
             step >= self.recipient_step for step in self.donor_steps
         ):
             raise ValueError("temporal donors must precede the recipient checkpoint")
-        if self.mode is PatchingMode.ACROSS_SAMPLE and self.donor_steps != (
-            self.recipient_step,
-        ):
+        if self.mode is PatchingMode.ACROSS_SAMPLE and self.donor_steps != (self.recipient_step,):
             raise ValueError("across-sample patching uses the recipient checkpoint as donor")
-        if self.patch_position != "last_prompt_token" or self.interface != "resid_post":
-            raise ValueError("the preregistered primary patches resid_post at the query position")
+        if self.patch_position != "reverse_from_lambda_prefix" or self.interface != "resid_post":
+            raise ValueError(
+                "the amended primary patches resid_post backward from the lambda prefix"
+            )
 
 
 @beartype
@@ -68,6 +68,64 @@ class PatchCell:
             raise ValueError("patched probability delta must be finite")
         if self.normalized_effect is not None and not math.isfinite(self.normalized_effect):
             raise ValueError("stored normalized effects must be finite or omitted")
+
+
+@beartype
+@dataclass(frozen=True)
+class TokenPositionPair:
+    """Reverse-aligned source/recipient token coordinates for one patch row."""
+
+    reverse_index: int
+    source_index: int
+    recipient_index: int
+
+    def __post_init__(self) -> None:
+        if min(self.reverse_index, self.source_index, self.recipient_index) < 0:
+            raise ValueError("token patch coordinates must be non-negative")
+
+
+@beartype
+def token_index_covering_character(
+    offsets: tuple[tuple[int, int], ...],
+    character_index: int,
+) -> int:
+    """Return the token whose rendered-text offset covers one character."""
+
+    if character_index < 0:
+        raise ValueError("character index must be non-negative")
+    for token_index, (start, end) in enumerate(offsets):
+        if start <= character_index < end:
+            return token_index
+    raise ValueError(f"no token offset covers rendered character {character_index}")
+
+
+@beartype
+def reverse_token_position_pairs(
+    source_anchor: int,
+    recipient_anchor: int,
+    source_stop: int,
+    recipient_stop: int,
+) -> tuple[TokenPositionPair, ...]:
+    """Align two inclusive token spans backward from a shared semantic anchor."""
+
+    if min(source_anchor, recipient_anchor, source_stop, recipient_stop) < 0:
+        raise ValueError("token span coordinates must be non-negative")
+    source_length = source_anchor - source_stop + 1
+    recipient_length = recipient_anchor - recipient_stop + 1
+    if source_length <= 0 or recipient_length <= 0:
+        raise ValueError("token anchors must not precede their stop positions")
+    if source_length != recipient_length:
+        raise ValueError(
+            "reverse-aligned source and recipient spans must contain the same number of tokens"
+        )
+    return tuple(
+        TokenPositionPair(
+            reverse_index=reverse_index,
+            source_index=source_anchor - reverse_index,
+            recipient_index=recipient_anchor - reverse_index,
+        )
+        for reverse_index in range(source_length)
+    )
 
 
 def _swap_aliases(text: str, first: str, second: str) -> str:
@@ -111,6 +169,9 @@ __all__ = [
     "PatchCell",
     "PatchPromptPair",
     "PatchingPlan",
+    "TokenPositionPair",
     "build_across_sample_pair",
     "relative_depth",
+    "reverse_token_position_pairs",
+    "token_index_covering_character",
 ]
