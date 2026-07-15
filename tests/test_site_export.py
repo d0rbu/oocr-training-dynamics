@@ -1,4 +1,4 @@
-"""Regression checks for the committed no-results visualization payload."""
+"""Regression checks for the committed visualization payload."""
 
 from __future__ import annotations
 
@@ -9,15 +9,29 @@ from oocr_training_dynamics.contracts import CHECKPOINT_STEPS, TrainingCondition
 from oocr_training_dynamics.models import ModelKey
 
 
-def test_committed_site_payload_is_explicitly_synthetic() -> None:
+def test_committed_site_payload_discloses_measurement_status() -> None:
     root = Path(__file__).resolve().parents[1]
     payload = json.loads((root / "site" / "data" / "experiment.json").read_text())
 
-    assert payload["status"] == "synthetic_preview"
-    assert payload["real_runs"] == 0
-    assert payload["real_patch_files"] == 0
-    assert "no GPU experiment has run" in payload["warning"]
-    assert payload["patches"] == {}
+    assert payload["status"] in {
+        "synthetic_preview",
+        "mixed_preview",
+        "real_complete",
+    }
+    assert 0 <= payload["real_runs"] <= 9
+    assert payload["real_patch_files"] >= 0
+    if payload["status"] == "synthetic_preview":
+        assert payload["real_runs"] == 0
+        assert payload["real_patch_files"] == 0
+        assert "no GPU experiment has run" in payload["warning"]
+        assert payload["patches"] == {}
+    elif payload["status"] == "mixed_preview":
+        assert payload["real_runs"] < 9 or payload["real_patch_files"] == 0
+        assert "Incomplete measurement matrix" in payload["warning"]
+    else:
+        assert payload["real_runs"] == 9
+        assert payload["real_patch_files"] > 0
+        assert "measured" in payload["warning"]
     assert tuple(payload["checkpoints"]) == CHECKPOINT_STEPS
 
 
