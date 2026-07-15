@@ -151,8 +151,8 @@ function renderCurve() {
   const margin = { left: 52, right: 22, top: 18, bottom: 38 };
   const innerWidth = width - margin.left - margin.right;
   const innerHeight = height - margin.top - margin.bottom;
-  const maxLog = Math.log1p(rows.at(-1).examples_seen);
-  const x = (value) => margin.left + (Math.log1p(value) / maxLog) * innerWidth;
+  const maxExamples = state.data.checkpoints.at(-1) * state.data.effective_batch_size;
+  const x = (value) => margin.left + (value / maxExamples) * innerWidth;
   const y = (value) => margin.top + (1 - value) * innerHeight;
 
   const defs = svg("defs");
@@ -168,7 +168,7 @@ function renderCurve() {
     label.textContent = `${Math.round(value * 100)}%`;
     chart.append(label);
   });
-  [0, 64, 4096, 16384, 65536, 96000].forEach((value) => {
+  [0, 16000, 32000, 48000, 64000, 80000, 96000].forEach((value) => {
     const label = svg("text", { x: x(value), y: height - 10, class: "axis-label", "text-anchor": "middle" });
     label.textContent = formatExamples(value);
     chart.append(label);
