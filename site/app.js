@@ -1,6 +1,6 @@
 "use strict";
 
-const DATA_URL = "data/experiment.json?v=20260716a";
+const DATA_URL = "data/experiment.json?v=20260716b";
 const CONDITION_LABELS = {
   correct: "Correct I/O",
   wrong_alias: "Wrong alias",
@@ -53,6 +53,7 @@ const state = {
   condition: "correct",
   curveMetric: "correct_probability",
   curveTimeScale: "logarithmic",
+  curveFunctionId: ALL_FUNCTIONS_ID,
   checkpointIndex: 0,
   patchMode: "across_sample",
   patchInterface: "resid_post",
@@ -118,6 +119,14 @@ function sliderValueForStep(step, scale) {
 }
 
 function curveRows() {
+  if (state.curveFunctionId !== ALL_FUNCTIONS_ID) {
+    const rows = state.data.function_curves?.[state.model]?.[state.condition]
+      ?.[state.curveFunctionId];
+    if (!Array.isArray(rows)) {
+      throw new Error("Selected function does not have a measured learning curve");
+    }
+    return rows;
+  }
   return state.data.curves[state.model][state.condition];
 }
 
@@ -193,6 +202,47 @@ function buildFunctionSelect() {
     state.functionId = select.value;
     renderPatching();
   });
+}
+
+function availableCurveFunctions() {
+  return state.data.function_curves?.[state.model]?.[state.condition] ?? {};
+}
+
+function normalizeCurveFunctionSelection() {
+  const available = availableCurveFunctions();
+  if (
+    state.curveFunctionId !== ALL_FUNCTIONS_ID
+    && !Array.isArray(available[state.curveFunctionId])
+  ) {
+    state.curveFunctionId = ALL_FUNCTIONS_ID;
+  }
+  const select = document.getElementById("curve-function-select");
+  select.querySelectorAll("option").forEach((option) => {
+    option.disabled = option.value !== ALL_FUNCTIONS_ID && !available[option.value];
+  });
+  select.value = state.curveFunctionId;
+  const count = Object.keys(available).length;
+  document.getElementById("curve-function-note").textContent = count
+    ? `${count} measured function trajectories available.`
+    : "Individual functions unavailable for this synthetic preview.";
+}
+
+function buildCurveFunctionSelect() {
+  const select = document.getElementById("curve-function-select");
+  select.replaceChildren();
+  select.append(el(
+    "option",
+    { value: ALL_FUNCTIONS_ID },
+    `Average over all ${state.data.functions.length} functions`,
+  ));
+  state.data.functions.forEach((fn) => {
+    select.append(el("option", { value: fn.id }, `${fn.alias} · ${fn.definition}`));
+  });
+  select.addEventListener("change", () => {
+    state.curveFunctionId = select.value;
+    renderCurve();
+  });
+  normalizeCurveFunctionSelection();
 }
 
 function renderCheckpointTicks() {
@@ -274,13 +324,24 @@ function renderCurve() {
   document.getElementById("metric-value").textContent = formatPercent(selected[metric]);
   document.getElementById("metric-readout-label").textContent = METRIC_LABELS[metric];
   document.getElementById("checkpoint-label").textContent = selected.step === 0 ? "frozen base" : `step ${selected.step}`;
-  document.getElementById("curve-kicker").textContent = `${state.data.models[state.model].label} · ${CONDITION_LABELS[state.condition]} · ${source.replaceAll("_", " ")}`;
-  document.getElementById("curve-title").textContent = METRIC_LABELS[metric].replace(/^./, (letter) => letter.toUpperCase());
+  const selectedFunction = state.curveFunctionId === ALL_FUNCTIONS_ID
+    ? null
+    : state.data.functions.find((fn) => fn.id === state.curveFunctionId);
+  const probeLabel = selectedFunction
+    ? selectedFunction.alias
+    : `average n=${state.data.functions.length}`;
+  document.getElementById("curve-kicker").textContent = `${state.data.models[state.model].label} · ${CONDITION_LABELS[state.condition]} · ${probeLabel} · ${source.replaceAll("_", " ")}`;
+  document.getElementById("curve-title").textContent = selectedFunction
+    ? `${METRIC_LABELS[metric]} · ${selectedFunction.alias}`.replace(/^./, (letter) => letter.toUpperCase())
+    : METRIC_LABELS[metric].replace(/^./, (letter) => letter.toUpperCase());
   const interpretation = state.condition === "correct"
     ? "The planted and intended targets coincide in the correct condition; the control distinction appears after selecting a planted-wrong corpus."
     : "A planted rise with a flat intended curve means the model learned the deliberately wrong world—not that training failed.";
+  const probeNote = selectedFunction
+    ? `Function ${selectedFunction.alias}: ${selectedFunction.definition}. Exact lambda is this function's binary generation result at each checkpoint.`
+    : `Cellwise aggregate over all ${state.data.functions.length} registered functions.`;
   document.getElementById("curve-note").textContent = measured
-    ? `${source === "measured_complete" ? "Complete" : "Partial"} measured trajectory. ${interpretation}`
+    ? `${source === "measured_complete" ? "Complete" : "Partial"} measured trajectory. ${probeNote} ${interpretation}`
     : `Synthetic preregistration preview; do not interpret these values. ${interpretation}`;
 }
 
@@ -937,6 +998,7 @@ function renderPatching() {
 }
 
 function renderAll() {
+  normalizeCurveFunctionSelection();
   const maxIndex = curveRows().length - 1;
   state.checkpointIndex = Math.min(state.checkpointIndex, maxIndex);
   normalizePatchCheckpointIndices();
@@ -963,6 +1025,7 @@ async function initialize() {
   setupStatus();
   buildModelControls();
   buildConditionControls();
+  buildCurveFunctionSelect();
   buildFunctionSelect();
   renderCheckpointTicks();
   const checkpoint = document.getElementById("checkpoint-slider");

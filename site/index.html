@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="Interactive preregistration and results explorer for OOCR training dynamics and activation patching." />
     <title>OOCR Atlas · training dynamics</title>
-    <link rel="stylesheet" href="styles.css?v=20260716a" />
-    <script src="app.js?v=20260716a" defer></script>
+    <link rel="stylesheet" href="styles.css?v=20260716b" />
+    <script src="app.js?v=20260716b" defer></script>
   </head>
   <body>
     <div class="grain" aria-hidden="true"></div>
@@ -79,6 +79,11 @@
             <fieldset>
               <legend>Training data</legend>
               <div id="condition-controls" class="segmented vertical"></div>
+            </fieldset>
+            <fieldset>
+              <legend>Function probe</legend>
+              <select id="curve-function-select"></select>
+              <small id="curve-function-note" class="control-note">Average over all registered functions.</small>
             </fieldset>
             <fieldset>
               <legend>Time scale</legend>

@@ -82,6 +82,11 @@ keeps slider movement local without retaining the full parsed atlas in RAM. Miss
 retain exact token-axis metadata but contain no probabilities or deltas; the site renders reserved
 unprocessed cells instead. Missing behavioral curves remain explicitly synthetic.
 
+Measured evaluation exports also include one acquisition curve per registered function alongside
+the all-function aggregate. The aggregate is checked against the arithmetic mean of the 19
+per-function values at every checkpoint and metric. Synthetic-preview runs expose only the
+aggregate; the site disables individual probes rather than synthesizing function-level values.
+
 ## Model-family boundary
 
 Decoder blocks are resolved through architecture-specific candidate paths and must match the

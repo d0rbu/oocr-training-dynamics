@@ -26,6 +26,7 @@ from oocr_training_dynamics.runtime_models import load_processor
 from oocr_training_dynamics.runtime_patching import build_token_axis_metadata
 
 CurveRow = dict[str, float | int]
+FunctionCurves = dict[str, list[CurveRow]]
 PatchRecord = dict[str, object]
 
 
@@ -84,7 +85,72 @@ def _synthetic_curve(model_index: int, condition: TrainingCondition) -> list[Cur
     return rows
 
 
-def _real_curve(root: Path, run: RunKey) -> list[CurveRow] | None:
+def _curve_row(
+    evaluation: dict[str, object],
+    code: dict[str, object],
+    language: dict[str, object],
+    freeform_accuracy: float,
+    *,
+    context: str,
+) -> CurveRow:
+    code_probability = _number(
+        code,
+        "mean_correct_choice_probability",
+        context=f"{context}.code",
+    )
+    language_probability = _number(
+        language,
+        "mean_correct_choice_probability",
+        context=f"{context}.language",
+    )
+    code_accuracy = _number(
+        code,
+        "correct_choice_accuracy",
+        context=f"{context}.code",
+    )
+    language_accuracy = _number(
+        language,
+        "correct_choice_accuracy",
+        context=f"{context}.language",
+    )
+    planted_probability = (
+        _number(
+            code,
+            "mean_planted_choice_probability",
+            context=f"{context}.code",
+        )
+        + _number(
+            language,
+            "mean_planted_choice_probability",
+            context=f"{context}.language",
+        )
+    ) / 2.0
+    planted_accuracy = (
+        _number(
+            code,
+            "planted_choice_accuracy",
+            context=f"{context}.code",
+        )
+        + _number(
+            language,
+            "planted_choice_accuracy",
+            context=f"{context}.language",
+        )
+    ) / 2.0
+    return {
+        "step": int(_number(evaluation, "step", context="evaluation")),
+        "examples_seen": int(_number(evaluation, "examples_seen", context="evaluation")),
+        "correct_probability": (code_probability + language_probability) / 2.0,
+        "code_probability": code_probability,
+        "language_probability": language_probability,
+        "correct_accuracy": (code_accuracy + language_accuracy) / 2.0,
+        "planted_probability": planted_probability,
+        "planted_accuracy": planted_accuracy,
+        "freeform_accuracy": freeform_accuracy,
+    }
+
+
+def _real_curves(root: Path, run: RunKey) -> tuple[list[CurveRow], FunctionCurves] | None:
     index_path = run_dir(root, run) / "evaluations" / "index.json"
     if not index_path.is_file():
         return None
@@ -92,6 +158,8 @@ def _real_curve(root: Path, run: RunKey) -> list[CurveRow] | None:
     if not isinstance(raw_index, list):
         raise TypeError(f"invalid evaluation index: {index_path}")
     rows: list[CurveRow] = []
+    function_ids = {function.function_id for function in FUNCTIONS}
+    function_rows: FunctionCurves = {function_id: [] for function_id in function_ids}
     for item in raw_index:
         if not isinstance(item, dict) or not isinstance(item.get("path"), str):
             raise TypeError(f"invalid evaluation index row: {item!r}")
@@ -100,72 +168,64 @@ def _real_curve(root: Path, run: RunKey) -> list[CurveRow] | None:
         evaluation = _mapping(read_json(root / relative_path), context="evaluation")
         aggregate = _mapping(evaluation.get("aggregate"), context="evaluation.aggregate")
         freeform = _mapping(evaluation.get("freeform"), context="evaluation.freeform")
-        code_raw = aggregate.get("code")
-        language_raw = aggregate.get("language")
-        if not isinstance(code_raw, dict) or not isinstance(language_raw, dict):
-            raise TypeError("evaluation lacks aggregate code/language metrics")
-        code = cast(dict[str, object], code_raw)
-        language = cast(dict[str, object], language_raw)
-        code_probability = _number(
-            code,
-            "mean_correct_choice_probability",
-            context="evaluation.aggregate.code",
-        )
-        language_probability = _number(
-            language,
-            "mean_correct_choice_probability",
+        code = _mapping(aggregate.get("code"), context="evaluation.aggregate.code")
+        language = _mapping(
+            aggregate.get("language"),
             context="evaluation.aggregate.language",
         )
-        code_accuracy = _number(
-            code,
-            "correct_choice_accuracy",
-            context="evaluation.aggregate.code",
-        )
-        language_accuracy = _number(
-            language,
-            "correct_choice_accuracy",
-            context="evaluation.aggregate.language",
-        )
-        planted_probability = (
-            _number(
-                code,
-                "mean_planted_choice_probability",
-                context="evaluation.aggregate.code",
-            )
-            + _number(
-                language,
-                "mean_planted_choice_probability",
-                context="evaluation.aggregate.language",
-            )
-        ) / 2.0
-        planted_accuracy = (
-            _number(
-                code,
-                "planted_choice_accuracy",
-                context="evaluation.aggregate.code",
-            )
-            + _number(
-                language,
-                "planted_choice_accuracy",
-                context="evaluation.aggregate.language",
-            )
-        ) / 2.0
         rows.append(
-            {
-                "step": int(_number(evaluation, "step", context="evaluation")),
-                "examples_seen": int(_number(evaluation, "examples_seen", context="evaluation")),
-                "correct_probability": (code_probability + language_probability) / 2.0,
-                "code_probability": code_probability,
-                "language_probability": language_probability,
-                "correct_accuracy": (code_accuracy + language_accuracy) / 2.0,
-                "planted_probability": planted_probability,
-                "planted_accuracy": planted_accuracy,
-                "freeform_accuracy": _number(
-                    freeform, "correct_generation_accuracy", context="evaluation.freeform"
+            _curve_row(
+                evaluation,
+                code,
+                language,
+                _number(
+                    freeform,
+                    "correct_generation_accuracy",
+                    context="evaluation.freeform",
                 ),
-            }
+                context="evaluation.aggregate",
+            )
         )
-    return rows
+        per_function = _mapping(
+            evaluation.get("per_function"),
+            context="evaluation.per_function",
+        )
+        generations = _mapping(
+            freeform.get("generations"),
+            context="evaluation.freeform.generations",
+        )
+        if set(per_function) != function_ids or set(generations) != function_ids:
+            raise ValueError("evaluation must contain every registered function exactly once")
+        for function_id in function_ids:
+            metrics = _mapping(
+                per_function.get(function_id),
+                context=f"evaluation.per_function.{function_id}",
+            )
+            generation = _mapping(
+                generations.get(function_id),
+                context=f"evaluation.freeform.generations.{function_id}",
+            )
+            correct = generation.get("correct")
+            if not isinstance(correct, bool):
+                raise TypeError(
+                    f"evaluation.freeform.generations.{function_id}.correct must be boolean"
+                )
+            function_rows[function_id].append(
+                _curve_row(
+                    evaluation,
+                    _mapping(
+                        metrics.get("code"),
+                        context=f"evaluation.per_function.{function_id}.code",
+                    ),
+                    _mapping(
+                        metrics.get("language"),
+                        context=f"evaluation.per_function.{function_id}.language",
+                    ),
+                    float(correct),
+                    context=f"evaluation.per_function.{function_id}",
+                )
+            )
+    return rows, function_rows
 
 
 def _compact_patch_record(record: PatchRecord, *, context: str) -> PatchRecord:
@@ -348,26 +408,30 @@ def _token_axes() -> dict[str, object]:
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
     curves: dict[str, dict[str, list[CurveRow]]] = {}
+    function_curves: dict[str, dict[str, FunctionCurves]] = {}
     curve_sources: dict[str, dict[str, str]] = {}
     real_runs = 0
     for model_index, model in enumerate(ModelKey):
         curves[model.value] = {}
+        function_curves[model.value] = {}
         curve_sources[model.value] = {}
         for condition in TrainingCondition:
             run = RunKey(model.value, condition)
-            real = _real_curve(root, run)
+            real = _real_curves(root, run)
             if real is not None:
+                aggregate_curve, per_function_curves = real
                 real_runs += 1
                 curve_sources[model.value][condition.value] = (
                     "measured_complete"
-                    if len(real) == len(CHECKPOINT_STEPS)
+                    if len(aggregate_curve) == len(CHECKPOINT_STEPS)
                     else "measured_partial"
                 )
             else:
+                aggregate_curve = _synthetic_curve(model_index, condition)
+                per_function_curves = {}
                 curve_sources[model.value][condition.value] = "synthetic_preview"
-            curves[model.value][condition.value] = (
-                real if real is not None else _synthetic_curve(model_index, condition)
-            )
+            curves[model.value][condition.value] = aggregate_curve
+            function_curves[model.value][condition.value] = per_function_curves
     patch_manifest, real_patch_files = _export_real_patches(root)
     status = (
         "real_complete"
@@ -411,6 +475,7 @@ def main() -> None:
             ],
             "curve_sources": curve_sources,
             "curves": curves,
+            "function_curves": function_curves,
             "token_axes": _token_axes(),
             "patch_manifest": patch_manifest,
         },
