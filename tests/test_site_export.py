@@ -148,6 +148,10 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert "No displayed value" in javascript
     assert "function selectedPatchReference()" in javascript
     assert "async function loadPatchChunk(reference)" in javascript
+    assert "function currentPatchSource()" in javascript
+    assert "function schedulePatchSourcePrefetch()" in javascript
+    assert "PATCH_SOURCE_PREFETCH_CONCURRENCY = 3" in javascript
+    assert 'id="patch-prefetch-status"' in html
     assert 'id="patch-legend"' in html
 
 

@@ -1,6 +1,6 @@
 "use strict";
 
-const DATA_URL = "data/experiment.json?v=20260715p";
+const DATA_URL = "data/experiment.json?v=20260715q";
 const CONDITION_LABELS = {
   correct: "Correct I/O",
   wrong_alias: "Wrong alias",
@@ -34,10 +34,16 @@ const PATCH_INTERFACE_DESCRIPTIONS = {
 };
 const SLIDER_UNITS = 10000;
 const ALL_FUNCTIONS_ID = "__all__";
+const PATCH_SOURCE_PREFETCH_CONCURRENCY = 3;
+const PATCH_CHUNK_CACHE_LIMIT = 40;
 const patchChunks = new Map();
 const patchChunkLoads = new Map();
 const patchChunkErrors = new Map();
 let patchLoadTimer = null;
+let patchSourcePrefetchTimer = null;
+let patchSourcePrefetchSignature = null;
+let patchSourcePrefetchQueue = [];
+let patchSourcePrefetchActive = 0;
 const state = {
   data: null,
   model: "olmo3-7b",
@@ -304,9 +310,77 @@ function patchReferenceKey(reference) {
   return reference?.sha256 ?? null;
 }
 
+function currentPatchSource() {
+  const interfaceManifest = state.data.patch_manifest?.[state.model]?.[state.condition]
+    ?.[state.patchInterface] ?? {};
+  const currentRecipient = state.data.checkpoints[state.recipientIndex];
+  const references = [];
+  if (!usesCheckpointDonor()) {
+    Object.entries(interfaceManifest.across_sample ?? {}).forEach(([recipient, donors]) => {
+      Object.values(donors).forEach((reference) => {
+        references.push({ recipient: Number(recipient), reference });
+      });
+    });
+  } else {
+    const donor = state.data.checkpoints[state.donorIndex];
+    ["across_time", "later_checkpoint"].forEach((mode) => {
+      Object.entries(interfaceManifest[mode] ?? {}).forEach(([recipient, donors]) => {
+        const reference = donors[String(donor)];
+        if (reference) references.push({ recipient: Number(recipient), reference });
+      });
+    });
+  }
+  const unique = new Map();
+  references
+    .sort((left, right) => (
+      Math.abs(left.recipient - currentRecipient) - Math.abs(right.recipient - currentRecipient)
+    ))
+    .forEach(({ reference }) => unique.set(patchReferenceKey(reference), reference));
+  const donorStep = usesCheckpointDonor()
+    ? state.data.checkpoints[state.donorIndex]
+    : "different-function-name";
+  return {
+    signature: [state.model, state.condition, state.patchInterface, state.patchMode, donorStep].join("|"),
+    references: [...unique.values()],
+  };
+}
+
+function updatePatchPrefetchStatus(source = currentPatchSource()) {
+  const status = document.getElementById("patch-prefetch-status");
+  const keys = source.references.map(patchReferenceKey);
+  const ready = keys.filter((key) => patchChunks.has(key)).length;
+  const loading = keys.filter((key) => patchChunkLoads.has(key)).length;
+  const failed = keys.filter((key) => patchChunkErrors.has(key)).length;
+  if (keys.length === 0) {
+    status.textContent = "Background source cache · no measured grids available yet.";
+  } else if (ready === keys.length) {
+    status.textContent = `Background source cache ready · ${ready}/${keys.length} measured grids.`;
+  } else {
+    const loadingText = loading ? ` · ${loading} loading` : "";
+    const failedText = failed ? ` · ${failed} failed` : "";
+    status.textContent = `Background source cache · ${ready}/${keys.length} ready${loadingText}${failedText}.`;
+  }
+}
+
+function trimPatchChunkCache() {
+  if (patchChunks.size <= PATCH_CHUNK_CACHE_LIMIT) return;
+  const protectedKeys = new Set(
+    currentPatchSource().references.map(patchReferenceKey),
+  );
+  protectedKeys.add(patchReferenceKey(selectedPatchReference()));
+  for (const key of patchChunks.keys()) {
+    if (patchChunks.size <= PATCH_CHUNK_CACHE_LIMIT) break;
+    if (!protectedKeys.has(key)) patchChunks.delete(key);
+  }
+}
+
 async function loadPatchChunk(reference) {
   const key = patchReferenceKey(reference);
-  if (!key || patchChunks.has(key) || patchChunkLoads.has(key)) return;
+  if (!key || patchChunks.has(key) || patchChunkErrors.has(key)) return;
+  if (patchChunkLoads.has(key)) {
+    await patchChunkLoads.get(key);
+    return;
+  }
   const request = fetch(`${reference.url}?v=${key.slice(0, 16)}`, { cache: "no-store" })
     .then((response) => {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -318,6 +392,7 @@ async function loadPatchChunk(reference) {
       }
       patchChunks.set(key, records);
       patchChunkErrors.delete(key);
+      trimPatchChunkCache();
     })
     .catch((error) => {
       patchChunkErrors.set(key, String(error.message ?? error));
@@ -325,9 +400,41 @@ async function loadPatchChunk(reference) {
     .finally(() => {
       patchChunkLoads.delete(key);
       if (patchReferenceKey(selectedPatchReference()) === key) renderPatching();
+      updatePatchPrefetchStatus();
     });
   patchChunkLoads.set(key, request);
   await request;
+}
+
+function drainPatchSourcePrefetch() {
+  while (
+    patchSourcePrefetchActive < PATCH_SOURCE_PREFETCH_CONCURRENCY
+    && patchSourcePrefetchQueue.length > 0
+  ) {
+    const reference = patchSourcePrefetchQueue.shift();
+    const key = patchReferenceKey(reference);
+    if (!key || patchChunks.has(key) || patchChunkErrors.has(key)) continue;
+    patchSourcePrefetchActive += 1;
+    void loadPatchChunk(reference).finally(() => {
+      patchSourcePrefetchActive -= 1;
+      drainPatchSourcePrefetch();
+    });
+  }
+}
+
+function schedulePatchSourcePrefetch() {
+  const source = currentPatchSource();
+  updatePatchPrefetchStatus(source);
+  if (source.signature === patchSourcePrefetchSignature) return;
+  if (patchSourcePrefetchTimer !== null) window.clearTimeout(patchSourcePrefetchTimer);
+  patchSourcePrefetchTimer = window.setTimeout(() => {
+    patchSourcePrefetchTimer = null;
+    patchSourcePrefetchSignature = source.signature;
+    const selectedKey = patchReferenceKey(selectedPatchReference());
+    patchSourcePrefetchQueue = source.references
+      .filter((reference) => patchReferenceKey(reference) !== selectedKey);
+    drainPatchSourcePrefetch();
+  }, 250);
 }
 
 function scheduleSelectedPatchLoad() {
@@ -746,6 +853,7 @@ function renderPatching() {
   document.getElementById("source-rendered-prompt").textContent = patch.sourceRenderedPrompt;
   document.getElementById("recipient-rendered-prompt").textContent = patch.recipientRenderedPrompt;
   scheduleSelectedPatchLoad();
+  schedulePatchSourcePrefetch();
 }
 
 function renderAll() {

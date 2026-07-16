@@ -2034,11 +2034,39 @@
                 "url": "data/patches/olmo3-7b/correct/resid_post/across_sample/recipient_step_001024/donor_step_001024.json"
               }
             },
+            "128": {
+              "128": {
+                "bytes": 974551,
+                "sha256": "d82782bfce69cc460eb107bcaabccf94bd10b8684d142c1e78f266136da2c86c",
+                "url": "data/patches/olmo3-7b/correct/resid_post/across_sample/recipient_step_000128/donor_step_000128.json"
+              }
+            },
+            "1280": {
+              "1280": {
+                "bytes": 968457,
+                "sha256": "63ad3b348524696f1ffa1a468e0f427806a2a6760b5db6a23d0317f76e8932df",
+                "url": "data/patches/olmo3-7b/correct/resid_post/across_sample/recipient_step_001280/donor_step_001280.json"
+              }
+            },
+            "1500": {
+              "1500": {
+                "bytes": 971711,
+                "sha256": "e54f1970f0199cd4e96c111369bf8322c03f7d550900f96ed12f6c175a09c496",
+                "url": "data/patches/olmo3-7b/correct/resid_post/across_sample/recipient_step_001500/donor_step_001500.json"
+              }
+            },
             "16": {
               "16": {
                 "bytes": 992054,
                 "sha256": "a2bc34db61128fe9bb4b6f8e132e305629d54d78b8ce7157f653ac79386692de",
                 "url": "data/patches/olmo3-7b/correct/resid_post/across_sample/recipient_step_000016/donor_step_000016.json"
+              }
+            },
+            "192": {
+              "192": {
+                "bytes": 973271,
+                "sha256": "6cb98dc75262c7f8f93f8145403bb04e2aecd5188daa96532abafbf51dc96a5f",
+                "url": "data/patches/olmo3-7b/correct/resid_post/across_sample/recipient_step_000192/donor_step_000192.json"
               }
             },
             "2": {
@@ -2048,11 +2076,25 @@
                 "url": "data/patches/olmo3-7b/correct/resid_post/across_sample/recipient_step_000002/donor_step_000002.json"
               }
             },
+            "256": {
+              "256": {
+                "bytes": 977517,
+                "sha256": "9e3d71a6d60b0aa55add3ce68c0a88cbf8ccbf9ea5cbafbaa14bcf25c3b730ec",
+                "url": "data/patches/olmo3-7b/correct/resid_post/across_sample/recipient_step_000256/donor_step_000256.json"
+              }
+            },
             "32": {
               "32": {
                 "bytes": 976080,
                 "sha256": "a73fab5b94ad74aa038b943e8659131ee5b0a66f03c919909ec7adf4294f12db",
                 "url": "data/patches/olmo3-7b/correct/resid_post/across_sample/recipient_step_000032/donor_step_000032.json"
+              }
+            },
+            "384": {
+              "384": {
+                "bytes": 980625,
+                "sha256": "c03b8fdcb2f9a927b470dc407d0d7baa0454c6679a27b71ca1c538717547d751",
+                "url": "data/patches/olmo3-7b/correct/resid_post/across_sample/recipient_step_000384/donor_step_000384.json"
               }
             },
             "4": {
@@ -2062,11 +2104,39 @@
                 "url": "data/patches/olmo3-7b/correct/resid_post/across_sample/recipient_step_000004/donor_step_000004.json"
               }
             },
+            "512": {
+              "512": {
+                "bytes": 978341,
+                "sha256": "4b60c7826db7e4d16c9baf15758ab049b4ffe6753b794246efbd3b6fe1b26f30",
+                "url": "data/patches/olmo3-7b/correct/resid_post/across_sample/recipient_step_000512/donor_step_000512.json"
+              }
+            },
+            "64": {
+              "64": {
+                "bytes": 977164,
+                "sha256": "3cf2d80833718f3f48334bb9ad43095fe0105ee7ab4273d1b312561d073abaa0",
+                "url": "data/patches/olmo3-7b/correct/resid_post/across_sample/recipient_step_000064/donor_step_000064.json"
+              }
+            },
+            "768": {
+              "768": {
+                "bytes": 976443,
+                "sha256": "d6e24783e1c17dd8090a282e662ca3ab6370e2ac1d516793271e81149ee8b387",
+                "url": "data/patches/olmo3-7b/correct/resid_post/across_sample/recipient_step_000768/donor_step_000768.json"
+              }
+            },
             "8": {
               "8": {
                 "bytes": 997075,
                 "sha256": "1323dbd4c8561c95f9b217f9a657a3de88152cdee5259a6ac1e1c7e215e85763",
                 "url": "data/patches/olmo3-7b/correct/resid_post/across_sample/recipient_step_000008/donor_step_000008.json"
+              }
+            },
+            "96": {
+              "96": {
+                "bytes": 972717,
+                "sha256": "c86fb444701b0fae8aba140bfacf249aebe67dde76c487cf2b581a86f62eca26",
+                "url": "data/patches/olmo3-7b/correct/resid_post/across_sample/recipient_step_000096/donor_step_000096.json"
               }
             }
           },
@@ -2083,7 +2153,7 @@
       }
     }
   },
-  "real_patch_files": 12,
+  "real_patch_files": 22,
   "real_runs": 2,
   "status": "mixed_preview",
   "token_axes": {
