@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gc
 import math
+import random
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -12,6 +13,7 @@ import torch as t
 
 from oocr_training_dynamics.artifacts import adapter_dir, run_dir, write_json
 from oocr_training_dynamics.contracts import (
+    CHECKPOINT_STEPS,
     PatchingInterface,
     PatchingMode,
     RunKey,
@@ -63,6 +65,10 @@ class PatchTarget:
 
     module: t.nn.Module
     capture_input: bool
+
+
+SourceRecord = tuple[PromptPatchView, tuple[t.Tensor, ...], t.Tensor]
+SourceBank = dict[str, SourceRecord]
 
 
 def _candidate_ids(processor: Any, record: ReflectionRecord) -> t.Tensor:
@@ -428,6 +434,36 @@ def _selected_records(seed: int) -> tuple[ReflectionRecord, ...]:
     return tuple(record for record in records if record.kind == "code")
 
 
+def _capture_clean_source_bank(
+    model: t.nn.Module,
+    targets: tuple[PatchTarget, ...],
+    processor: Any,
+    records: tuple[ReflectionRecord, ...],
+) -> SourceBank:
+    source_by_record: SourceBank = {}
+    for record in records:
+        source_view = _prompt_patch_view(
+            processor,
+            record,
+            record.messages,
+            FUNCTION_BY_ID[record.function_id].alias,
+            stop_at_sequence_start=True,
+        )
+        source_activations, source_probabilities = _capture(
+            model,
+            targets,
+            source_view.input_ids,
+            source_view.attention_mask,
+            _candidate_ids(processor, record),
+        )
+        source_by_record[record.record_id] = (
+            source_view,
+            source_activations,
+            source_probabilities,
+        )
+    return source_by_record
+
+
 def build_token_axis_metadata(
     processor: Any,
     record: ReflectionRecord,
@@ -614,6 +650,222 @@ def _patch_record(
     )
 
 
+def _temporal_mode(recipient_step: int, donor_step: int) -> PatchingMode:
+    if donor_step < recipient_step:
+        return PatchingMode.ACROSS_TIME
+    if donor_step > recipient_step:
+        return PatchingMode.LATER_CHECKPOINT
+    raise ValueError("temporal patching does not store same-checkpoint identity cells")
+
+
+def _temporal_direction(mode: PatchingMode) -> str:
+    if mode is PatchingMode.ACROSS_TIME:
+        return "earlier_source_into_later_clean_recipient"
+    if mode is PatchingMode.LATER_CHECKPOINT:
+        return "later_source_into_earlier_clean_recipient"
+    raise ValueError("temporal direction requires a checkpoint-transfer mode")
+
+
+def _patch_temporal_source_bank(
+    model: t.nn.Module,
+    targets: tuple[PatchTarget, ...],
+    processor: Any,
+    records: tuple[ReflectionRecord, ...],
+    mode: PatchingMode,
+    source_by_record: SourceBank,
+) -> list[dict[str, object]]:
+    serialized: list[dict[str, object]] = []
+    for record in records:
+        source_view, source_activations, source_probabilities = source_by_record[
+            record.record_id
+        ]
+        recipient_view = _prompt_patch_view(
+            processor,
+            record,
+            record.messages,
+            FUNCTION_BY_ID[record.function_id].alias,
+            stop_at_sequence_start=True,
+        )
+        serialized.append(
+            _patch_record(
+                model,
+                targets,
+                processor,
+                record,
+                mode,
+                source_view,
+                recipient_view,
+                source_activations,
+                source_probabilities,
+            )
+        )
+    return serialized
+
+
+def _write_temporal_artifact(
+    root: Path,
+    run: RunKey,
+    spec: ModelSpec,
+    plan: PatchingPlan,
+    donor_step: int,
+    serialized: list[dict[str, object]],
+) -> None:
+    output = _patch_output_path(root, run, plan, donor_step)
+    write_json(
+        output,
+        {
+            "model": spec,
+            "run": run,
+            "plan": plan,
+            "donor_step": donor_step,
+            "patch_direction": _temporal_direction(plan.mode),
+            "records": serialized,
+        },
+    )
+    print(
+        f"[patch] {run.model}/{run.condition.value} {plan.interface.value}/"
+        f"{plan.mode.value} "
+        f"recipient={plan.recipient_step} donor={donor_step} -> {output}",
+        flush=True,
+    )
+
+
+def run_temporal_patching_matrix(
+    root: Path,
+    run: RunKey,
+    recipient_steps: tuple[int, ...],
+    modes: tuple[PatchingMode, ...],
+    interface: PatchingInterface,
+    *,
+    shuffle_seed: int | None = None,
+    allow_provisional_model: bool = False,
+) -> None:
+    """Fill selected checkpoint-transfer cells while reusing source and recipient loads."""
+
+    if not t.cuda.is_available():
+        raise RuntimeError("activation patching requires CUDA")
+    if tuple(sorted(set(recipient_steps))) != recipient_steps or any(
+        step not in CHECKPOINT_STEPS for step in recipient_steps
+    ):
+        raise ValueError("temporal recipient steps must be unique, increasing checkpoints")
+    if not modes or len(set(modes)) != len(modes) or any(
+        mode is PatchingMode.ACROSS_SAMPLE for mode in modes
+    ):
+        raise ValueError("temporal matrix modes must be unique checkpoint-transfer modes")
+    if shuffle_seed is not None and shuffle_seed < 0:
+        raise ValueError("temporal matrix shuffle seed must be non-negative")
+
+    scheduled_pairs: list[tuple[int, int, PatchingMode]] = []
+    for recipient_step in recipient_steps:
+        for donor_step in CHECKPOINT_STEPS:
+            if donor_step == recipient_step:
+                continue
+            mode = _temporal_mode(recipient_step, donor_step)
+            if mode not in modes:
+                continue
+            scheduled_pairs.append((recipient_step, donor_step, mode))
+    if shuffle_seed is not None:
+        random.Random(shuffle_seed).shuffle(scheduled_pairs)
+
+    pending_pairs: list[tuple[int, int, PatchingMode]] = []
+    skipped = 0
+    for recipient_step, donor_step, mode in scheduled_pairs:
+        plan = PatchingPlan(
+            mode=mode,
+            recipient_step=recipient_step,
+            donor_steps=(donor_step,),
+            interface=interface,
+        )
+        if _patch_output_path(root, run, plan, donor_step).is_file():
+            skipped += 1
+        else:
+            pending_pairs.append((recipient_step, donor_step, mode))
+    if skipped:
+        print(
+            f"[patch-matrix] {run.model}/{run.condition.value} {interface.value} "
+            f"skipped {skipped} existing temporal artifact(s)",
+            flush=True,
+        )
+    if not pending_pairs:
+        return
+    if shuffle_seed is not None:
+        print(
+            f"[patch-matrix] shuffled {len(pending_pairs)} missing temporal cells "
+            f"with seed {shuffle_seed}",
+            flush=True,
+        )
+
+    spec = get_model_spec(run.model, allow_provisional=allow_provisional_model)
+    processor = load_processor(spec)
+    records = _selected_records(run.seed)
+    donor_steps = tuple(
+        sorted(
+            {
+                donor_step
+                for _recipient_step, donor_step, _mode in pending_pairs
+            }
+        )
+    )
+    sources_by_step: dict[int, SourceBank] = {}
+    for donor_step in donor_steps:
+        donor_model = _load_checkpoint_model(root, run, spec, donor_step)
+        donor_blocks = resolve_decoder_blocks(donor_model, spec)
+        donor_targets = _resolve_patch_targets(donor_blocks, interface)
+        try:
+            sources_by_step[donor_step] = _capture_clean_source_bank(
+                donor_model,
+                donor_targets,
+                processor,
+                records,
+            )
+        finally:
+            _release_model(donor_model)
+        print(
+            f"[patch-matrix] captured {interface.value} sources at step {donor_step}",
+            flush=True,
+        )
+
+    recipient_model: t.nn.Module | None = None
+    recipient_targets: tuple[PatchTarget, ...] = ()
+    loaded_recipient_step: int | None = None
+    try:
+        for recipient_step, donor_step, mode in pending_pairs:
+            if recipient_step != loaded_recipient_step:
+                if recipient_model is not None:
+                    _release_model(recipient_model)
+                recipient_model = _load_checkpoint_model(root, run, spec, recipient_step)
+                recipient_blocks = resolve_decoder_blocks(recipient_model, spec)
+                recipient_targets = _resolve_patch_targets(recipient_blocks, interface)
+                loaded_recipient_step = recipient_step
+            if recipient_model is None:  # pragma: no cover - guarded by the load above
+                raise AssertionError("temporal recipient model was not loaded")
+            plan = PatchingPlan(
+                mode=mode,
+                recipient_step=recipient_step,
+                donor_steps=(donor_step,),
+                interface=interface,
+            )
+            serialized = _patch_temporal_source_bank(
+                recipient_model,
+                recipient_targets,
+                processor,
+                records,
+                mode,
+                sources_by_step[donor_step],
+            )
+            _write_temporal_artifact(
+                root,
+                run,
+                spec,
+                plan,
+                donor_step,
+                serialized,
+            )
+    finally:
+        if recipient_model is not None:
+            _release_model(recipient_model)
+
+
 def run_patching(
     root: Path,
     run: RunKey,
@@ -794,4 +1046,4 @@ def run_patching(
         gc.collect()
 
 
-__all__ = ["build_token_axis_metadata", "run_patching"]
+__all__ = ["build_token_axis_metadata", "run_patching", "run_temporal_patching_matrix"]

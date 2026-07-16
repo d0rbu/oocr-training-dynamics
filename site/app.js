@@ -1,6 +1,6 @@
 "use strict";
 
-const DATA_URL = "data/experiment.json?v=20260715m";
+const DATA_URL = "data/experiment.json?v=20260715p";
 const CONDITION_LABELS = {
   correct: "Correct I/O",
   wrong_alias: "Wrong alias",
@@ -34,6 +34,10 @@ const PATCH_INTERFACE_DESCRIPTIONS = {
 };
 const SLIDER_UNITS = 10000;
 const ALL_FUNCTIONS_ID = "__all__";
+const patchChunks = new Map();
+const patchChunkLoads = new Map();
+const patchChunkErrors = new Map();
+let patchLoadTimer = null;
 const state = {
   data: null,
   model: "olmo3-7b",
@@ -129,7 +133,7 @@ function setupStatus() {
   document.getElementById("footer-status").textContent = state.data.status === "synthetic_preview"
     ? "Visualization shell only · no GPU results yet"
     : state.data.status === "mixed_preview"
-      ? `${state.data.real_runs}/9 learning curves measured · unfinished selections are labeled synthetic`
+      ? `${state.data.real_runs}/9 learning curves measured · unfinished patch cells are unprocessed`
       : "All nine training runs measured";
 }
 
@@ -286,6 +290,60 @@ function resolvedArtifactMode() {
   return null;
 }
 
+function selectedPatchReference() {
+  const mode = resolvedArtifactMode();
+  if (!mode) return null;
+  const recipientStep = state.data.checkpoints[state.recipientIndex];
+  const donorIndex = usesCheckpointDonor() ? state.donorIndex : state.recipientIndex;
+  const donorStep = state.data.checkpoints[donorIndex];
+  return state.data.patch_manifest?.[state.model]?.[state.condition]?.[state.patchInterface]?.[mode]
+    ?.[String(recipientStep)]?.[String(donorStep)] ?? null;
+}
+
+function patchReferenceKey(reference) {
+  return reference?.sha256 ?? null;
+}
+
+async function loadPatchChunk(reference) {
+  const key = patchReferenceKey(reference);
+  if (!key || patchChunks.has(key) || patchChunkLoads.has(key)) return;
+  const request = fetch(`${reference.url}?v=${key.slice(0, 16)}`, { cache: "no-store" })
+    .then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    })
+    .then((records) => {
+      if (!records || typeof records !== "object" || Array.isArray(records)) {
+        throw new Error("patch chunk is not a function-record object");
+      }
+      patchChunks.set(key, records);
+      patchChunkErrors.delete(key);
+    })
+    .catch((error) => {
+      patchChunkErrors.set(key, String(error.message ?? error));
+    })
+    .finally(() => {
+      patchChunkLoads.delete(key);
+      if (patchReferenceKey(selectedPatchReference()) === key) renderPatching();
+    });
+  patchChunkLoads.set(key, request);
+  await request;
+}
+
+function scheduleSelectedPatchLoad() {
+  if (patchLoadTimer !== null) {
+    window.clearTimeout(patchLoadTimer);
+    patchLoadTimer = null;
+  }
+  const reference = selectedPatchReference();
+  const key = patchReferenceKey(reference);
+  if (!key || patchChunks.has(key) || patchChunkErrors.has(key)) return;
+  patchLoadTimer = window.setTimeout(() => {
+    patchLoadTimer = null;
+    void loadPatchChunk(reference);
+  }, 100);
+}
+
 function tokenAxisMode() {
   return state.patchMode === "across_sample" ? "across_sample" : "across_time";
 }
@@ -313,23 +371,10 @@ function nearestCheckpointIndex(value, minimumIndex, maximumIndex) {
   return bestIndex;
 }
 
-function syntheticPatchForFunction(functionId) {
+function unprocessedPatchForFunction(functionId) {
   const layers = state.data.models[state.model].layer_count;
   const fnIndex = state.data.functions.findIndex((fn) => fn.id === functionId);
   const fn = state.data.functions[fnIndex];
-  const recipientCurve = curveAt(state.recipientIndex);
-  const donorCurve = curveAt(usesCheckpointDonor() ? state.donorIndex : state.recipientIndex);
-  let recipient;
-  let source;
-  if (usesCheckpointDonor()) {
-    recipient = recipientCurve.correct_probability;
-    source = donorCurve.correct_probability;
-  } else {
-    const cleanCorrect = recipientCurve.correct_probability;
-    const dirtyCorrect = Math.max(.08, .23 - cleanCorrect * .08);
-    recipient = cleanCorrect;
-    source = dirtyCorrect;
-  }
   const exactAxis = state.data.token_axes?.[state.model]?.[tokenAxisMode()]?.[functionId];
   const tokenPositions = exactAxis?.positions
     ? exactAxis.positions.map((position) => ({
@@ -350,27 +395,12 @@ function syntheticPatchForFunction(functionId) {
       sourceToken: "token metadata unavailable",
       recipientToken: "token metadata unavailable",
     }];
-  const finalStep = state.data.checkpoints.at(-1);
-  const recipientStep = state.data.checkpoints[state.recipientIndex];
-  const donorStep = state.data.checkpoints[state.donorIndex];
-  const time = Math.max(recipientStep, donorStep) / finalStep;
-  const donorGap = usesCheckpointDonor() ? Math.abs(recipientStep - donorStep) / finalStep : .85;
-  const center = .42 + .30 * time;
-  const width = .13 + .09 * (1 - time);
-  const matrix = tokenPositions.map((position) => Array.from({ length: layers }, (_, layer) => {
-    const depth = layer / Math.max(1, layers - 1);
-    const core = Math.exp(-((depth - center) ** 2) / (2 * width ** 2));
-    const late = .35 * Math.exp(-((depth - .91) ** 2) / .018);
-    const tokenEnvelope = Math.exp(-position.reverseIndex / Math.max(3, tokenPositions.length * .72));
-    const strength = Math.min(1, donorGap * (core + late) * tokenEnvelope);
-    return recipient + strength * (source - recipient);
-  }));
   return {
     layers,
     tokenPositions,
-    recipient,
-    source,
-    matrix,
+    recipient: null,
+    source: null,
+    matrix: tokenPositions.map(() => Array(layers).fill(null)),
     target: fn.definition,
     outcomeLabel: "correct-implementation probability",
     sourceFunctionId: exactAxis?.source_function_id ?? (
@@ -382,19 +412,15 @@ function syntheticPatchForFunction(functionId) {
     sourceRenderedPrompt: exactAxis?.source_rendered_prompt ?? "Exact tokenizer metadata is unavailable for this provisional model.",
     recipientRenderedPrompt: exactAxis?.recipient_rendered_prompt ?? "Exact tokenizer metadata is unavailable for this provisional model.",
     measured: false,
+    processed: false,
     aggregate: false,
     functionCount: 1,
   };
 }
 
 function measuredPatchForFunction(functionId) {
-  const mode = resolvedArtifactMode();
-  if (!mode) return null;
-  const recipientStep = state.data.checkpoints[state.recipientIndex];
-  const donorIndex = usesCheckpointDonor() ? state.donorIndex : state.recipientIndex;
-  const donorStep = state.data.checkpoints[donorIndex];
-  const record = state.data.patches?.[state.model]?.[state.condition]?.[state.patchInterface]?.[mode]
-    ?.[String(recipientStep)]?.[String(donorStep)]?.[functionId];
+  const key = patchReferenceKey(selectedPatchReference());
+  const record = key ? patchChunks.get(key)?.[functionId] : null;
   if (!record) return null;
   let matrix;
   let tokenPositions;
@@ -446,6 +472,7 @@ function measuredPatchForFunction(functionId) {
     sourceRenderedPrompt: record.token_axis?.source_rendered_prompt ?? "This older artifact does not store the rendered source prompt.",
     recipientRenderedPrompt: record.token_axis?.recipient_rendered_prompt ?? "This older artifact does not store the rendered recipient prompt.",
     measured: true,
+    processed: true,
     aggregate: false,
     functionCount: 1,
   };
@@ -471,6 +498,7 @@ function averagePatches(patches) {
     throw new Error("Cannot average patch grids with different layer counts");
   }
   const functionCount = patches.length;
+  const processed = patches.every((patch) => patch.processed);
   const sharedTokenCount = Math.min(...patches.map((patch) => patch.tokenPositions.length));
   const tokenPositions = Array.from({ length: sharedTokenCount }, (_, reverseIndex) => {
     const sourceTokens = patches.map((patch) => patch.tokenPositions[reverseIndex].sourceToken);
@@ -490,15 +518,15 @@ function averagePatches(patches) {
   });
   const matrix = Array.from({ length: sharedTokenCount }, (_, tokenIndex) => (
     Array.from({ length: layers }, (_, layer) => (
-      mean(patches.map((patch) => patch.matrix[tokenIndex][layer]))
+      processed ? mean(patches.map((patch) => patch.matrix[tokenIndex][layer])) : null
     ))
   ));
-  const measured = patches.every((patch) => patch.measured);
+  const measured = processed && patches.every((patch) => patch.measured);
   return {
     layers,
     tokenPositions,
-    recipient: mean(patches.map((patch) => patch.recipient)),
-    source: mean(patches.map((patch) => patch.source)),
+    recipient: processed ? mean(patches.map((patch) => patch.recipient)) : null,
+    source: processed ? mean(patches.map((patch) => patch.source)) : null,
     matrix,
     target: `${functionCount}-function mean`,
     outcomeLabel: "mean correct-implementation probability",
@@ -507,16 +535,17 @@ function averagePatches(patches) {
     sourceRenderedPrompt: `Aggregate view over ${functionCount} model-rendered source prompts. Select an individual function to inspect exact text and tokenizer IDs.`,
     recipientRenderedPrompt: `Aggregate view over ${functionCount} model-rendered recipient prompts. Select an individual function to inspect exact text and tokenizer IDs.`,
     measured,
+    processed,
     aggregate: true,
     functionCount,
   };
 }
 
-function syntheticPatch() {
+function unprocessedPatch() {
   const functionIds = state.functionId === ALL_FUNCTIONS_ID
     ? state.data.functions.map((fn) => fn.id)
     : [state.functionId];
-  const patches = functionIds.map((functionId) => syntheticPatchForFunction(functionId));
+  const patches = functionIds.map((functionId) => unprocessedPatchForFunction(functionId));
   return patches.length === 1 ? patches[0] : averagePatches(patches);
 }
 
@@ -530,7 +559,7 @@ function measuredPatch() {
 }
 
 function patchData() {
-  return measuredPatch() ?? syntheticPatch();
+  return measuredPatch() ?? unprocessedPatch();
 }
 
 function colorFor(value, metric) {
@@ -572,6 +601,10 @@ function aggregateTokenCoordinate(prefix, token) {
 
 function renderPatching() {
   const patch = patchData();
+  const patchReference = selectedPatchReference();
+  const patchReferenceId = patchReferenceKey(patchReference);
+  const patchLoadError = patchReferenceId ? patchChunkErrors.get(patchReferenceId) : null;
+  const patchLoading = Boolean(patchReferenceId && !patch.processed && !patchLoadError);
   const heatmap = document.getElementById("patch-heatmap");
   heatmap.replaceChildren();
   heatmap.style.gridTemplateColumns = `300px repeat(${patch.layers}, minmax(19px, 1fr))`;
@@ -604,9 +637,21 @@ function renderPatching() {
     heatmap.append(label);
     for (let layer = 0; layer < patch.layers; layer += 1) {
       const probability = patch.matrix[tokenIndex][layer];
+      const cell = el("div", { class: "heat-cell", tabindex: "0" });
+      if (!patch.processed) {
+        cell.classList.add("unprocessed");
+        const unavailableReason = patchLoadError
+          ? "A measured file exists, but it could not be loaded. No fallback value is displayed."
+          : patchLoading
+            ? "Measured values are loading. No temporary numeric value is displayed."
+            : "No activation-patching value has been measured for this recipient/donor selection.";
+        bindHeatTooltip(cell, `<b>No displayed value</b><br>Layer ${layer} · reverse token −${position.reverseIndex}<br><br>${unavailableReason}`);
+        cell.setAttribute("aria-label", `layer ${layer}, reverse token ${position.reverseIndex}, unprocessed`);
+        heatmap.append(cell);
+        continue;
+      }
       const delta = probability - patch.recipient;
       const value = state.patchMetric === "probability" ? probability : delta / .25;
-      const cell = el("div", { class: "heat-cell", tabindex: "0" });
       cell.style.background = colorFor(value, state.patchMetric);
       const display = state.patchMetric === "probability" ? formatPercent(probability) : `${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(1)} pp`;
       const averagingNote = patch.aggregate ? `<br>cellwise mean over n=${patch.functionCount} functions` : "";
@@ -621,11 +666,36 @@ function renderPatching() {
   const donor = checkpoints[usesCheckpointDonor() ? state.donorIndex : state.recipientIndex];
   const patchStatus = document.getElementById("patch-status");
   const interfaceLabel = PATCH_INTERFACE_LABELS[state.patchInterface];
-  const aggregateStatus = patch.aggregate ? ` · mean n=${patch.functionCount}` : "";
-  patchStatus.textContent = (patch.measured
+  const aggregateStatus = patch.aggregate
+    ? patch.processed ? ` · mean n=${patch.functionCount}` : ` · n=${patch.functionCount} functions`
+    : "";
+  patchStatus.textContent = (patch.processed
     ? `measured · ${interfaceLabel}`
-    : `synthetic preview · ${interfaceLabel}`) + aggregateStatus;
+    : patchLoadError
+      ? `load failed · ${interfaceLabel}`
+      : patchLoading
+        ? `loading · ${interfaceLabel}`
+        : `unprocessed · ${interfaceLabel}`) + aggregateStatus;
   patchStatus.classList.toggle("measured", patch.measured);
+  patchStatus.classList.toggle("loading", patchLoading);
+  patchStatus.classList.toggle("load-error", Boolean(patchLoadError));
+  patchStatus.classList.toggle("unprocessed", !patch.processed && !patchLoading && !patchLoadError);
+  const legend = document.getElementById("patch-legend");
+  legend.replaceChildren();
+  if (patch.processed) {
+    legend.append(el("span", {}, "lower P(correct)"));
+    legend.append(el("i"));
+    legend.append(el("span", {}, "higher P(correct)"));
+  } else if (patchLoading) {
+    legend.append(el("i", { class: "unprocessed" }));
+    legend.append(el("span", {}, "loading measured values · no value shown yet"));
+  } else if (patchLoadError) {
+    legend.append(el("i", { class: "unprocessed" }));
+    legend.append(el("span", {}, "measured file could not be loaded · no value shown"));
+  } else {
+    legend.append(el("i", { class: "unprocessed" }));
+    legend.append(el("span", {}, "unprocessed · no value encoded"));
+  }
   document.getElementById("patch-interface-description").textContent = PATCH_INTERFACE_DESCRIPTIONS[state.patchInterface];
   document.getElementById("recipient-label").textContent = recipient === 0 ? "frozen base" : `step ${recipient}`;
   document.getElementById("donor-label").textContent = donor === 0 ? "frozen base" : `step ${donor}`;
@@ -654,7 +724,7 @@ function renderPatching() {
     } else if (donor > recipient) {
       document.getElementById("patch-explanation").textContent = "Injecting a later donor activation into an earlier recipient—including the frozen base—tests where the learned state is sufficient to boost the correct OOCR answer. The remaining computation uses the recipient checkpoint’s weights.";
     } else {
-      document.getElementById("patch-explanation").textContent = "Recipient and donor are the same checkpoint, so this is an identity-control preview: replacing a selected activation with itself should leave the answer unchanged.";
+      document.getElementById("patch-explanation").textContent = "Recipient and donor are the same checkpoint. This identity cell is not run or assigned a value because replacing an activation with itself should leave the answer unchanged.";
     }
   } else {
     const dirty = patch.aggregate
@@ -666,8 +736,16 @@ function renderPatching() {
       : `What is the definition of ${dirty.alias}?`;
     document.getElementById("patch-explanation").textContent = "Patching dirty-name states into the clean prompt tests where the alternate identity suppresses the correct implementation. Cells show P(correct) directly, so a successful corruption moves downward.";
   }
+  if (patchLoadError) {
+    document.getElementById("patch-explanation").textContent = `A measured artifact exists for this selection, but its data file could not be loaded (${patchLoadError}). No fallback value is shown.`;
+  } else if (patchLoading) {
+    document.getElementById("patch-explanation").textContent = "A measured artifact exists for this selection and is loading. The temporary purple hatch encodes no probability or delta.";
+  } else if (!patch.processed) {
+    document.getElementById("patch-explanation").textContent = "This selection has not been processed. The purple hatched squares are availability markers only: they encode no probability, delta, interpolation, or synthetic result.";
+  }
   document.getElementById("source-rendered-prompt").textContent = patch.sourceRenderedPrompt;
   document.getElementById("recipient-rendered-prompt").textContent = patch.recipientRenderedPrompt;
+  scheduleSelectedPatchLoad();
 }
 
 function renderAll() {

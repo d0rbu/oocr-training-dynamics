@@ -1,7 +1,7 @@
 # GPU runbook
 
-This runbook is intentionally inactive until the user says the shared GPU is available. As of
-2026-07-15, `.gpu-runs-enabled` does not exist and no GPU action has run in this repository.
+This runbook remains gated until the user says the shared GPU is available. Measured OLMo and
+Qwen work now exists; `.gpu-runs-enabled` must still be present for every new CUDA launch.
 
 ## 0. Confirm the model matrix
 
@@ -148,9 +148,28 @@ uv run python scripts/run_patching_matrix.py \
   --model olmo3-7b --condition correct --confirm-gpu-run
 ```
 
-Existing complete JSON grids are skipped per interface. For temporal plans, all pending donor activations are
-captured to CPU first and one recipient model load is reused across those donors. Use repeated
-`--recipient-step`, `--mode`, or `--interface` flags to stage the predetermined priority subset.
+Existing complete JSON grids are skipped per interface. For temporal plans, all pending donor
+activations are captured to CPU first. The unshuffled schedule groups donors under each recipient
+to reuse its model load; the seeded schedule instead switches recipients as needed to scatter
+early coverage. Use repeated `--recipient-step`, `--mode`, or `--interface` flags to stage a
+predetermined subset.
+
+To fill both directions of the independent recipient/donor selector, excluding the analytic
+same-checkpoint identity diagonal, run:
+
+```bash
+uv run python scripts/run_patching_matrix.py \
+  --model olmo3-7b --condition correct --interface resid_post \
+  --mode across_time --mode later_checkpoint \
+  --shuffle-seed 20260715 --confirm-gpu-run
+```
+
+This optimized matrix path captures each needed checkpoint's clean source bank once in CPU RAM,
+then follows the deterministic shuffled cell order and writes every donor artifact atomically. On
+the 18-checkpoint OLMo schedule the complete directed residual grid has 306 off-diagonal cells.
+Check host RAM before launching it; source banks are never written to disk and are released when
+the process exits. Omitting `--shuffle-seed` groups cells by recipient to minimize model reloads;
+the seeded order intentionally trades some loading efficiency for early plane-wide coverage.
 
 ## 7. Refresh the site
 
@@ -161,8 +180,11 @@ CUDA_VISIBLE_DEVICES='' uv run python scripts/export_site.py
 node --check site/app.js
 ```
 
+The exporter writes one content-addressed, lazy-loaded site chunk per measured patch artifact;
+the main payload remains small as temporal coverage grows.
+
 The top banner remains partial while any learning curve is synthetic. Each patch selection has its
-own measured/preview badge.
+own measured/unprocessed badge.
 
 ## 8. Relinquish the GPU
 

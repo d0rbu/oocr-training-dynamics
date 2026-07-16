@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="Interactive preregistration and results explorer for OOCR training dynamics and activation patching." />
     <title>OOCR Atlas · training dynamics</title>
-    <link rel="stylesheet" href="styles.css?v=20260715m" />
-    <script src="app.js?v=20260715m" defer></script>
+    <link rel="stylesheet" href="styles.css?v=20260715p" />
+    <script src="app.js?v=20260715p" defer></script>
   </head>
   <body>
     <div class="grain" aria-hidden="true"></div>
@@ -224,7 +224,7 @@
             <div id="patch-heatmap" class="patch-heatmap" role="img" aria-label="Answer-choice activation patching heatmap"></div>
           </div>
           <div class="heatmap-footer">
-            <div class="legend"><span>lower P(correct)</span><i></i><span>higher P(correct)</span></div>
+            <div id="patch-legend" class="legend"><span>lower P(correct)</span><i></i><span>higher P(correct)</span></div>
             <p id="patch-explanation">Replacing a late model’s selected activation with an earlier checkpoint asks where learned OOCR information is causally necessary.</p>
           </div>
         </div>

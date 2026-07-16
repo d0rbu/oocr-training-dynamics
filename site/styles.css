@@ -122,6 +122,9 @@ input[type="range"] { width: 100%; accent-color: var(--green); cursor: pointer; 
 .patch-status-row p { margin: 0; color: #8fa097; font-size: 11px; }
 .patch-status { padding: 6px 9px; border: 1px solid #d49a31; border-radius: 99px; color: #f3cb79; font: 700 9px/1 ui-monospace, monospace; letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; }
 .patch-status.measured { border-color: var(--acid); color: var(--acid); }
+.patch-status.unprocessed { border-color: #bca7df; color: #d8c8ef; }
+.patch-status.loading { border-color: #91b7dd; color: #b8d6f2; }
+.patch-status.load-error { border-color: #ef775f; color: #ff9b86; }
 .patch-toolbar { display: grid; grid-template-columns: .95fr .8fr 1.1fr 1fr .8fr; gap: 18px; padding: 24px 28px; border-bottom: 1px solid rgba(255,255,255,.13); align-items: end; }
 .segmented.dark button { color: #b7c3bc; border-color: rgba(255,255,255,.18); }
 .segmented.dark button.active { background: var(--acid); border-color: var(--acid); color: var(--night); }
@@ -152,11 +155,13 @@ input[type="range"] { width: 100%; accent-color: var(--green); cursor: pointer; 
 .heatmap-token.anchor b { background: var(--acid); color: var(--night); }
 .heatmap-token span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c8d1cc; font: 10px ui-monospace, monospace; }
 .heat-cell { min-width: 19px; aspect-ratio: .72; border-radius: 1px; cursor: crosshair; transition: transform .1s, filter .1s; }
+.heat-cell.unprocessed { background: repeating-linear-gradient(135deg, #6e5a82 0 5px, #44374f 5px 10px); cursor: help; }
 .heat-cell:hover, .heat-cell:focus { transform: scale(1.18); filter: brightness(1.15); outline: 1px solid white; z-index: 2; }
 .heatmap-footer { display: flex; align-items: center; justify-content: space-between; gap: 30px; padding: 18px 28px 24px; }
 .heatmap-footer p { max-width: 660px; margin: 0; color: #9aaba2; font-size: 12px; line-height: 1.5; text-align: right; }
 .legend { display: flex; align-items: center; gap: 8px; color: #8fa097; font: 9px ui-monospace, monospace; }
 .legend i { display: block; width: 120px; height: 8px; background: linear-gradient(90deg, #435951, #eee8d8, #ef775f); }
+.legend i.unprocessed { width: 24px; background: repeating-linear-gradient(135deg, #6e5a82 0 5px, #44374f 5px 10px); }
 
 .design-section { background: var(--paper-bright); }
 .condition-cards { max-width: 1440px; margin: auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }

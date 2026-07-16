@@ -23,8 +23,8 @@ runtime code or interpreting artifacts.
   `--confirm-gpu-run`.
 - The Gemma slot is provisional because no official Gemma 4 9B exists. Do not pass
   `--allow-provisional-gemma` until the user confirms the substitute.
-- Do not label synthetic site data as results. `site/data/experiment.json` records its status and
-  each patch view carries a measured/preview badge.
+- Do not label synthetic site data as results. `site/data/experiment.json` records its status;
+  each patch view carries a measured/unprocessed badge, and unprocessed cells contain no value.
 - Treat `artifacts/` as valuable, local research state. Do not delete or overwrite it casually.
   Training refuses to overwrite partial or completed runs.
 - Patch raw hidden states only within one model family and pinned revision.

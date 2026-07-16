@@ -71,8 +71,12 @@ an explicit `attention_input`, `attention_output`, `mlp_input`, or `mlp_output` 
 interface can overwrite another.
 
 `artifacts/` is ignored because adapters and optimizer states are large. The compact site payload
-is generated at `site/data/experiment.json` and committed. The exporter embeds measured files
-when present and fills only missing views with visibly labeled synthetic preview values.
+is generated at `site/data/experiment.json` and committed. It contains a content-addressed patch
+manifest; each measured recipient/donor grid is exported as a separate compact file under
+`site/data/patches/` and fetched only when selected. This keeps the main page usable while the
+shuffled temporal atlas grows. Missing patch views retain exact token-axis metadata but contain no
+probabilities or deltas; the site renders reserved unprocessed cells instead. Missing behavioral
+curves remain explicitly synthetic.
 
 ## Model-family boundary
 

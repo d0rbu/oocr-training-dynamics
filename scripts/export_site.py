@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from pathlib import Path
 from typing import cast
@@ -237,8 +239,22 @@ def _compact_patch_record(record: PatchRecord, *, context: str) -> PatchRecord:
     }
 
 
-def _real_patches(root: Path) -> tuple[dict[str, object], int]:
-    patches: dict[str, object] = {}
+def _write_compact_json(path: Path, value: object) -> tuple[str, int]:
+    serialized = json.dumps(
+        value,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8") + b"\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_bytes(serialized)
+    temporary.replace(path)
+    return hashlib.sha256(serialized).hexdigest(), len(serialized)
+
+
+def _export_real_patches(root: Path) -> tuple[dict[str, object], int]:
+    manifest: dict[str, object] = {}
     file_count = 0
     pattern = "artifacts/runs/*/*/seed_*/patching/**/donor_*.json"
     for path in sorted(root.glob(pattern)):
@@ -278,14 +294,34 @@ def _real_patches(root: Path) -> tuple[dict[str, object], int]:
                 record,
                 context=f"{path}.records[{function_id}]",
             )
-        model_bucket = cast(dict[str, object], patches.setdefault(model, {}))
+        expected_function_ids = {function.function_id for function in FUNCTIONS}
+        if set(by_function) != expected_function_ids:
+            raise ValueError(
+                f"{path} must contain exactly the {len(expected_function_ids)} registered functions"
+            )
+        relative_path = (
+            Path("data")
+            / "patches"
+            / model
+            / condition
+            / interface
+            / mode
+            / f"recipient_step_{recipient_step:06d}"
+            / f"donor_step_{donor_step:06d}.json"
+        )
+        digest, byte_count = _write_compact_json(root / "site" / relative_path, by_function)
+        model_bucket = cast(dict[str, object], manifest.setdefault(model, {}))
         condition_bucket = cast(dict[str, object], model_bucket.setdefault(condition, {}))
         interface_bucket = cast(dict[str, object], condition_bucket.setdefault(interface, {}))
         mode_bucket = cast(dict[str, object], interface_bucket.setdefault(mode, {}))
         recipient_bucket = cast(dict[str, object], mode_bucket.setdefault(str(recipient_step), {}))
-        recipient_bucket[str(donor_step)] = by_function
+        recipient_bucket[str(donor_step)] = {
+            "bytes": byte_count,
+            "sha256": digest,
+            "url": relative_path.as_posix(),
+        }
         file_count += 1
-    return patches, file_count
+    return manifest, file_count
 
 
 def _token_axes() -> dict[str, object]:
@@ -332,7 +368,7 @@ def main() -> None:
             curves[model.value][condition.value] = (
                 real if real is not None else _synthetic_curve(model_index, condition)
             )
-    patches, real_patch_files = _real_patches(root)
+    patch_manifest, real_patch_files = _export_real_patches(root)
     status = (
         "real_complete"
         if real_runs == 9 and real_patch_files > 0
@@ -349,9 +385,9 @@ def main() -> None:
             "warning": (
                 "Synthetic preregistration preview; no GPU experiment has run. Every plotted value is illustrative."
                 if real_runs == 0 and real_patch_files == 0
-                else "Incomplete measurement matrix: missing learning curves and patch grids remain synthetic and must not be interpreted."
+                else "Incomplete measurement matrix: missing learning curves remain synthetic; missing patch grids are marked unprocessed and contain no values."
                 if real_runs < 9 or real_patch_files == 0
-                else "Learning curves are measured; patching coverage is partial where the atlas labels a cell as preview."
+                else "Learning curves are measured; patching coverage is partial where the atlas labels cells unprocessed."
             ),
             "checkpoints": CHECKPOINT_STEPS,
             "effective_batch_size": EFFECTIVE_BATCH_SIZE,
@@ -376,7 +412,7 @@ def main() -> None:
             "curve_sources": curve_sources,
             "curves": curves,
             "token_axes": _token_axes(),
-            "patches": patches,
+            "patch_manifest": patch_manifest,
         },
     )
 

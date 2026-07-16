@@ -90,8 +90,8 @@ model may be unable to read it, and the transplant may be off-manifold for its l
 The exported site presents the two temporal artifact directions through one **Checkpoint
 transfer** mode. Recipient and donor steps are independent: donor-before-recipient resolves to the
 registered across-time artifact, while donor-after-recipient resolves to the registered
-later-into-earlier artifact. Equal steps are shown as a clearly labeled synthetic identity-control
-preview because no same-checkpoint grid is stored. The separate **Different function name** mode
+later-into-earlier artifact. Equal steps are shown as unprocessed identity cells because no
+same-checkpoint grid is stored. The separate **Different function name** mode
 keeps source and recipient at one recipient checkpoint and disables the donor-step control.
 
 The function probe includes an **Average over all 19 functions** option. A measured mean is shown
@@ -130,7 +130,8 @@ Each artifact identifies model/run/interface/plan/donor step and stores, per fun
 The site maps layer depth to x and reverse prompt-token position to y, and lets recipient/donor
 checkpoint change. Both modes display correct-option probability, so a successful dirty-source
 corruption appears as a decrease. A selected view is labeled `measured intervention` only when
-the exact artifact exists; otherwise it remains `synthetic preview`.
+the exact artifact exists. Missing views contain no generated values: every cell is rendered with
+the reserved purple `unprocessed` treatment.
 
 ## Patching schedule
 
@@ -147,6 +148,19 @@ Behavioral evaluation is the gate. For every model that passes it:
 The full triangular temporal matrix is computationally expensive. Its staging order is fixed by
 the rule above rather than by interesting-looking heatmaps. Control-condition patching is
 confirmatory/exploratory and comes after complete behavioral control curves.
+
+### Full-atlas expansion — 2026-07-15
+
+After the independent recipient/donor site controls were added, the user requested a complete
+training-time atlas. First, fill `resid_post` different-name patches at every trained recipient
+checkpoint. Then fill the full directed temporal plane in a deterministic seeded random order so
+partial coverage is distributed across recipient and donor time rather than concentrated in one
+triangle or corner. The seed defines one fixed shuffle of the full directed plane; existing
+artifacts are removed from that order without changing the relative order of the remaining cells,
+so resume preserves the schedule. The same-checkpoint diagonal is an exact identity intervention
+and is not rerun or stored. This first expansion is for the primary residual-stream interface;
+repeating all post-hoc branch interfaces over time remains a separately reported exploratory
+extension.
 
 ## Interpretation cautions
 

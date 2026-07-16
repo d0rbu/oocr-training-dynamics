@@ -20,4 +20,4 @@
 | Donor/source | The prompt/model/checkpoint supplying the replacement activation. |
 | Across-sample patch | A different-name dirty state inserted into the clean prompt at the same checkpoint. |
 | Across-time patch | A base/earlier-checkpoint state inserted into a later checkpoint on the same clean prompt. |
-| Synthetic preview | Illustrative values used only to exercise the visualization before measured artifacts exist. |
+| Synthetic preview | Illustrative learning-curve values used only before measured behavioral artifacts exist; patch grids never use synthetic values. |

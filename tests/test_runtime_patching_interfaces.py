@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
 import torch as t
 
+from oocr_training_dynamics import runtime_patching
 from oocr_training_dynamics.contracts import (
     PatchingInterface,
     PatchingMode,
@@ -16,6 +19,7 @@ from oocr_training_dynamics.runtime_patching import (
     _replace_hidden_input,
     _replace_hidden_positions,
     _resolve_patch_targets,
+    run_temporal_patching_matrix,
 )
 
 
@@ -100,3 +104,127 @@ def test_interface_artifact_paths_preserve_legacy_residual_and_separate_branches
     assert "/patching/sequence_end/across_sample/" in str(residual_path)
     assert "/patching/sequence_end/attention_output/across_sample/" in str(attention_path)
     assert residual_path != attention_path
+
+
+def test_temporal_matrix_reuses_each_missing_source_and_recipient_load(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run = RunKey("olmo3-7b", TrainingCondition.CORRECT)
+    load_steps: list[int] = []
+    released: list[int] = []
+    patched: list[tuple[int, int, PatchingMode]] = []
+    written: list[tuple[int, int, PatchingMode]] = []
+
+    def output_path(
+        _root: Path,
+        _run: RunKey,
+        plan: PatchingPlan,
+        donor_step: int,
+    ) -> Path:
+        return tmp_path / f"{plan.mode.value}-{plan.recipient_step}-{donor_step}.json"
+
+    existing = output_path(
+        tmp_path,
+        run,
+        PatchingPlan(PatchingMode.LATER_CHECKPOINT, 0, (1,)),
+        1,
+    )
+    existing.write_text("already measured")
+
+    monkeypatch.setattr(runtime_patching, "CHECKPOINT_STEPS", (0, 1, 2))
+    monkeypatch.setattr(runtime_patching.t.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(runtime_patching, "get_model_spec", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(runtime_patching, "load_processor", lambda _spec: object())
+    monkeypatch.setattr(
+        runtime_patching,
+        "_selected_records",
+        lambda _seed: (SimpleNamespace(record_id="probe"),),
+    )
+    monkeypatch.setattr(runtime_patching, "_patch_output_path", output_path)
+
+    def load_model(_root: Path, _run: RunKey, _spec: object, step: int) -> int:
+        load_steps.append(step)
+        return step
+
+    monkeypatch.setattr(runtime_patching, "_load_checkpoint_model", load_model)
+    monkeypatch.setattr(runtime_patching, "resolve_decoder_blocks", lambda *_args: ())
+    monkeypatch.setattr(runtime_patching, "_resolve_patch_targets", lambda *_args: ())
+    monkeypatch.setattr(
+        runtime_patching,
+        "_capture_clean_source_bank",
+        lambda model, *_args: {"probe": model},
+    )
+    monkeypatch.setattr(runtime_patching, "_release_model", released.append)
+
+    def patch_source(
+        model: int,
+        _targets: object,
+        _processor: object,
+        _records: object,
+        mode: PatchingMode,
+        source_by_record: dict[str, int],
+    ) -> list[dict[str, object]]:
+        patched.append((model, source_by_record["probe"], mode))
+        return []
+
+    monkeypatch.setattr(runtime_patching, "_patch_temporal_source_bank", patch_source)
+
+    def write_artifact(
+        _root: Path,
+        _run: RunKey,
+        _spec: object,
+        plan: PatchingPlan,
+        donor_step: int,
+        _serialized: list[dict[str, object]],
+    ) -> None:
+        written.append((plan.recipient_step, donor_step, plan.mode))
+
+    monkeypatch.setattr(runtime_patching, "_write_temporal_artifact", write_artifact)
+
+    run_temporal_patching_matrix(
+        tmp_path,
+        run,
+        (0, 1),
+        (PatchingMode.ACROSS_TIME, PatchingMode.LATER_CHECKPOINT),
+        PatchingInterface.RESID_POST,
+    )
+
+    assert load_steps == [0, 2, 0, 1]
+    assert released == load_steps
+    assert patched == [
+        (0, 2, PatchingMode.LATER_CHECKPOINT),
+        (1, 0, PatchingMode.ACROSS_TIME),
+        (1, 2, PatchingMode.LATER_CHECKPOINT),
+    ]
+    assert written == patched
+
+    load_steps.clear()
+    released.clear()
+    patched.clear()
+    written.clear()
+    seen_seeds: list[int] = []
+
+    def seeded_random(seed: int) -> SimpleNamespace:
+        seen_seeds.append(seed)
+        return SimpleNamespace(shuffle=lambda values: values.reverse())
+
+    monkeypatch.setattr(runtime_patching.random, "Random", seeded_random)
+    run_temporal_patching_matrix(
+        tmp_path,
+        run,
+        (0, 1),
+        (PatchingMode.ACROSS_TIME, PatchingMode.LATER_CHECKPOINT),
+        PatchingInterface.RESID_POST,
+        shuffle_seed=7,
+    )
+
+    assert seen_seeds == [7]
+    assert load_steps == [0, 2, 1, 0]
+    assert released == load_steps
+    assert patched == [
+        (1, 2, PatchingMode.LATER_CHECKPOINT),
+        (1, 0, PatchingMode.ACROSS_TIME),
+        (0, 2, PatchingMode.LATER_CHECKPOINT),
+    ]
+    assert written == patched

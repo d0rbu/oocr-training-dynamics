@@ -39,7 +39,7 @@ primary causal claim.
 
 1. compute paired, function-clustered uncertainty and log-example curve AUCs;
 2. export measured curves and patch JSON into the site payload;
-3. inspect every selected view's measured/preview badge;
+3. inspect every selected view's measured/unprocessed badge;
 4. write a dated results report with nulls and failure modes;
 5. keep model-family conclusions separate before attempting a cross-model synthesis.
 

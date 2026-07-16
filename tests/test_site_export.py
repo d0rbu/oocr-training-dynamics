@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -30,7 +31,7 @@ def test_committed_site_payload_discloses_measurement_status() -> None:
         assert payload["real_runs"] == 0
         assert payload["real_patch_files"] == 0
         assert "no GPU experiment has run" in payload["warning"]
-        assert payload["patches"] == {}
+        assert payload["patch_manifest"] == {}
     elif payload["status"] == "mixed_preview":
         assert payload["real_runs"] < 9 or payload["real_patch_files"] == 0
         assert "Incomplete measurement matrix" in payload["warning"]
@@ -142,27 +143,43 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert 'const ALL_FUNCTIONS_ID = "__all__"' in javascript
     assert "Average over all" in javascript
     assert "function resolvedArtifactMode()" in javascript
+    assert "function syntheticPatch" not in javascript
+    assert "function unprocessedPatch()" in javascript
+    assert "No displayed value" in javascript
+    assert "function selectedPatchReference()" in javascript
+    assert "async function loadPatchChunk(reference)" in javascript
+    assert 'id="patch-legend"' in html
 
 
 def test_measured_site_patches_use_compact_complete_grids() -> None:
     root = Path(__file__).resolve().parents[1]
     payload = json.loads((root / "site" / "data" / "experiment.json").read_text())
 
-    records = [
-        record
-        for model in payload["patches"].values()
+    references = [
+        reference
+        for model in payload["patch_manifest"].values()
         for condition in model.values()
         for interface in condition.values()
         for mode in interface.values()
         for recipient in mode.values()
-        for donor in recipient.values()
-        for record in donor.values()
+        for reference in recipient.values()
     ]
-    assert len(records) >= payload["real_patch_files"]
-    for record in records:
-        assert "cells" not in record
-        assert len(record["probabilities"]) == len(record["token_positions"])
-        layer_count = len(record["probabilities"][0])
-        assert layer_count > 0
-        assert all(len(row) == layer_count for row in record["probabilities"])
-        assert all(0.0 <= value <= 1.0 for row in record["probabilities"] for value in row)
+    assert len(references) == payload["real_patch_files"]
+    for reference in references:
+        chunk_path = root / "site" / reference["url"]
+        content = chunk_path.read_bytes()
+        assert len(content) == reference["bytes"]
+        assert hashlib.sha256(content).hexdigest() == reference["sha256"]
+        by_function = json.loads(content)
+        assert set(by_function) == {function.function_id for function in FUNCTIONS}
+        for record in by_function.values():
+            assert "cells" not in record
+            assert len(record["probabilities"]) == len(record["token_positions"])
+            layer_count = len(record["probabilities"][0])
+            assert layer_count > 0
+            assert all(len(row) == layer_count for row in record["probabilities"])
+            assert all(
+                0.0 <= value <= 1.0
+                for row in record["probabilities"]
+                for value in row
+            )

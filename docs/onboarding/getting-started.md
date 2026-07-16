@@ -29,7 +29,8 @@ uv run python -m http.server 4174 --directory site
 ```
 
 Open <http://127.0.0.1:4174>. Until measured artifacts exist, the banner and patch badge must say
-that the data are synthetic. Never infer a result from the preview curves or heatmap.
+that curve data are synthetic. Never infer a result from preview curves. Unprocessed patch
+heatmaps contain no values and use the reserved purple hatch throughout.
 
 ## Before touching the GPU
 

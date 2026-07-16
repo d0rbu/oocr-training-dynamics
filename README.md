@@ -6,8 +6,8 @@ causally affect the answer.
 
 > **Status — 2026-07-15:** complete correct-condition learning curves are measured for OLMo 3 7B
 > and Qwen 3 8B. OLMo `resid_post` across-name and frozen-base-to-step-1024 patch grids are also
-> measured. Missing models, controls, checkpoints, and branch interfaces remain explicitly
-> labeled synthetic previews on the site.
+> measured. Missing learning curves remain explicitly synthetic; missing patch selections are
+> labeled unprocessed and encode no values.
 
 ## Experiment at a glance
 
