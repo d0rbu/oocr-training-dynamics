@@ -1,6 +1,6 @@
 "use strict";
 
-const DATA_URL = "data/experiment.json?v=20260715q";
+const DATA_URL = "data/experiment.json?v=20260716a";
 const CONDITION_LABELS = {
   correct: "Correct I/O",
   wrong_alias: "Wrong alias",
@@ -36,8 +36,11 @@ const SLIDER_UNITS = 10000;
 const ALL_FUNCTIONS_ID = "__all__";
 const PATCH_SOURCE_PREFETCH_CONCURRENCY = 3;
 const PATCH_CHUNK_CACHE_LIMIT = 40;
+const PATCH_RESPONSE_CACHE = "oocr-patch-chunks-v1";
 const patchChunks = new Map();
 const patchChunkLoads = new Map();
+const patchChunkPrefetchLoads = new Map();
+const patchChunkPrefetched = new Set();
 const patchChunkErrors = new Map();
 let patchLoadTimer = null;
 let patchSourcePrefetchTimer = null;
@@ -310,68 +313,108 @@ function patchReferenceKey(reference) {
   return reference?.sha256 ?? null;
 }
 
-function currentPatchSource() {
+function patchChunkRequest(reference) {
+  const key = patchReferenceKey(reference);
+  return new Request(`${reference.url}?v=${key.slice(0, 16)}`);
+}
+
+async function openPatchResponseCache() {
+  if (!("caches" in window)) return null;
+  try {
+    return await window.caches.open(PATCH_RESPONSE_CACHE);
+  } catch {
+    return null;
+  }
+}
+
+function currentPatchPrefetchScope() {
   const interfaceManifest = state.data.patch_manifest?.[state.model]?.[state.condition]
     ?.[state.patchInterface] ?? {};
   const currentRecipient = state.data.checkpoints[state.recipientIndex];
+  const currentDonor = state.data.checkpoints[state.donorIndex];
   const references = [];
   if (!usesCheckpointDonor()) {
     Object.entries(interfaceManifest.across_sample ?? {}).forEach(([recipient, donors]) => {
       Object.values(donors).forEach((reference) => {
-        references.push({ recipient: Number(recipient), reference });
+        references.push({ recipient: Number(recipient), donor: Number(recipient), reference });
       });
     });
   } else {
-    const donor = state.data.checkpoints[state.donorIndex];
     ["across_time", "later_checkpoint"].forEach((mode) => {
       Object.entries(interfaceManifest[mode] ?? {}).forEach(([recipient, donors]) => {
-        const reference = donors[String(donor)];
-        if (reference) references.push({ recipient: Number(recipient), reference });
+        Object.entries(donors).forEach(([donor, reference]) => {
+          references.push({
+            recipient: Number(recipient),
+            donor: Number(donor),
+            reference,
+          });
+        });
       });
     });
   }
   const unique = new Map();
   references
     .sort((left, right) => (
-      Math.abs(left.recipient - currentRecipient) - Math.abs(right.recipient - currentRecipient)
+      Math.abs(left.recipient - currentRecipient) + Math.abs(left.donor - currentDonor)
+      - Math.abs(right.recipient - currentRecipient) - Math.abs(right.donor - currentDonor)
     ))
     .forEach(({ reference }) => unique.set(patchReferenceKey(reference), reference));
-  const donorStep = usesCheckpointDonor()
-    ? state.data.checkpoints[state.donorIndex]
-    : "different-function-name";
   return {
-    signature: [state.model, state.condition, state.patchInterface, state.patchMode, donorStep].join("|"),
+    label: usesCheckpointDonor() ? "Checkpoint atlas cache" : "Different-name cache",
+    signature: [state.model, state.condition, state.patchInterface, state.patchMode].join("|"),
     references: [...unique.values()],
   };
 }
 
-function updatePatchPrefetchStatus(source = currentPatchSource()) {
+function updatePatchPrefetchStatus(scope = currentPatchPrefetchScope()) {
   const status = document.getElementById("patch-prefetch-status");
-  const keys = source.references.map(patchReferenceKey);
-  const ready = keys.filter((key) => patchChunks.has(key)).length;
-  const loading = keys.filter((key) => patchChunkLoads.has(key)).length;
+  const keys = scope.references.map(patchReferenceKey);
+  const ready = keys.filter(
+    (key) => patchChunks.has(key) || patchChunkPrefetched.has(key),
+  ).length;
+  const loading = keys.filter(
+    (key) => patchChunkLoads.has(key) || patchChunkPrefetchLoads.has(key),
+  ).length;
   const failed = keys.filter((key) => patchChunkErrors.has(key)).length;
   if (keys.length === 0) {
-    status.textContent = "Background source cache · no measured grids available yet.";
+    status.textContent = `${scope.label} · no measured grids available yet.`;
   } else if (ready === keys.length) {
-    status.textContent = `Background source cache ready · ${ready}/${keys.length} measured grids.`;
+    status.textContent = `${scope.label} ready · ${ready}/${keys.length} measured grids prefetched.`;
   } else {
     const loadingText = loading ? ` · ${loading} loading` : "";
     const failedText = failed ? ` · ${failed} failed` : "";
-    status.textContent = `Background source cache · ${ready}/${keys.length} ready${loadingText}${failedText}.`;
+    status.textContent = `${scope.label} · ${ready}/${keys.length} prefetched${loadingText}${failedText}.`;
   }
 }
 
 function trimPatchChunkCache() {
   if (patchChunks.size <= PATCH_CHUNK_CACHE_LIMIT) return;
-  const protectedKeys = new Set(
-    currentPatchSource().references.map(patchReferenceKey),
-  );
-  protectedKeys.add(patchReferenceKey(selectedPatchReference()));
+  const selectedKey = patchReferenceKey(selectedPatchReference());
   for (const key of patchChunks.keys()) {
     if (patchChunks.size <= PATCH_CHUNK_CACHE_LIMIT) break;
-    if (!protectedKeys.has(key)) patchChunks.delete(key);
+    if (key !== selectedKey) patchChunks.delete(key);
   }
+}
+
+async function fetchPatchChunkResponse(reference) {
+  const request = patchChunkRequest(reference);
+  const responseCache = await openPatchResponseCache();
+  const cached = await responseCache?.match(request);
+  if (cached) {
+    patchChunkPrefetched.add(patchReferenceKey(reference));
+    return cached;
+  }
+  const response = await fetch(request, { cache: "force-cache" });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  if (responseCache) {
+    try {
+      await responseCache.put(request, response.clone());
+    } catch {
+      // The normal HTTP cache remains a valid fallback if Cache Storage quota is unavailable.
+    }
+  }
+  patchChunkPrefetched.add(patchReferenceKey(reference));
+  return response;
 }
 
 async function loadPatchChunk(reference) {
@@ -381,11 +424,9 @@ async function loadPatchChunk(reference) {
     await patchChunkLoads.get(key);
     return;
   }
-  const request = fetch(`${reference.url}?v=${key.slice(0, 16)}`, { cache: "no-store" })
-    .then((response) => {
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return response.json();
-    })
+  if (patchChunkPrefetchLoads.has(key)) await patchChunkPrefetchLoads.get(key);
+  const request = fetchPatchChunkResponse(reference)
+    .then((response) => response.json())
     .then((records) => {
       if (!records || typeof records !== "object" || Array.isArray(records)) {
         throw new Error("patch chunk is not a function-record object");
@@ -406,6 +447,35 @@ async function loadPatchChunk(reference) {
   await request;
 }
 
+async function prefetchPatchChunk(reference) {
+  const key = patchReferenceKey(reference);
+  if (
+    !key
+    || patchChunks.has(key)
+    || patchChunkPrefetched.has(key)
+    || patchChunkErrors.has(key)
+  ) return;
+  if (patchChunkLoads.has(key)) {
+    await patchChunkLoads.get(key);
+    return;
+  }
+  if (patchChunkPrefetchLoads.has(key)) {
+    await patchChunkPrefetchLoads.get(key);
+    return;
+  }
+  const request = fetchPatchChunkResponse(reference)
+    .then((response) => response.arrayBuffer())
+    .catch((error) => {
+      patchChunkErrors.set(key, String(error.message ?? error));
+    })
+    .finally(() => {
+      patchChunkPrefetchLoads.delete(key);
+      updatePatchPrefetchStatus();
+    });
+  patchChunkPrefetchLoads.set(key, request);
+  await request;
+}
+
 function drainPatchSourcePrefetch() {
   while (
     patchSourcePrefetchActive < PATCH_SOURCE_PREFETCH_CONCURRENCY
@@ -413,9 +483,14 @@ function drainPatchSourcePrefetch() {
   ) {
     const reference = patchSourcePrefetchQueue.shift();
     const key = patchReferenceKey(reference);
-    if (!key || patchChunks.has(key) || patchChunkErrors.has(key)) continue;
+    if (
+      !key
+      || patchChunks.has(key)
+      || patchChunkPrefetched.has(key)
+      || patchChunkErrors.has(key)
+    ) continue;
     patchSourcePrefetchActive += 1;
-    void loadPatchChunk(reference).finally(() => {
+    void prefetchPatchChunk(reference).finally(() => {
       patchSourcePrefetchActive -= 1;
       drainPatchSourcePrefetch();
     });
@@ -423,15 +498,15 @@ function drainPatchSourcePrefetch() {
 }
 
 function schedulePatchSourcePrefetch() {
-  const source = currentPatchSource();
-  updatePatchPrefetchStatus(source);
-  if (source.signature === patchSourcePrefetchSignature) return;
+  const scope = currentPatchPrefetchScope();
+  updatePatchPrefetchStatus(scope);
+  if (scope.signature === patchSourcePrefetchSignature) return;
   if (patchSourcePrefetchTimer !== null) window.clearTimeout(patchSourcePrefetchTimer);
   patchSourcePrefetchTimer = window.setTimeout(() => {
     patchSourcePrefetchTimer = null;
-    patchSourcePrefetchSignature = source.signature;
+    patchSourcePrefetchSignature = scope.signature;
     const selectedKey = patchReferenceKey(selectedPatchReference());
-    patchSourcePrefetchQueue = source.references
+    patchSourcePrefetchQueue = scope.references
       .filter((reference) => patchReferenceKey(reference) !== selectedKey);
     drainPatchSourcePrefetch();
   }, 250);
@@ -527,7 +602,12 @@ function unprocessedPatchForFunction(functionId) {
 
 function measuredPatchForFunction(functionId) {
   const key = patchReferenceKey(selectedPatchReference());
-  const record = key ? patchChunks.get(key)?.[functionId] : null;
+  const records = key ? patchChunks.get(key) : null;
+  if (key && records) {
+    patchChunks.delete(key);
+    patchChunks.set(key, records);
+  }
+  const record = records?.[functionId] ?? null;
   if (!record) return null;
   let matrix;
   let tokenPositions;

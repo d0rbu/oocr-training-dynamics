@@ -74,12 +74,13 @@ interface can overwrite another.
 is generated at `site/data/experiment.json` and committed. It contains a content-addressed patch
 manifest; each measured recipient/donor grid is exported as a separate compact file under
 `site/data/patches/` and fetched only when selected. This keeps the main page usable while the
-shuffled temporal atlas grows. After a donor checkpoint is selected, the client prefetches all
-currently measured recipient grids for that donor with bounded concurrency; different-name mode
-prefetches its measured recipient sweep. A bounded in-memory cache prevents browsing many donors
-from retaining the full atlas. Missing patch views retain exact token-axis metadata but contain no
-probabilities or deltas; the site renders reserved unprocessed cells instead. Missing behavioral
-curves remain explicitly synthetic.
+shuffled temporal atlas grows. Selecting checkpoint-transfer mode prefetches all currently
+measured recipient/donor grids for that model, condition, and patch boundary with bounded
+concurrency; different-name mode prefetches its measured recipient sweep. Prefetched responses use
+the browser's response cache, while only a bounded number of parsed grids remain in memory. This
+keeps slider movement local without retaining the full parsed atlas in RAM. Missing patch views
+retain exact token-axis metadata but contain no probabilities or deltas; the site renders reserved
+unprocessed cells instead. Missing behavioral curves remain explicitly synthetic.
 
 ## Model-family boundary
 
