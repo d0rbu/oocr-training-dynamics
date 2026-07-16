@@ -186,11 +186,16 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert "No displayed value" in javascript
     assert "function selectedPatchReference()" in javascript
     assert "async function loadPatchChunk(reference)" in javascript
-    assert "function currentPatchPrefetchScope()" in javascript
-    assert "function schedulePatchSourcePrefetch()" in javascript
-    assert "async function prefetchPatchChunk(reference)" in javascript
-    assert "PATCH_SOURCE_PREFETCH_CONCURRENCY = 3" in javascript
-    assert 'PATCH_RESPONSE_CACHE = "oocr-patch-chunks-v1"' in javascript
+    assert "function allPatchReferences(" in javascript
+    assert "function scheduleFullPatchPreload()" in javascript
+    assert "function compactPatchChunk(records)" in javascript
+    assert "async function refreshPatchManifest()" in javascript
+    assert "PATCH_PRELOAD_CONCURRENCY = 4" in javascript
+    assert "PATCH_MANIFEST_POLL_MS = 30000" in javascript
+    assert "new Float64Array(" in javascript
+    assert "unpatched recipient baseline" in javascript
+    assert "unpatched donor/source baseline" in javascript
+    assert "averages 16 code-choice and 16 language-choice variants" in javascript
     assert 'id="patch-prefetch-status"' in html
     assert 'id="patch-legend"' in html
 
@@ -198,6 +203,12 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
 def test_measured_site_patches_use_compact_complete_grids() -> None:
     root = Path(__file__).resolve().parents[1]
     payload = json.loads((root / "site" / "data" / "experiment.json").read_text())
+    patch_snapshot = json.loads((root / "site" / "data" / "patch-manifest.json").read_text())
+
+    assert patch_snapshot == {
+        "real_patch_files": payload["real_patch_files"],
+        "patch_manifest": payload["patch_manifest"],
+    }
 
     references = [
         reference

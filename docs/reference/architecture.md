@@ -73,14 +73,15 @@ interface can overwrite another.
 `artifacts/` is ignored because adapters and optimizer states are large. The compact site payload
 is generated at `site/data/experiment.json` and committed. It contains a content-addressed patch
 manifest; each measured recipient/donor grid is exported as a separate compact file under
-`site/data/patches/` and fetched only when selected. This keeps the main page usable while the
-shuffled temporal atlas grows. Selecting checkpoint-transfer mode prefetches all currently
-measured recipient/donor grids for that model, condition, and patch boundary with bounded
-concurrency; different-name mode prefetches its measured recipient sweep. Prefetched responses use
-the browser's response cache, while only a bounded number of parsed grids remain in memory. This
-keeps slider movement local without retaining the full parsed atlas in RAM. Missing patch views
-retain exact token-axis metadata but contain no probabilities or deltas; the site renders reserved
-unprocessed cells instead. Missing behavioral curves remain explicitly synthetic.
+`site/data/patches/`. The page eagerly fetches every currently measured grid across every model,
+condition, boundary, and patch mode with bounded concurrency while keeping the initial HTML and
+metadata payload small as the shuffled temporal atlas grows.
+Each parsed grid is compacted to typed probability arrays and retained in memory, so recipient and
+donor slider movement performs no network fetch or JSON parse after the one-time preload. The page
+polls the separately exported `site/data/patch-manifest.json`; newly generated artifacts are added
+to the same eager preload while an existing tab remains open. Missing patch views retain exact
+token-axis metadata but contain no probabilities or deltas; the site renders reserved unprocessed
+cells instead. Missing behavioral curves remain explicitly synthetic.
 
 Measured evaluation exports also include one acquisition curve per registered function alongside
 the all-function aggregate. The aggregate is checked against the arithmetic mean of the 19

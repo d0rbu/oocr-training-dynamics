@@ -9942,6 +9942,11 @@
                 "bytes": 1786729,
                 "sha256": "4b1277744e1737bcf08b564219a187db7cd2b390fcb9079966911895f1769aa7",
                 "url": "data/patches/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000016/donor_step_000064.json"
+              },
+              "768": {
+                "bytes": 1786503,
+                "sha256": "5b81a75967a82453df73919f6bd084e9580d21c173768332bd96ae49adeb163b",
+                "url": "data/patches/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000016/donor_step_000768.json"
               }
             },
             "192": {
@@ -10042,7 +10047,7 @@
       }
     }
   },
-  "real_patch_files": 66,
+  "real_patch_files": 67,
   "real_runs": 2,
   "status": "mixed_preview",
   "token_axes": {

@@ -1,6 +1,7 @@
 "use strict";
 
-const DATA_URL = "data/experiment.json?v=20260716b";
+const DATA_URL = "data/experiment.json?v=20260716d";
+const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260716d";
 const CONDITION_LABELS = {
   correct: "Correct I/O",
   wrong_alias: "Wrong alias",
@@ -34,19 +35,14 @@ const PATCH_INTERFACE_DESCRIPTIONS = {
 };
 const SLIDER_UNITS = 10000;
 const ALL_FUNCTIONS_ID = "__all__";
-const PATCH_SOURCE_PREFETCH_CONCURRENCY = 3;
-const PATCH_CHUNK_CACHE_LIMIT = 40;
-const PATCH_RESPONSE_CACHE = "oocr-patch-chunks-v1";
+const PATCH_PRELOAD_CONCURRENCY = 4;
+const PATCH_MANIFEST_POLL_MS = 30000;
 const patchChunks = new Map();
 const patchChunkLoads = new Map();
-const patchChunkPrefetchLoads = new Map();
-const patchChunkPrefetched = new Set();
 const patchChunkErrors = new Map();
-let patchLoadTimer = null;
-let patchSourcePrefetchTimer = null;
-let patchSourcePrefetchSignature = null;
-let patchSourcePrefetchQueue = [];
-let patchSourcePrefetchActive = 0;
+let patchPreloadQueue = [];
+let patchPreloadActive = 0;
+let patchManifestSignature = "";
 const state = {
   data: null,
   model: "olmo3-7b",
@@ -379,16 +375,7 @@ function patchChunkRequest(reference) {
   return new Request(`${reference.url}?v=${key.slice(0, 16)}`);
 }
 
-async function openPatchResponseCache() {
-  if (!("caches" in window)) return null;
-  try {
-    return await window.caches.open(PATCH_RESPONSE_CACHE);
-  } catch {
-    return null;
-  }
-}
-
-function currentPatchPrefetchScope() {
+function currentPatchReferences() {
   const interfaceManifest = state.data.patch_manifest?.[state.model]?.[state.condition]
     ?.[state.patchInterface] ?? {};
   const currentRecipient = state.data.checkpoints[state.recipientIndex];
@@ -421,80 +408,122 @@ function currentPatchPrefetchScope() {
     ))
     .forEach(({ reference }) => unique.set(patchReferenceKey(reference), reference));
   return {
-    label: usesCheckpointDonor() ? "Checkpoint atlas cache" : "Different-name cache",
-    signature: [state.model, state.condition, state.patchInterface, state.patchMode].join("|"),
     references: [...unique.values()],
   };
 }
 
-function updatePatchPrefetchStatus(scope = currentPatchPrefetchScope()) {
+function allPatchReferences(manifest = state.data.patch_manifest) {
+  const references = new Map();
+  Object.values(manifest ?? {}).forEach((model) => {
+    Object.values(model).forEach((condition) => {
+      Object.values(condition).forEach((patchInterface) => {
+        Object.values(patchInterface).forEach((mode) => {
+          Object.values(mode).forEach((recipient) => {
+            Object.values(recipient).forEach((reference) => {
+              references.set(patchReferenceKey(reference), reference);
+            });
+          });
+        });
+      });
+    });
+  });
+  return [...references.values()];
+}
+
+function patchManifestKey(manifest = state.data.patch_manifest) {
+  return allPatchReferences(manifest)
+    .map(patchReferenceKey)
+    .sort()
+    .join("|");
+}
+
+function prioritizedPatchReferences() {
+  const selected = selectedPatchReference();
+  const selectedKey = patchReferenceKey(selected);
+  const current = currentPatchReferences().references;
+  const ordered = new Map();
+  if (selectedKey) ordered.set(selectedKey, selected);
+  current.forEach((reference) => ordered.set(patchReferenceKey(reference), reference));
+  allPatchReferences().forEach((reference) => {
+    ordered.set(patchReferenceKey(reference), reference);
+  });
+  return [...ordered.values()];
+}
+
+function updatePatchPreloadStatus() {
   const status = document.getElementById("patch-prefetch-status");
-  const keys = scope.references.map(patchReferenceKey);
-  const ready = keys.filter(
-    (key) => patchChunks.has(key) || patchChunkPrefetched.has(key),
-  ).length;
-  const loading = keys.filter(
-    (key) => patchChunkLoads.has(key) || patchChunkPrefetchLoads.has(key),
-  ).length;
+  const keys = allPatchReferences().map(patchReferenceKey);
+  const ready = keys.filter((key) => patchChunks.has(key)).length;
+  const loading = keys.filter((key) => patchChunkLoads.has(key)).length;
   const failed = keys.filter((key) => patchChunkErrors.has(key)).length;
   if (keys.length === 0) {
-    status.textContent = `${scope.label} · no measured grids available yet.`;
+    status.textContent = "Full patch atlas · no measured grids available yet.";
   } else if (ready === keys.length) {
-    status.textContent = `${scope.label} ready · ${ready}/${keys.length} measured grids prefetched.`;
+    status.textContent = `Full patch atlas ready · ${ready}/${keys.length} measured grids in memory.`;
   } else {
     const loadingText = loading ? ` · ${loading} loading` : "";
     const failedText = failed ? ` · ${failed} failed` : "";
-    status.textContent = `${scope.label} · ${ready}/${keys.length} prefetched${loadingText}${failedText}.`;
+    status.textContent = `Preloading full patch atlas · ${ready}/${keys.length} ready${loadingText}${failedText}.`;
   }
 }
 
-function trimPatchChunkCache() {
-  if (patchChunks.size <= PATCH_CHUNK_CACHE_LIMIT) return;
-  const selectedKey = patchReferenceKey(selectedPatchReference());
-  for (const key of patchChunks.keys()) {
-    if (patchChunks.size <= PATCH_CHUNK_CACHE_LIMIT) break;
-    if (key !== selectedKey) patchChunks.delete(key);
+function compactPatchChunk(records) {
+  if (!records || typeof records !== "object" || Array.isArray(records)) {
+    throw new Error("patch chunk is not a function-record object");
   }
-}
-
-async function fetchPatchChunkResponse(reference) {
-  const request = patchChunkRequest(reference);
-  const responseCache = await openPatchResponseCache();
-  const cached = await responseCache?.match(request);
-  if (cached) {
-    patchChunkPrefetched.add(patchReferenceKey(reference));
-    return cached;
-  }
-  const response = await fetch(request, { cache: "force-cache" });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  if (responseCache) {
-    try {
-      await responseCache.put(request, response.clone());
-    } catch {
-      // The normal HTTP cache remains a valid fallback if Cache Storage quota is unavailable.
+  const compact = {};
+  Object.entries(records).forEach(([functionId, record]) => {
+    if (
+      !Array.isArray(record.probabilities)
+      || record.probabilities.length === 0
+      || !Array.isArray(record.probabilities[0])
+    ) {
+      throw new Error(`patch record ${functionId} lacks a compact probability matrix`);
     }
-  }
-  patchChunkPrefetched.add(patchReferenceKey(reference));
-  return response;
+    const tokenCount = record.probabilities.length;
+    const layerCount = record.probabilities[0].length;
+    const probabilities = new Float64Array(tokenCount * layerCount);
+    record.probabilities.forEach((row, tokenIndex) => {
+      if (!Array.isArray(row) || row.length !== layerCount) {
+        throw new Error(`patch record ${functionId} has an inconsistent probability matrix`);
+      }
+      row.forEach((probability, layer) => {
+        if (!Number.isFinite(probability)) {
+          throw new Error(`patch record ${functionId} contains a non-finite probability`);
+        }
+        probabilities[tokenIndex * layerCount + layer] = probability;
+      });
+    });
+    const correctIndex = record.correct_choice_index;
+    compact[functionId] = {
+      layerCount,
+      tokenCount,
+      probabilities,
+      recipient: record.recipient_probabilities[correctIndex],
+      source: record.source_probabilities[correctIndex],
+      target: record.choice_function_ids[correctIndex],
+      sourceFunctionId: record.source_function_id ?? functionId,
+      recipientFunctionId: record.recipient_function_id ?? functionId,
+    };
+  });
+  return compact;
 }
 
 async function loadPatchChunk(reference) {
   const key = patchReferenceKey(reference);
-  if (!key || patchChunks.has(key) || patchChunkErrors.has(key)) return;
+  if (!key || patchChunks.has(key)) return;
   if (patchChunkLoads.has(key)) {
     await patchChunkLoads.get(key);
     return;
   }
-  if (patchChunkPrefetchLoads.has(key)) await patchChunkPrefetchLoads.get(key);
-  const request = fetchPatchChunkResponse(reference)
-    .then((response) => response.json())
+  const request = fetch(patchChunkRequest(reference), { cache: "force-cache" })
+    .then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    })
     .then((records) => {
-      if (!records || typeof records !== "object" || Array.isArray(records)) {
-        throw new Error("patch chunk is not a function-record object");
-      }
-      patchChunks.set(key, records);
+      patchChunks.set(key, compactPatchChunk(records));
       patchChunkErrors.delete(key);
-      trimPatchChunkCache();
     })
     .catch((error) => {
       patchChunkErrors.set(key, String(error.message ?? error));
@@ -502,89 +531,74 @@ async function loadPatchChunk(reference) {
     .finally(() => {
       patchChunkLoads.delete(key);
       if (patchReferenceKey(selectedPatchReference()) === key) renderPatching();
-      updatePatchPrefetchStatus();
+      updatePatchPreloadStatus();
     });
   patchChunkLoads.set(key, request);
   await request;
 }
 
-async function prefetchPatchChunk(reference) {
-  const key = patchReferenceKey(reference);
-  if (
-    !key
-    || patchChunks.has(key)
-    || patchChunkPrefetched.has(key)
-    || patchChunkErrors.has(key)
-  ) return;
-  if (patchChunkLoads.has(key)) {
-    await patchChunkLoads.get(key);
-    return;
-  }
-  if (patchChunkPrefetchLoads.has(key)) {
-    await patchChunkPrefetchLoads.get(key);
-    return;
-  }
-  const request = fetchPatchChunkResponse(reference)
-    .then((response) => response.arrayBuffer())
-    .catch((error) => {
-      patchChunkErrors.set(key, String(error.message ?? error));
-    })
-    .finally(() => {
-      patchChunkPrefetchLoads.delete(key);
-      updatePatchPrefetchStatus();
-    });
-  patchChunkPrefetchLoads.set(key, request);
-  await request;
-}
-
-function drainPatchSourcePrefetch() {
+function drainFullPatchPreload() {
   while (
-    patchSourcePrefetchActive < PATCH_SOURCE_PREFETCH_CONCURRENCY
-    && patchSourcePrefetchQueue.length > 0
+    patchPreloadActive < PATCH_PRELOAD_CONCURRENCY
+    && patchPreloadQueue.length > 0
   ) {
-    const reference = patchSourcePrefetchQueue.shift();
+    const reference = patchPreloadQueue.shift();
     const key = patchReferenceKey(reference);
-    if (
-      !key
-      || patchChunks.has(key)
-      || patchChunkPrefetched.has(key)
-      || patchChunkErrors.has(key)
-    ) continue;
-    patchSourcePrefetchActive += 1;
-    void prefetchPatchChunk(reference).finally(() => {
-      patchSourcePrefetchActive -= 1;
-      drainPatchSourcePrefetch();
+    if (!key || patchChunks.has(key) || patchChunkLoads.has(key)) continue;
+    patchPreloadActive += 1;
+    void loadPatchChunk(reference).finally(() => {
+      patchPreloadActive -= 1;
+      drainFullPatchPreload();
     });
   }
 }
 
-function schedulePatchSourcePrefetch() {
-  const scope = currentPatchPrefetchScope();
-  updatePatchPrefetchStatus(scope);
-  if (scope.signature === patchSourcePrefetchSignature) return;
-  if (patchSourcePrefetchTimer !== null) window.clearTimeout(patchSourcePrefetchTimer);
-  patchSourcePrefetchTimer = window.setTimeout(() => {
-    patchSourcePrefetchTimer = null;
-    patchSourcePrefetchSignature = scope.signature;
-    const selectedKey = patchReferenceKey(selectedPatchReference());
-    patchSourcePrefetchQueue = scope.references
-      .filter((reference) => patchReferenceKey(reference) !== selectedKey);
-    drainPatchSourcePrefetch();
-  }, 250);
+function scheduleFullPatchPreload() {
+  patchPreloadQueue = prioritizedPatchReferences().filter((reference) => {
+    const key = patchReferenceKey(reference);
+    return key && !patchChunks.has(key) && !patchChunkLoads.has(key);
+  });
+  updatePatchPreloadStatus();
+  drainFullPatchPreload();
 }
 
 function scheduleSelectedPatchLoad() {
-  if (patchLoadTimer !== null) {
-    window.clearTimeout(patchLoadTimer);
-    patchLoadTimer = null;
-  }
   const reference = selectedPatchReference();
   const key = patchReferenceKey(reference);
-  if (!key || patchChunks.has(key) || patchChunkErrors.has(key)) return;
-  patchLoadTimer = window.setTimeout(() => {
-    patchLoadTimer = null;
-    void loadPatchChunk(reference);
-  }, 100);
+  if (!key || patchChunks.has(key) || patchChunkLoads.has(key)) return;
+  patchPreloadQueue = patchPreloadQueue.filter(
+    (queued) => patchReferenceKey(queued) !== key,
+  );
+  void loadPatchChunk(reference);
+}
+
+async function refreshPatchManifest() {
+  try {
+    const response = await fetch(
+      `${PATCH_MANIFEST_URL}&t=${Date.now()}`,
+      { cache: "no-store" },
+    );
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const snapshot = await response.json();
+    if (
+      !snapshot
+      || typeof snapshot !== "object"
+      || typeof snapshot.real_patch_files !== "number"
+      || !snapshot.patch_manifest
+    ) {
+      throw new Error("patch manifest snapshot is malformed");
+    }
+    const signature = patchManifestKey(snapshot.patch_manifest);
+    if (signature === patchManifestSignature) return;
+    state.data.patch_manifest = snapshot.patch_manifest;
+    state.data.real_patch_files = snapshot.real_patch_files;
+    patchManifestSignature = signature;
+    patchChunkErrors.clear();
+    scheduleFullPatchPreload();
+    renderPatching();
+  } catch (error) {
+    console.warn("Could not refresh the patch manifest", error);
+  }
 }
 
 function tokenAxisMode() {
@@ -664,19 +678,13 @@ function unprocessedPatchForFunction(functionId) {
 function measuredPatchForFunction(functionId) {
   const key = patchReferenceKey(selectedPatchReference());
   const records = key ? patchChunks.get(key) : null;
-  if (key && records) {
-    patchChunks.delete(key);
-    patchChunks.set(key, records);
-  }
   const record = records?.[functionId] ?? null;
   if (!record) return null;
-  let matrix;
-  let tokenPositions;
-  let layerCount;
-  if (Array.isArray(record.probabilities) && Array.isArray(record.token_positions)) {
-    matrix = record.probabilities;
-    layerCount = matrix[0].length;
-    tokenPositions = record.token_positions.map((position) => ({
+  const exactAxis = state.data.token_axes?.[state.model]?.[tokenAxisMode()]?.[functionId];
+  if (!exactAxis?.positions || exactAxis.positions.length !== record.tokenCount) {
+    throw new Error("Measured patch grid does not match its exact tokenizer axis");
+  }
+  const tokenPositions = exactAxis.positions.map((position) => ({
       reverseIndex: position.reverse_index,
       sourceIndex: position.source_index,
       recipientIndex: position.recipient_index,
@@ -685,40 +693,24 @@ function measuredPatchForFunction(functionId) {
       sourceToken: position.source_token,
       recipientToken: position.recipient_token,
     }));
-  } else {
-    layerCount = Math.max(...record.cells.map((cell) => cell.layer)) + 1;
-    const tokenCount = Math.max(...record.cells.map((cell) => cell.token_reverse_index)) + 1;
-    matrix = Array.from({ length: tokenCount }, () => Array(layerCount).fill(Number.NaN));
-    tokenPositions = Array(tokenCount).fill(null);
-    record.cells.forEach((cell) => {
-      matrix[cell.token_reverse_index][cell.layer] = cell.probability;
-      tokenPositions[cell.token_reverse_index] = {
-        reverseIndex: cell.token_reverse_index,
-        sourceIndex: cell.source_token_index,
-        recipientIndex: cell.recipient_token_index,
-        sourceTokenId: cell.source_token_id,
-        recipientTokenId: cell.recipient_token_id,
-        sourceToken: cell.source_token,
-        recipientToken: cell.recipient_token,
-      };
-    });
-  }
-  if (matrix.some((row) => row.some((value) => !Number.isFinite(value)))) {
-    throw new Error("Patch artifact does not contain a complete layer-by-token grid");
-  }
-  const correctIndex = record.correct_choice_index;
+  const matrix = Array.from({ length: record.tokenCount }, (_, tokenIndex) => (
+    record.probabilities.subarray(
+      tokenIndex * record.layerCount,
+      (tokenIndex + 1) * record.layerCount,
+    )
+  ));
   return {
-    layers: layerCount,
+    layers: record.layerCount,
     tokenPositions,
-    recipient: record.recipient_probabilities[correctIndex],
-    source: record.source_probabilities[correctIndex],
+    recipient: record.recipient,
+    source: record.source,
     matrix,
-    target: record.choice_function_ids[correctIndex],
+    target: record.target,
     outcomeLabel: "correct-implementation probability",
-    sourceFunctionId: record.source_function_id ?? record.function_id,
-    recipientFunctionId: record.recipient_function_id ?? record.function_id,
-    sourceRenderedPrompt: record.token_axis?.source_rendered_prompt ?? "This older artifact does not store the rendered source prompt.",
-    recipientRenderedPrompt: record.token_axis?.recipient_rendered_prompt ?? "This older artifact does not store the rendered recipient prompt.",
+    sourceFunctionId: record.sourceFunctionId,
+    recipientFunctionId: record.recipientFunctionId,
+    sourceRenderedPrompt: exactAxis.source_rendered_prompt,
+    recipientRenderedPrompt: exactAxis.recipient_rendered_prompt,
     measured: true,
     processed: true,
     aggregate: false,
@@ -827,8 +819,8 @@ function bindHeatTooltip(cell, html) {
   const show = (event) => {
     tooltip.innerHTML = html;
     tooltip.hidden = false;
-    const left = Math.min(window.innerWidth - 340, event.clientX + 14);
-    const top = Math.min(window.innerHeight - 130, event.clientY + 14);
+    const left = Math.min(window.innerWidth - tooltip.offsetWidth - 8, event.clientX + 14);
+    const top = Math.min(window.innerHeight - tooltip.offsetHeight - 8, event.clientY + 14);
     tooltip.style.left = `${Math.max(8, left)}px`;
     tooltip.style.top = `${Math.max(8, top)}px`;
   };
@@ -903,7 +895,10 @@ function renderPatching() {
       cell.style.background = colorFor(value, state.patchMetric);
       const display = state.patchMetric === "probability" ? formatPercent(probability) : `${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(1)} pp`;
       const averagingNote = patch.aggregate ? `<br>cellwise mean over n=${patch.functionCount} functions` : "";
-      bindHeatTooltip(cell, `<b>Layer ${layer} · reverse token −${position.reverseIndex}</b>${averagingNote}<br>${escapeHtml(sourceCoordinate)}<br>${escapeHtml(recipientCoordinate)}<br><br>${patch.outcomeLabel}: ${formatPercent(probability)}<br>change from recipient: ${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(2)} points`);
+      const baselineScope = patch.aggregate
+        ? `mean of ${patch.functionCount} single code-choice probes`
+        : "same single code-choice probe";
+      bindHeatTooltip(cell, `<b>Layer ${layer} · reverse token −${position.reverseIndex}</b>${averagingNote}<br>${escapeHtml(sourceCoordinate)}<br>${escapeHtml(recipientCoordinate)}<br><br>patched result: ${formatPercent(probability)}<br>unpatched recipient baseline: ${formatPercent(patch.recipient)}<br>unpatched donor/source baseline: ${formatPercent(patch.source)}<br>change from recipient: ${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(2)} pp<br><small>${baselineScope}</small>`);
       cell.setAttribute("aria-label", `layer ${layer}, reverse token ${position.reverseIndex}, ${display}`);
       heatmap.append(cell);
     }
@@ -990,11 +985,13 @@ function renderPatching() {
     document.getElementById("patch-explanation").textContent = "A measured artifact exists for this selection and is loading. The temporary purple hatch encodes no probability or delta.";
   } else if (!patch.processed) {
     document.getElementById("patch-explanation").textContent = "This selection has not been processed. The purple hatched squares are availability markers only: they encode no probability, delta, interpolation, or synthetic result.";
+  } else {
+    document.getElementById("patch-explanation").textContent += " Patch-grid baselines use one code-choice probe per function. The learning curve above averages 16 code-choice and 16 language-choice variants per function, so these probabilities are not expected to match exactly.";
   }
   document.getElementById("source-rendered-prompt").textContent = patch.sourceRenderedPrompt;
   document.getElementById("recipient-rendered-prompt").textContent = patch.recipientRenderedPrompt;
   scheduleSelectedPatchLoad();
-  schedulePatchSourcePrefetch();
+  scheduleFullPatchPreload();
 }
 
 function renderAll() {
@@ -1022,6 +1019,7 @@ async function initialize() {
   const response = await fetch(DATA_URL, { cache: "no-store" });
   if (!response.ok) throw new Error(`Could not load ${DATA_URL}: HTTP ${response.status}`);
   state.data = await response.json();
+  patchManifestSignature = patchManifestKey();
   setupStatus();
   buildModelControls();
   buildConditionControls();
@@ -1084,6 +1082,7 @@ async function initialize() {
   setupButtons("#patch-metric-controls", "patchMetric", "patchMetric", renderPatching);
   setupButtons("#patch-time-scale-controls", "patchTimeScale", "patchTimeScale", renderAll);
   renderAll();
+  window.setInterval(refreshPatchManifest, PATCH_MANIFEST_POLL_MS);
 }
 
 initialize().catch((error) => {

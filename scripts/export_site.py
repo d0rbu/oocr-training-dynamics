@@ -433,6 +433,13 @@ def main() -> None:
             curves[model.value][condition.value] = aggregate_curve
             function_curves[model.value][condition.value] = per_function_curves
     patch_manifest, real_patch_files = _export_real_patches(root)
+    write_json(
+        root / "site" / "data" / "patch-manifest.json",
+        {
+            "real_patch_files": real_patch_files,
+            "patch_manifest": patch_manifest,
+        },
+    )
     status = (
         "real_complete"
         if real_runs == 9 and real_patch_files > 0
