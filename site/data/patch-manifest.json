@@ -193,6 +193,13 @@
                 "url": "data/patches/olmo3-7b/correct/resid_post/across_time/recipient_step_000128/donor_step_000004.json"
               }
             },
+            "1280": {
+              "0": {
+                "bytes": 1742021,
+                "sha256": "ff7e78741090a37263d78977334c7e83d215036618c12ed7f97c327323cffda5",
+                "url": "data/patches/olmo3-7b/correct/resid_post/across_time/recipient_step_001280/donor_step_000000.json"
+              }
+            },
             "1500": {
               "0": {
                 "bytes": 1747687,
@@ -222,6 +229,13 @@
                 "bytes": 1758611,
                 "sha256": "0194b1b1dd2bf4611f6222d08e6f93927510ab2047812818c1471768b38334b8",
                 "url": "data/patches/olmo3-7b/correct/resid_post/across_time/recipient_step_000256/donor_step_000004.json"
+              }
+            },
+            "32": {
+              "0": {
+                "bytes": 1756999,
+                "sha256": "058369eec3d1e95a23b406d1321dbd5ad8e52d69cf9a3008f4fd828b6950d20f",
+                "url": "data/patches/olmo3-7b/correct/resid_post/across_time/recipient_step_000032/donor_step_000000.json"
               }
             },
             "384": {
@@ -272,6 +286,11 @@
                 "bytes": 1755356,
                 "sha256": "98b16769e3f5dd2ca5312c0c895e509c2e0b579ed738d03188aa8d9e1b96879d",
                 "url": "data/patches/olmo3-7b/correct/resid_post/across_time/recipient_step_000768/donor_step_000002.json"
+              },
+              "512": {
+                "bytes": 1755558,
+                "sha256": "4c0c633cfc31985554d97ba635d7b9d0ff3556abe30444416505d8719fea28b8",
+                "url": "data/patches/olmo3-7b/correct/resid_post/across_time/recipient_step_000768/donor_step_000512.json"
               }
             },
             "8": {
@@ -341,6 +360,11 @@
                 "bytes": 1786626,
                 "sha256": "0faaec2d15df9071f0167856c0023efae69f1965b25800aef5eafbb8089e09d7",
                 "url": "data/patches/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000016/donor_step_001024.json"
+              },
+              "32": {
+                "bytes": 1786607,
+                "sha256": "011d293dc59d9fa0a0a9455ed9d4de8e05b37809ac06d67a6c31e49656da9967",
+                "url": "data/patches/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000016/donor_step_000032.json"
               },
               "384": {
                 "bytes": 1786590,
@@ -461,5 +485,5 @@
       }
     }
   },
-  "real_patch_files": 68
+  "real_patch_files": 72
 }

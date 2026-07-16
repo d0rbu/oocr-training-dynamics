@@ -658,6 +658,29 @@ def _temporal_mode(recipient_step: int, donor_step: int) -> PatchingMode:
     raise ValueError("temporal patching does not store same-checkpoint identity cells")
 
 
+def _seeded_border_first_temporal_order(
+    scheduled_pairs: list[tuple[int, int, PatchingMode]],
+    shuffle_seed: int,
+) -> list[tuple[int, int, PatchingMode]]:
+    """Shuffle temporal cells deterministically, with the outer grid border first."""
+
+    boundary_steps = {CHECKPOINT_STEPS[0], CHECKPOINT_STEPS[-1]}
+    border_pairs = [
+        pair
+        for pair in scheduled_pairs
+        if pair[0] in boundary_steps or pair[1] in boundary_steps
+    ]
+    interior_pairs = [
+        pair
+        for pair in scheduled_pairs
+        if pair[0] not in boundary_steps and pair[1] not in boundary_steps
+    ]
+    randomizer = random.Random(shuffle_seed)
+    randomizer.shuffle(border_pairs)
+    randomizer.shuffle(interior_pairs)
+    return [*border_pairs, *interior_pairs]
+
+
 def _temporal_direction(mode: PatchingMode) -> str:
     if mode is PatchingMode.ACROSS_TIME:
         return "earlier_source_into_later_clean_recipient"
@@ -765,7 +788,10 @@ def run_temporal_patching_matrix(
                 continue
             scheduled_pairs.append((recipient_step, donor_step, mode))
     if shuffle_seed is not None:
-        random.Random(shuffle_seed).shuffle(scheduled_pairs)
+        scheduled_pairs = _seeded_border_first_temporal_order(
+            scheduled_pairs,
+            shuffle_seed,
+        )
 
     pending_pairs: list[tuple[int, int, PatchingMode]] = []
     skipped = 0
@@ -789,9 +815,16 @@ def run_temporal_patching_matrix(
     if not pending_pairs:
         return
     if shuffle_seed is not None:
+        boundary_steps = {CHECKPOINT_STEPS[0], CHECKPOINT_STEPS[-1]}
+        pending_border_count = sum(
+            recipient_step in boundary_steps or donor_step in boundary_steps
+            for recipient_step, donor_step, _mode in pending_pairs
+        )
         print(
-            f"[patch-matrix] shuffled {len(pending_pairs)} missing temporal cells "
-            f"with seed {shuffle_seed}",
+            f"[patch-matrix] border-first shuffled {len(pending_pairs)} missing temporal cells "
+            f"with seed {shuffle_seed} "
+            f"({pending_border_count} border, "
+            f"{len(pending_pairs) - pending_border_count} interior)",
             flush=True,
         )
 

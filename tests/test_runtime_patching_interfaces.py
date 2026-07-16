@@ -228,3 +228,38 @@ def test_temporal_matrix_reuses_each_missing_source_and_recipient_load(
         (0, 2, PatchingMode.LATER_CHECKPOINT),
     ]
     assert written == patched
+
+
+def test_seeded_temporal_order_prioritizes_borders_and_resumes_stably(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runtime_patching, "CHECKPOINT_STEPS", (0, 1, 2, 3))
+    scheduled = [
+        (recipient, donor, runtime_patching._temporal_mode(recipient, donor))
+        for recipient in runtime_patching.CHECKPOINT_STEPS
+        for donor in runtime_patching.CHECKPOINT_STEPS
+        if recipient != donor
+    ]
+
+    ordered = runtime_patching._seeded_border_first_temporal_order(scheduled, 20260715)
+    repeated = runtime_patching._seeded_border_first_temporal_order(scheduled, 20260715)
+    boundaries = {0, 3}
+    border_count = sum(
+        recipient in boundaries or donor in boundaries
+        for recipient, donor, _mode in scheduled
+    )
+
+    assert ordered == repeated
+    assert set(ordered) == set(scheduled)
+    assert all(
+        recipient in boundaries or donor in boundaries
+        for recipient, donor, _mode in ordered[:border_count]
+    )
+    assert all(
+        recipient not in boundaries and donor not in boundaries
+        for recipient, donor, _mode in ordered[border_count:]
+    )
+
+    completed = {ordered[1], ordered[border_count + 1]}
+    resumed = [pair for pair in ordered if pair not in completed]
+    assert resumed == [pair for pair in repeated if pair not in completed]

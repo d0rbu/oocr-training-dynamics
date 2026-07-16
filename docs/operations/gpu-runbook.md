@@ -150,9 +150,9 @@ uv run python scripts/run_patching_matrix.py \
 
 Existing complete JSON grids are skipped per interface. For temporal plans, all pending donor
 activations are captured to CPU first. The unshuffled schedule groups donors under each recipient
-to reuse its model load; the seeded schedule instead switches recipients as needed to scatter
-early coverage. Use repeated `--recipient-step`, `--mode`, or `--interface` flags to stage a
-predetermined subset.
+to reuse its model load. The seeded schedule first shuffles every cell on the step-0/step-1500
+recipient-or-donor border, then shuffles the remaining interior cells. Use repeated
+`--recipient-step`, `--mode`, or `--interface` flags to stage a predetermined subset.
 
 To fill both directions of the independent recipient/donor selector, excluding the analytic
 same-checkpoint identity diagonal, run:
@@ -165,11 +165,13 @@ uv run python scripts/run_patching_matrix.py \
 ```
 
 This optimized matrix path captures each needed checkpoint's clean source bank once in CPU RAM,
-then follows the deterministic shuffled cell order and writes every donor artifact atomically. On
-the 18-checkpoint OLMo schedule the complete directed residual grid has 306 off-diagonal cells.
-Check host RAM before launching it; source banks are never written to disk and are released when
-the process exits. Omitting `--shuffle-seed` groups cells by recipient to minimize model reloads;
-the seeded order intentionally trades some loading efficiency for early plane-wide coverage.
+then follows the deterministic border-first shuffled order and writes every donor artifact
+atomically. On the 18-checkpoint OLMo schedule the complete directed residual grid has 306
+off-diagonal cells. Existing artifacts are removed after ordering, so resume preserves the
+relative seeded order of the remaining border and interior cells. Check host RAM before launching
+it; source banks are never written to disk and are released when the process exits. Omitting
+`--shuffle-seed` groups cells by recipient to minimize model reloads; the seeded order
+intentionally trades some loading efficiency for early boundary coverage.
 
 ## 7. Refresh the site
 

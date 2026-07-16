@@ -75,7 +75,7 @@ is generated at `site/data/experiment.json` and committed. It contains a content
 manifest; each measured recipient/donor grid is exported as a separate compact file under
 `site/data/patches/`. The page eagerly fetches every currently measured grid across every model,
 condition, boundary, and patch mode with bounded concurrency while keeping the initial HTML and
-metadata payload small as the shuffled temporal atlas grows.
+metadata payload small as the deterministic border-first temporal atlas grows.
 Each parsed grid is compacted to typed probability arrays and retained in memory, so recipient and
 donor slider movement performs no network fetch or JSON parse after the one-time preload. The page
 polls the separately exported `site/data/patch-manifest.json`; newly generated artifacts are added

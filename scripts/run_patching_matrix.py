@@ -49,7 +49,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--shuffle-seed",
         type=int,
-        help="deterministically shuffle missing temporal recipient/donor cells",
+        help=(
+            "deterministically shuffle temporal cells with step-0/step-1500 borders first"
+        ),
     )
     parser.add_argument("--confirm-gpu-run", action="store_true")
     return parser.parse_args()

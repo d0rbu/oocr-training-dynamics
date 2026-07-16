@@ -162,6 +162,20 @@ and is not rerun or stored. This first expansion is for the primary residual-str
 repeating all post-hoc branch interfaces over time remains a separately reported exploratory
 extension.
 
+### Border-first full-atlas ordering — 2026-07-16
+
+After 51 of the 306 directed temporal cells had completed, the user requested denser early
+coverage of the grid boundary. A seeded matrix run now uses two fixed priority tiers:
+
+1. every off-diagonal cell where the recipient or donor is step 0 or step 1500;
+2. every remaining interior cell.
+
+The same seeded generator shuffles the border tier and then the interior tier. Existing artifacts
+are filtered only after this complete order is constructed, so stopping and resuming does not
+change the relative order of any unmeasured cells. This supersedes the earlier uniform full-plane
+shuffle for subsequent cells; it does not invalidate the 51 already measured cells. The
+same-checkpoint diagonal remains analytic and unstored.
+
 ## Interpretation cautions
 
 - A probability delta is causal for this specific intervention, but it does not prove that the
