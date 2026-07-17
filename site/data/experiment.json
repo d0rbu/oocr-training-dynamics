@@ -9797,6 +9797,11 @@
                 "sha256": "e25826c0f50ab3776830933bc9eedcedfe8437b93ae903def0c89f1ebd12523a",
                 "url": "data/patches/olmo3-7b/correct/resid_post/across_time/recipient_step_001500/donor_step_000000.json"
               },
+              "256": {
+                "bytes": 1747638,
+                "sha256": "9a293ed2e3003f4482d89c142b97d39e4e62d50daafe85ce0de7e0586c4867c3",
+                "url": "data/patches/olmo3-7b/correct/resid_post/across_time/recipient_step_001500/donor_step_000256.json"
+              },
               "384": {
                 "bytes": 1747757,
                 "sha256": "58ac535540980bf4f9135fe08a5269a94888bb41c1ddc8ee9afbba2ec6660523",
@@ -9806,6 +9811,11 @@
                 "bytes": 1747642,
                 "sha256": "5b3dffe4933cf4ad505b19d2428bc7da5065478a568ca047044de3d3d04feccd",
                 "url": "data/patches/olmo3-7b/correct/resid_post/across_time/recipient_step_001500/donor_step_000064.json"
+              },
+              "8": {
+                "bytes": 1747849,
+                "sha256": "3a9c72d54bee98e6464780a00df6b4134e90e3af69c96ff9e03d02f651261529",
+                "url": "data/patches/olmo3-7b/correct/resid_post/across_time/recipient_step_001500/donor_step_000008.json"
               }
             },
             "2": {
@@ -9816,6 +9826,11 @@
               }
             },
             "256": {
+              "0": {
+                "bytes": 1758536,
+                "sha256": "11e16a20c6063d65f8d7f02ca9de2d65bfd9c865329b0808867bd9775d5fd152",
+                "url": "data/patches/olmo3-7b/correct/resid_post/across_time/recipient_step_000256/donor_step_000000.json"
+              },
               "4": {
                 "bytes": 1758611,
                 "sha256": "0194b1b1dd2bf4611f6222d08e6f93927510ab2047812818c1471768b38334b8",
@@ -9979,6 +9994,11 @@
               }
             },
             "192": {
+              "1500": {
+                "bytes": 1750412,
+                "sha256": "9c2d56a3f73c19f905fdddcdbf4b0c0823034a76e82d2d005c286458f94a4825",
+                "url": "data/patches/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000192/donor_step_001500.json"
+              },
               "512": {
                 "bytes": 1750274,
                 "sha256": "57eda61ee400cea14c27d290285430ee59d41fc2bb23790baee8ff4fe27ca15d",
@@ -10005,6 +10025,11 @@
               }
             },
             "32": {
+              "1500": {
+                "bytes": 1757580,
+                "sha256": "1833cc1aafa1faec99e5f17ddf883e7513f65abb1011f781eb1a9f47ba42bd5c",
+                "url": "data/patches/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000032/donor_step_001500.json"
+              },
               "256": {
                 "bytes": 1757161,
                 "sha256": "8ab06c4fbe4b703b4062d7f411de90c268c6c0c47315948c794b28b69cf8d7d0",
@@ -10028,6 +10053,11 @@
                 "bytes": 1759514,
                 "sha256": "246053a88271f9b41fabe8ccd24f6acd0d4b17beaa39f255e00d660d3f828742",
                 "url": "data/patches/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000512/donor_step_001280.json"
+              },
+              "1500": {
+                "bytes": 1759601,
+                "sha256": "28e460891e561557e14347b3ce072f2c4928a8aff5153a4ceef80d89f2f70c9e",
+                "url": "data/patches/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000512/donor_step_001500.json"
               }
             },
             "64": {
@@ -10048,6 +10078,11 @@
                 "sha256": "c250226b8e470c4556a27336c643640b9f52aac2ad46eca67fc1cc828eaaa0a5",
                 "url": "data/patches/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000008/donor_step_001024.json"
               },
+              "1500": {
+                "bytes": 1796122,
+                "sha256": "4aec6ae807560377a71a1c6b958a5f4c122892d288f5b5127aa320f078fe9af0",
+                "url": "data/patches/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000008/donor_step_001500.json"
+              },
               "32": {
                 "bytes": 1796014,
                 "sha256": "17350053ccc9ebccd500802eddb643a97168bbeb95baf10f8c961a4bd8acfdea",
@@ -10060,6 +10095,11 @@
               }
             },
             "96": {
+              "1500": {
+                "bytes": 1749927,
+                "sha256": "4d30aac2e61e72b42f9bc5abadaade3467efbf55e3b74abcff302202ed694a99",
+                "url": "data/patches/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000096/donor_step_001500.json"
+              },
               "192": {
                 "bytes": 1750187,
                 "sha256": "2a75d815de6757b6c8273accae591c8151adeb45c26c5b7357146b3c0952f496",
@@ -10076,7 +10116,7 @@
       }
     }
   },
-  "real_patch_files": 72,
+  "real_patch_files": 80,
   "real_runs": 2,
   "status": "mixed_preview",
   "token_axes": {
