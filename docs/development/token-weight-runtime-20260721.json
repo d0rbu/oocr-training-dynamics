@@ -1,0 +1,62 @@
+{
+  "benchmark_commit": "efec88091dd8434112154ed36a2e2081304fc0bb",
+  "benchmark_date": "2026-07-21",
+  "component_isolation": {
+    "report_sha256": "cad6da222eeff764508ff6a0d9e675b1e1a0ddc581421ad7bf8ef9e1c3099361",
+    "results": [
+      {
+        "batch_size": 8,
+        "exact": false,
+        "first_mismatch": "0.9911057353019714 != 0.9921426773071289",
+        "kernel": "last-token-logits",
+        "peak_allocated_bytes": 15402189312,
+        "seconds": 61.52229415625334
+      },
+      {
+        "batch_size": 8,
+        "exact": true,
+        "first_mismatch": null,
+        "kernel": "decoder-prefix-reuse",
+        "peak_allocated_bytes": 15701552128,
+        "seconds": 33.241268245503306,
+        "speedup": 1.8484767768754187
+      }
+    ]
+  },
+  "environment": {
+    "cuda": "13.0",
+    "gpu": "NVIDIA GeForce RTX 4090",
+    "nvidia_driver": "580.82.09",
+    "peft": "0.19.1",
+    "python": "3.13.2",
+    "torch": "2.13.0+cu130",
+    "transformers": "5.13.1"
+  },
+  "full_acceptance": {
+    "batch_size": 8,
+    "candidate": {
+      "exact": true,
+      "first_mismatch": null,
+      "kernel": "decoder-prefix-reuse",
+      "peak_allocated_bytes": 15914425344,
+      "seconds": 670.8162402752787,
+      "speedup": 1.809978486336807
+    },
+    "function_count": 19,
+    "layer_count": 32,
+    "probability_count": 71456,
+    "reference": {
+      "exactly_matches_stored_artifact": true,
+      "peak_allocated_bytes": 15451482624,
+      "seconds": 1214.1629631835967
+    },
+    "report_sha256": "30591c0c947b44a645732943617478001749eefbc7405744275d1c22341c6d49"
+  },
+  "oracle": {
+    "donor_step": 0,
+    "raw_artifact_sha256": "bcae3e78904e14bee93c0518bdb2312fd9d29c558f815e06b79f6b4c16790848",
+    "recipient_step": 1500,
+    "reference_commit": "956bfa4089529e38aa496f8039e4fafcad26f150"
+  },
+  "schema_version": 1
+}

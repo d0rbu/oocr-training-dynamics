@@ -35,8 +35,10 @@ The candidate does not change:
 - the selected-token or layer traversal order;
 - reference patch batch size 8 unless a separately benchmarked candidate batch size is selected.
 
-The production CLI retains `--token-weight-runtime reference`. An optimized runtime cannot become
-the default merely because it is mathematically equivalent or numerically close.
+The production CLI retains `--token-weight-runtime reference` as the explicit rollback default.
+The exact-validated optimized path is selected with `--token-weight-runtime optimized`; changing
+the CLI default is a separate operational decision rather than an implicit consequence of a
+mathematical argument.
 
 ## Acceptance ladder
 
@@ -69,8 +71,24 @@ components at batch size 8:
 
 The final-token request changes the LM-head GEMM shape and is therefore not bitwise equivalent on
 this GPU, despite selecting the same mathematical row. It is retained only as rejected benchmark
-evidence and is not used by the optimized production runtime. The full 19-function acceptance run
-remains required before changing the production default.
+evidence and is not used by the optimized production runtime.
+
+## Full acceptance result
+
+The complete donor-step-0 into recipient-step-1500 comparison passed on 2026-07-21:
+
+- 19 functions, 32 layers, 111–123 positions, and 71,456 measured probabilities;
+- fresh reference: 1,214.16 seconds, 15.45 GB peak allocated VRAM, and exact recursive equality
+  with the immutable stored artifact;
+- decoder-prefix reuse: 670.82 seconds, 15.91 GB peak allocated VRAM, and exact recursive equality
+  with the fresh reference across every serialized value;
+- measured speedup: **1.810x**, with no tolerance and no first mismatch.
+
+The machine-readable evidence is
+[`token-weight-runtime-20260721.json`](token-weight-runtime-20260721.json). Its source full-report
+SHA-256 is `30591c0c947b44a645732943617478001749eefbc7405744275d1c22341c6d49`.
+The optimized runtime therefore passes the acceptance ladder while the unchanged reference remains
+available as a fail-safe rollback.
 
 Run the single-function candidate sweep only at a safe experiment boundary:
 
@@ -78,12 +96,13 @@ Run the single-function candidate sweep only at a safe experiment boundary:
 uv run python scripts/benchmark_token_weight_runtime.py \
   --artifact-root /home/d0rb/Documents/Github/oocr-training-dynamics \
   --recipient-step 1500 --donor-step 0 --function-id identity \
+  --candidate-kernel decoder-prefix-reuse \
   --candidate-batch-size 8 --candidate-batch-size 16 \
   --candidate-batch-size 32 --candidate-batch-size 64 \
   --output /home/d0rb/Documents/Github/oocr-training-dynamics/artifacts/benchmarks/token-weight-runtime.json \
   --confirm-gpu-run
 ```
 
-Only after selecting an exact candidate should the same command be rerun with `--all-functions`
-and that one batch size. Benchmark artifacts are ignored operational evidence; summarized results
-belong in this document and the pull request.
+The accepted candidate was rerun with `--all-functions` and batch size 8. Raw benchmark artifacts
+remain ignored operational evidence; the compact result above and its machine-readable companion
+are the versioned record.

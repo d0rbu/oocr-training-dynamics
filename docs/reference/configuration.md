@@ -91,9 +91,11 @@ that same readout but reuses exact recipient activations upstream of the patched
 production runtimes are fixed to batch size 8; other shapes are benchmark-only until they pass the
 complete exact-parity gate.
 
-The reference runtime remains the default until the complete exact-parity and GPU benchmark ladder
-in [token-weight-performance.md](../development/token-weight-performance.md) passes. These settings
-change execution only; they never enter or alter scientific artifact identity.
+The reference runtime remains the conservative rollback default. The optimized runtime passed the
+complete 19-function exact-parity and GPU benchmark ladder in
+[token-weight-performance.md](../development/token-weight-performance.md) and may be selected
+explicitly for production matrices. These settings change execution only; they never enter or
+alter scientific artifact identity.
 
 ## Tooling
 

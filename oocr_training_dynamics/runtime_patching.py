@@ -693,6 +693,8 @@ def _capture_decoder_inputs(
 
         handles.append(block.register_forward_pre_hook(input_hook, with_kwargs=True))
     try:
+        # This probability is discarded. ``logits_to_keep`` is applied only after the decoder;
+        # it cannot affect the cached block inputs or any reported patch probability.
         _forward_probabilities_last_token(
             model,
             input_ids.expand(batch_size, -1),
