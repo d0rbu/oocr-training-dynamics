@@ -36,6 +36,11 @@ from oocr_training_dynamics.runtime_patching import (
 )
 
 DEFAULT_BATCH_SIZES = (8, 16, 32, 64)
+CANDIDATE_KERNELS = (
+    "last-token-logits",
+    "decoder-prefix-reuse",
+    "combined",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -58,6 +63,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--all-functions", action="store_true")
     parser.add_argument("--candidate-batch-size", action="append", type=int)
+    parser.add_argument(
+        "--candidate-kernel",
+        action="append",
+        choices=CANDIDATE_KERNELS,
+        help="repeat to isolate candidate components; defaults to the combined kernel",
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--confirm-gpu-run", action="store_true")
     return parser.parse_args()
@@ -132,6 +143,12 @@ def _first_mismatch(reference: object, candidate: object, path: str = "root") ->
     return None
 
 
+def _artifact_json_value(value: object) -> object:
+    """Round-trip a live value through the same JSON value domain as an artifact."""
+
+    return json.loads(json.dumps(value, allow_nan=False))
+
+
 def _timed_grid(
     model: t.nn.Module,
     blocks: tuple[t.nn.Module, ...],
@@ -141,8 +158,12 @@ def _timed_grid(
     mode: PatchingMode,
     *,
     batch_size: int,
-    optimized: bool,
+    kernel: str,
 ) -> tuple[list[dict[str, object]], float, int]:
+    if kernel not in {"reference", *CANDIDATE_KERNELS}:
+        raise ValueError(f"unknown token-weight benchmark kernel: {kernel}")
+    uses_last_token_logits = kernel in {"last-token-logits", "combined"}
+    reuses_decoder_prefix = kernel in {"decoder-prefix-reuse", "combined"}
     t.cuda.empty_cache()
     t.cuda.reset_peak_memory_stats()
     t.cuda.synchronize()
@@ -156,13 +177,17 @@ def _timed_grid(
         mode,
         patch_batch_size=batch_size,
         forward_probabilities=(
-            _forward_probabilities_last_token if optimized else _forward_probabilities
+            _forward_probabilities_last_token if uses_last_token_logits else _forward_probabilities
         ),
+        skip_unchanged_prefix=reuses_decoder_prefix,
     )
     t.cuda.synchronize()
     elapsed = time.perf_counter() - started
     peak = int(t.cuda.max_memory_allocated())
-    return serialized, elapsed, peak
+    normalized = _artifact_json_value(serialized)
+    if not isinstance(normalized, list) or not all(isinstance(item, dict) for item in normalized):
+        raise RuntimeError("token-weight benchmark produced an invalid record array")
+    return cast(list[dict[str, object]], normalized), elapsed, peak
 
 
 def main() -> None:
@@ -179,6 +204,9 @@ def main() -> None:
     batch_sizes = tuple(args.candidate_batch_size or DEFAULT_BATCH_SIZES)
     if any(size <= 0 for size in batch_sizes) or len(set(batch_sizes)) != len(batch_sizes):
         raise ValueError("candidate batch sizes must be positive and unique")
+    candidate_kernels = tuple(args.candidate_kernel or ["combined"])
+    if len(set(candidate_kernels)) != len(candidate_kernels):
+        raise ValueError("candidate kernels must be unique")
     condition = TrainingCondition(args.condition)
     run = RunKey(args.model, condition)
     mode = (
@@ -219,46 +247,49 @@ def main() -> None:
             bundle,
             mode,
             batch_size=8,
-            optimized=False,
+            kernel="reference",
         )
         stored_mismatch = _first_mismatch(stored_reference, reference)
         if stored_mismatch is not None:
             raise RuntimeError(f"live reference differs from immutable artifact: {stored_mismatch}")
 
         candidates: list[dict[str, object]] = []
-        for batch_size in batch_sizes:
-            try:
-                candidate, seconds, peak = _timed_grid(
-                    recipient_model,
-                    blocks,
-                    processor,
-                    records,
-                    bundle,
-                    mode,
-                    batch_size=batch_size,
-                    optimized=True,
-                )
-            except t.OutOfMemoryError as error:
-                t.cuda.empty_cache()
+        for kernel in candidate_kernels:
+            for batch_size in batch_sizes:
+                try:
+                    candidate, seconds, peak = _timed_grid(
+                        recipient_model,
+                        blocks,
+                        processor,
+                        records,
+                        bundle,
+                        mode,
+                        batch_size=batch_size,
+                        kernel=kernel,
+                    )
+                except t.OutOfMemoryError as error:
+                    t.cuda.empty_cache()
+                    candidates.append(
+                        {
+                            "kernel": kernel,
+                            "batch_size": batch_size,
+                            "status": "oom",
+                            "error": str(error),
+                        }
+                    )
+                    continue
+                mismatch = _first_mismatch(reference, candidate)
                 candidates.append(
                     {
+                        "kernel": kernel,
                         "batch_size": batch_size,
-                        "status": "oom",
-                        "error": str(error),
+                        "status": "exact" if mismatch is None else "mismatch",
+                        "first_mismatch": mismatch,
+                        "seconds": seconds,
+                        "speedup": reference_seconds / seconds,
+                        "peak_allocated_bytes": peak,
                     }
                 )
-                continue
-            mismatch = _first_mismatch(reference, candidate)
-            candidates.append(
-                {
-                    "batch_size": batch_size,
-                    "status": "exact" if mismatch is None else "mismatch",
-                    "first_mismatch": mismatch,
-                    "seconds": seconds,
-                    "speedup": reference_seconds / seconds,
-                    "peak_allocated_bytes": peak,
-                }
-            )
     finally:
         _release_model(recipient_model)
 
@@ -275,7 +306,7 @@ def main() -> None:
             "seconds": reference_seconds,
             "peak_allocated_bytes": reference_peak,
         },
-        "candidate_runtime": "last_token_logits",
+        "candidate_kernels": candidate_kernels,
         "candidates": candidates,
     }
     if not math.isfinite(reference_seconds) or reference_seconds <= 0:

@@ -17,6 +17,7 @@ from oocr_training_dynamics.contracts import (
 )
 from oocr_training_dynamics.patching import PatchingPlan
 from oocr_training_dynamics.runtime_patching import (
+    _capture_decoder_inputs,
     _capture_lora_layer_state,
     _copy_lora_layer_state,
     _forward_probabilities,
@@ -26,6 +27,7 @@ from oocr_training_dynamics.runtime_patching import (
     _replace_hidden_positions,
     _replace_lora_output_at_positions,
     _resolve_patch_targets,
+    _skip_unchanged_decoder_prefix,
     _token_lora_projections,
     _token_weight_probability_forward,
     run_temporal_patching_matrix,
@@ -83,9 +85,93 @@ def test_last_token_probability_kernel_is_exact_on_the_same_logits() -> None:
     assert _token_weight_probability_forward(TokenWeightRuntime.REFERENCE) is (
         _forward_probabilities
     )
-    assert _token_weight_probability_forward(TokenWeightRuntime.OPTIMIZED) is (
-        _forward_probabilities_last_token
+    assert _token_weight_probability_forward(TokenWeightRuntime.OPTIMIZED) is _forward_probabilities
+
+
+class _CountingDecoderBlock(t.nn.Module):
+    def __init__(self, increment: float) -> None:
+        super().__init__()
+        self.increment = increment
+        self.calls = 0
+
+    def forward(self, hidden_states: t.Tensor, **_kwargs: object) -> t.Tensor:
+        self.calls += 1
+        return hidden_states + self.increment
+
+
+class _FakeDecoderLM(t.nn.Module):
+    def __init__(self, blocks: tuple[_CountingDecoderBlock, ...]) -> None:
+        super().__init__()
+        self.blocks = t.nn.ModuleList(blocks)
+
+    def forward(
+        self,
+        *,
+        input_ids: t.Tensor,
+        attention_mask: t.Tensor,
+        use_cache: bool,
+        return_dict: bool,
+        logits_to_keep: int = 0,
+    ) -> SimpleNamespace:
+        assert attention_mask.shape == input_ids.shape
+        assert not use_cache
+        assert return_dict
+        hidden = input_ids.to(dtype=t.float32).unsqueeze(-1).expand(-1, -1, 3)
+        for block in self.blocks:
+            hidden = block(hidden_states=hidden)
+        logits = t.cat((hidden, hidden + 1.0, hidden[:, :, :1]), dim=-1)
+        if logits_to_keep:
+            logits = logits[:, -logits_to_keep:, :]
+        return SimpleNamespace(logits=logits)
+
+
+def test_decoder_prefix_cache_preserves_exact_inputs_and_skips_only_upstream_blocks() -> None:
+    blocks = tuple(_CountingDecoderBlock(value) for value in (1.0, 2.0, 4.0))
+    model = _FakeDecoderLM(blocks)
+    input_ids = t.tensor([[1, 3]])
+    attention_mask = t.ones_like(input_ids)
+    candidate_ids = t.tensor([0, 1, 2, 3, 4])
+
+    cached = _capture_decoder_inputs(
+        model,
+        blocks,
+        input_ids,
+        attention_mask,
+        candidate_ids,
+        batch_size=2,
     )
+    expected_input = input_ids.expand(2, -1).to(dtype=t.float32).unsqueeze(-1).expand(-1, -1, 3)
+    assert t.equal(cached[0], expected_input)
+    assert t.equal(cached[1], expected_input + 1.0)
+    assert t.equal(cached[2], expected_input + 3.0)
+
+    calls_before = tuple(block.calls for block in blocks)
+    with _skip_unchanged_decoder_prefix(blocks, 2, cached):
+        hidden = expected_input
+        for block in blocks:
+            hidden = block(hidden_states=hidden)
+    assert t.equal(hidden, expected_input + 7.0)
+    assert tuple(block.calls for block in blocks) == (
+        calls_before[0],
+        calls_before[1],
+        calls_before[2] + 1,
+    )
+    assert all("forward" not in block.__dict__ for block in blocks)
+
+
+def test_decoder_prefix_forwards_are_restored_after_an_error() -> None:
+    blocks = tuple(_CountingDecoderBlock(value) for value in (1.0, 2.0))
+    hidden = t.zeros((1, 2, 3))
+    cached = (hidden, hidden + 1.0)
+
+    with (
+        pytest.raises(RuntimeError, match="synthetic failure"),
+        _skip_unchanged_decoder_prefix(blocks, 1, cached),
+    ):
+        raise RuntimeError("synthetic failure")
+
+    assert all("forward" not in block.__dict__ for block in blocks)
+    assert t.equal(blocks[0](hidden_states=hidden), hidden + 1.0)
 
 
 def test_every_interface_resolves_one_concrete_target_per_layer() -> None:
@@ -469,6 +555,16 @@ def test_reference_token_weight_runtime_rejects_batch_shape_changes(
             (PatchingMode.ACROSS_TIME,),
             PatchingInterface.TOKEN_WEIGHTS,
             token_weight_runtime=TokenWeightRuntime.REFERENCE,
+            token_weight_patch_batch_size=16,
+        )
+    with pytest.raises(ValueError, match="fixed batch size of 8"):
+        run_temporal_patching_matrix(
+            tmp_path,
+            RunKey("olmo3-7b", TrainingCondition.CORRECT),
+            (64,),
+            (PatchingMode.ACROSS_TIME,),
+            PatchingInterface.TOKEN_WEIGHTS,
+            token_weight_runtime=TokenWeightRuntime.OPTIMIZED,
             token_weight_patch_batch_size=16,
         )
 

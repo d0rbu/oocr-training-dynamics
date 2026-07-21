@@ -86,8 +86,10 @@ Gemma additionally requires `--allow-provisional-gemma`.
 
 Token-local weight patching exposes `--token-weight-runtime reference|optimized` and
 `--token-weight-patch-batch-size`. The reference runtime is permanently fixed to batch size 8 and
-computes full-sequence logits exactly as commit `956bfa4` did. The candidate optimized runtime asks
-the native model API for final-position logits only and permits benchmarked batch sizes.
+computes full-sequence logits exactly as commit `956bfa4` did. The candidate optimized runtime keeps
+that same readout but reuses exact recipient activations upstream of the patched layer. Both
+production runtimes are fixed to batch size 8; other shapes are benchmark-only until they pass the
+complete exact-parity gate.
 
 The reference runtime remains the default until the complete exact-parity and GPU benchmark ladder
 in [token-weight-performance.md](../development/token-weight-performance.md) passes. These settings

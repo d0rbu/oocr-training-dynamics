@@ -6,7 +6,8 @@ import gc
 import math
 import random
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -341,16 +342,14 @@ def _forward_probabilities_last_token(
             logits_to_keep=1,
         )
     if output.logits.ndim != 3 or output.logits.shape[1] != 1:
-        raise RuntimeError("optimized probability forward must return one logit position")
+        raise RuntimeError("final-token probability forward must return one logit position")
     logits = output.logits[:, -1, candidate_ids].to(dtype=t.float32)
     return t.softmax(logits, dim=-1).detach().cpu()
 
 
 def _token_weight_probability_forward(runtime: TokenWeightRuntime) -> ProbabilityForward:
-    if runtime is TokenWeightRuntime.REFERENCE:
+    if runtime in {TokenWeightRuntime.REFERENCE, TokenWeightRuntime.OPTIMIZED}:
         return _forward_probabilities
-    if runtime is TokenWeightRuntime.OPTIMIZED:
-        return _forward_probabilities_last_token
     raise AssertionError(f"unhandled token-weight runtime: {runtime}")
 
 
@@ -661,8 +660,106 @@ def _replace_lora_output_at_positions(
     return replaced
 
 
+def _capture_decoder_inputs(
+    model: t.nn.Module,
+    blocks: tuple[t.nn.Module, ...],
+    input_ids: t.Tensor,
+    attention_mask: t.Tensor,
+    candidate_ids: t.Tensor,
+    batch_size: int,
+) -> tuple[t.Tensor, ...]:
+    """Capture each block input once at the exact patched-forward batch shape."""
+
+    if not blocks or batch_size <= 0:
+        raise ValueError("decoder input capture requires blocks and a positive batch size")
+    captured: list[t.Tensor | None] = [None] * len(blocks)
+    handles: list[Any] = []
+    for layer, block in enumerate(blocks):
+
+        def input_hook(
+            _module: t.nn.Module,
+            args: tuple[Any, ...],
+            kwargs: dict[str, Any],
+            *,
+            index: int = layer,
+        ) -> None:
+            hidden = _input_hidden(args, kwargs)
+            if hidden.shape[0] != batch_size:
+                raise RuntimeError("decoder input capture observed the wrong batch shape")
+            if captured[index] is not None:
+                raise RuntimeError("decoder block was unexpectedly invoked more than once")
+            # Retaining the inference tensor preserves its values, device, dtype, and strides.
+            captured[index] = hidden.detach()
+
+        handles.append(block.register_forward_pre_hook(input_hook, with_kwargs=True))
+    try:
+        _forward_probabilities_last_token(
+            model,
+            input_ids.expand(batch_size, -1),
+            attention_mask.expand(batch_size, -1),
+            candidate_ids,
+        )
+    finally:
+        for handle in handles:
+            handle.remove()
+    if any(value is None for value in captured):
+        raise RuntimeError("not every decoder layer produced a cached input")
+    return tuple(cast(t.Tensor, value) for value in captured)
+
+
+_MISSING_FORWARD = object()
+
+
+@contextmanager
+def _skip_unchanged_decoder_prefix(
+    blocks: tuple[t.nn.Module, ...],
+    target_layer: int,
+    cached_inputs: tuple[t.Tensor, ...],
+) -> Iterator[None]:
+    """Skip blocks strictly upstream of a patch by injecting their exact cached result."""
+
+    if len(cached_inputs) != len(blocks):
+        raise ValueError("cached decoder input count must equal decoder block count")
+    if not 0 <= target_layer < len(blocks):
+        raise ValueError("target decoder layer is outside the model")
+    if target_layer == 0:
+        yield
+        return
+
+    prefix = blocks[:target_layer]
+    original_forwards = tuple(block.__dict__.get("forward", _MISSING_FORWARD) for block in prefix)
+    injected = cached_inputs[target_layer]
+
+    def identity_forward(hidden_states: t.Tensor, *_args: Any, **_kwargs: Any) -> t.Tensor:
+        return hidden_states
+
+    def inject_forward(hidden_states: t.Tensor, *_args: Any, **_kwargs: Any) -> t.Tensor:
+        if not isinstance(hidden_states, t.Tensor) or hidden_states.ndim != 3:
+            raise RuntimeError("skipped decoder prefix did not receive a hidden-state tensor")
+        if (
+            injected.shape != hidden_states.shape
+            or injected.dtype != hidden_states.dtype
+            or injected.device != hidden_states.device
+        ):
+            raise RuntimeError("cached decoder input does not match the live forward")
+        return injected
+
+    try:
+        for block in prefix[:-1]:
+            block.forward = identity_forward  # type: ignore[method-assign]
+        prefix[-1].forward = inject_forward  # type: ignore[method-assign]
+        yield
+    finally:
+        for block, original in zip(prefix, original_forwards, strict=True):
+            if original is _MISSING_FORWARD:
+                del block.forward
+            else:
+                block.forward = original  # type: ignore[method-assign]
+
+
 def _token_weight_patch_grid(
     model: t.nn.Module,
+    blocks: tuple[t.nn.Module, ...],
     input_ids: t.Tensor,
     attention_mask: t.Tensor,
     candidate_ids: t.Tensor,
@@ -673,11 +770,14 @@ def _token_weight_patch_grid(
     patch_batch_size: int = 8,
     progress_label: str,
     forward_probabilities: ProbabilityForward = _forward_probabilities,
+    skip_unchanged_prefix: bool = False,
 ) -> tuple[tuple[float, ...], ...]:
     """Apply each donor block's LoRA update at one selected token per batch row."""
 
     if not projection_layers:
         raise ValueError("token-local weight patching requires decoder projection layers")
+    if len(blocks) != len(projection_layers):
+        raise ValueError("decoder block count must equal projection layer count")
     if not positions or patch_batch_size <= 0:
         raise ValueError("token-local weight patching requires positions and a batch size")
     if not 0 <= correct_choice_index < 5:
@@ -691,10 +791,24 @@ def _token_weight_patch_grid(
         f"batches_per_layer={batches_per_layer}",
         flush=True,
     )
+    prefix_inputs_by_batch_size: dict[int, tuple[t.Tensor, ...]] = {}
     for layer, projections in enumerate(projection_layers):
         for start in range(0, len(positions), patch_batch_size):
             chunk = positions[start : start + patch_batch_size]
             recipient_positions = tuple(position.recipient_index for position in chunk)
+            cached_inputs: tuple[t.Tensor, ...] | None = None
+            if skip_unchanged_prefix and layer > 0:
+                batch_size = len(chunk)
+                if batch_size not in prefix_inputs_by_batch_size:
+                    prefix_inputs_by_batch_size[batch_size] = _capture_decoder_inputs(
+                        model,
+                        blocks,
+                        input_ids,
+                        attention_mask,
+                        candidate_ids,
+                        batch_size,
+                    )
+                cached_inputs = prefix_inputs_by_batch_size[batch_size]
             handles = [
                 projection.module.register_forward_hook(
                     lambda _module, args, output, selected_projection=projection, selected_positions=recipient_positions: (
@@ -709,12 +823,21 @@ def _token_weight_patch_grid(
                 for projection in projections
             ]
             try:
-                probabilities = forward_probabilities(
-                    model,
-                    input_ids.expand(len(chunk), -1),
-                    attention_mask.expand(len(chunk), -1),
-                    candidate_ids,
-                )
+                if cached_inputs is None:
+                    probabilities = forward_probabilities(
+                        model,
+                        input_ids.expand(len(chunk), -1),
+                        attention_mask.expand(len(chunk), -1),
+                        candidate_ids,
+                    )
+                else:
+                    with _skip_unchanged_decoder_prefix(blocks, layer, cached_inputs):
+                        probabilities = forward_probabilities(
+                            model,
+                            input_ids.expand(len(chunk), -1),
+                            attention_mask.expand(len(chunk), -1),
+                            candidate_ids,
+                        )
             finally:
                 for handle in handles:
                     handle.remove()
@@ -1183,6 +1306,7 @@ def _patch_token_weight_source_bundle(
     *,
     patch_batch_size: int = 8,
     forward_probabilities: ProbabilityForward = _forward_probabilities,
+    skip_unchanged_prefix: bool = False,
 ) -> list[dict[str, object]]:
     """Patch donor LoRA updates at one token/layer coordinate at a time."""
 
@@ -1218,6 +1342,7 @@ def _patch_token_weight_source_bundle(
         correct_choice = record.choice_function_ids.index(record.function_id)
         grid = _token_weight_patch_grid(
             model,
+            blocks,
             recipient_view.input_ids,
             recipient_view.attention_mask,
             candidate_ids,
@@ -1227,6 +1352,7 @@ def _patch_token_weight_source_bundle(
             patch_batch_size=patch_batch_size,
             progress_label=f"function={record.function_id} ({record_index}/{len(records)})",
             forward_probabilities=forward_probabilities,
+            skip_unchanged_prefix=skip_unchanged_prefix,
         )
         serialized.append(
             _serialize_token_weight_grid(
@@ -1487,6 +1613,7 @@ def _run_weight_temporal_pairs(
                     mode,
                     patch_batch_size=token_weight_patch_batch_size,
                     forward_probabilities=_token_weight_probability_forward(token_weight_runtime),
+                    skip_unchanged_prefix=token_weight_runtime is TokenWeightRuntime.OPTIMIZED,
                 )
             else:
                 serialized = _patch_weight_source_bundle(
@@ -1539,8 +1666,8 @@ def run_temporal_patching_matrix(
         raise ValueError("temporal matrix shuffle seed must be non-negative")
     if token_weight_patch_batch_size <= 0:
         raise ValueError("token-weight patch batch size must be positive")
-    if token_weight_runtime is TokenWeightRuntime.REFERENCE and token_weight_patch_batch_size != 8:
-        raise ValueError("the token-weight reference runtime has a fixed batch size of 8")
+    if token_weight_patch_batch_size != 8:
+        raise ValueError("production token-weight runtimes have a fixed batch size of 8")
 
     scheduled_pairs: list[tuple[int, int, PatchingMode]] = []
     for recipient_step in recipient_steps:
@@ -1726,6 +1853,7 @@ def _run_weight_patching(
                     plan.mode,
                     patch_batch_size=token_weight_patch_batch_size,
                     forward_probabilities=_token_weight_probability_forward(token_weight_runtime),
+                    skip_unchanged_prefix=token_weight_runtime is TokenWeightRuntime.OPTIMIZED,
                 )
             else:
                 serialized = _patch_weight_source_bundle(
@@ -1767,8 +1895,8 @@ def run_patching(
         raise RuntimeError("checkpoint patching requires CUDA")
     if token_weight_patch_batch_size <= 0:
         raise ValueError("token-weight patch batch size must be positive")
-    if token_weight_runtime is TokenWeightRuntime.REFERENCE and token_weight_patch_batch_size != 8:
-        raise ValueError("the token-weight reference runtime has a fixed batch size of 8")
+    if token_weight_patch_batch_size != 8:
+        raise ValueError("production token-weight runtimes have a fixed batch size of 8")
     spec = get_model_spec(run.model, allow_provisional=allow_provisional_model)
     processor = load_processor(spec)
     records = _selected_records(run.seed)

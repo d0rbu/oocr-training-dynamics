@@ -21,11 +21,16 @@ The raw artifact remains ignored experiment state. The compact artifact is versi
 
 ## Candidate boundary
 
-The initial optimized kernel changes only the causal-LM readout request from all sequence logits
-to `logits_to_keep=1`, using the model family's native Transformers API. It does not change:
+The accepted candidate keeps the reference full-sequence logit computation. For a patch in layer
+`L`, it captures the recipient input to every decoder layer once at the exact live batch shape,
+then injects the cached input to `L` and skips blocks `0..L-1`. Those blocks are causally upstream
+of the intervention, so their outputs are invariant across token coordinates at that layer. Layer
+`L` and every downstream block still execute normally.
+
+The candidate does not change:
 
 - the model, checkpoint, prompt, token axis, candidate IDs, or softmax;
-- the order or arithmetic of any decoder block;
+- the order or arithmetic of the patched layer or any downstream decoder block;
 - the seven token-local LoRA output corrections;
 - the selected-token or layer traversal order;
 - reference patch batch size 8 unless a separately benchmarked candidate batch size is selected.
@@ -35,8 +40,10 @@ the default merely because it is mathematically equivalent or numerically close.
 
 ## Acceptance ladder
 
-1. CPU tests prove that the optimized readout requests exactly one logit position and that the
-   recursive parity checker rejects even a `1e-15` probability change or schema drift.
+1. CPU tests prove that the cached-prefix path bypasses only upstream blocks, restores every
+   temporary forward override even after an exception, and produces the exact same synthetic
+   hidden state. The recursive parity checker rejects even a `1e-15` probability change or schema
+   drift.
 2. The live reference kernel must reproduce the stored endpoint artifact exactly before any
    candidate comparison is trusted.
 3. Candidate batch sizes are benchmarked on the same model load, checkpoint pair, function set,
@@ -47,6 +54,23 @@ the default merely because it is mathematically equivalent or numerically close.
 5. Report wall time, speedup, peak allocated VRAM, GPU model, software revisions, and any OOM or
    parity failures. A nonexact candidate remains available only as failed benchmark evidence.
 6. The unchanged reference runtime remains a rollback path and receives a regression test.
+
+## Component isolation result
+
+The first authorized OLMo 3 7B identity-function run on the RTX 4090 isolated the two proposed
+components at batch size 8:
+
+- fresh reference: 61.45 seconds and an exact match to the stored endpoint record;
+- native `logits_to_keep=1`: 61.52 seconds and **rejected** because the first probability mismatch
+  was `0.9911057353019714` versus `0.9921426773071289`;
+- decoder-prefix reuse with the original full-sequence logits: 33.24 seconds, **exact equality**
+  across the complete identity record, 1.85x speedup, and 15.70 GB peak allocated VRAM versus
+  15.43 GB for reference.
+
+The final-token request changes the LM-head GEMM shape and is therefore not bitwise equivalent on
+this GPU, despite selecting the same mathematical row. It is retained only as rejected benchmark
+evidence and is not used by the optimized production runtime. The full 19-function acceptance run
+remains required before changing the production default.
 
 Run the single-function candidate sweep only at a safe experiment boundary:
 
