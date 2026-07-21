@@ -1259,19 +1259,35 @@ def _temporal_mode(recipient_step: int, donor_step: int) -> PatchingMode:
     raise ValueError("temporal patching does not store same-checkpoint identity cells")
 
 
-TEMPORAL_PRIORITY_TIERS = ((0, 1_500), (96,))
+TEMPORAL_ENDPOINT_STEPS = frozenset((0, 1_500))
+TEMPORAL_PRIORITY_STEP = 96
+TEMPORAL_PRIORITY_LABELS = (
+    "corners",
+    "border-step-96",
+    "remaining-border",
+    "remaining-step-96",
+)
 
 
 def _temporal_priority_tier(
     pair: tuple[int, int, PatchingMode],
 ) -> int:
-    """Return the first requested checkpoint tier touched by a temporal cell."""
+    """Return the deterministic geometric priority tier for a temporal cell."""
 
     recipient_step, donor_step, _mode = pair
-    for index, steps in enumerate(TEMPORAL_PRIORITY_TIERS):
-        if recipient_step in steps or donor_step in steps:
-            return index
-    return len(TEMPORAL_PRIORITY_TIERS)
+    recipient_is_endpoint = recipient_step in TEMPORAL_ENDPOINT_STEPS
+    donor_is_endpoint = donor_step in TEMPORAL_ENDPOINT_STEPS
+    if recipient_is_endpoint and donor_is_endpoint:
+        return 0
+    if (recipient_is_endpoint and donor_step == TEMPORAL_PRIORITY_STEP) or (
+        donor_is_endpoint and recipient_step == TEMPORAL_PRIORITY_STEP
+    ):
+        return 1
+    if recipient_is_endpoint or donor_is_endpoint:
+        return 2
+    if recipient_step == TEMPORAL_PRIORITY_STEP or donor_step == TEMPORAL_PRIORITY_STEP:
+        return 3
+    return len(TEMPORAL_PRIORITY_LABELS)
 
 
 def _seeded_priority_temporal_order(
@@ -1281,7 +1297,7 @@ def _seeded_priority_temporal_order(
     """Shuffle temporal cells deterministically within ordered checkpoint tiers."""
 
     tiers: list[list[tuple[int, int, PatchingMode]]] = [
-        [] for _ in range(len(TEMPORAL_PRIORITY_TIERS) + 1)
+        [] for _ in range(len(TEMPORAL_PRIORITY_LABELS) + 1)
     ]
     for pair in scheduled_pairs:
         tiers[_temporal_priority_tier(pair)].append(pair)
@@ -1514,15 +1530,15 @@ def run_temporal_patching_matrix(
     if not pending_pairs:
         return
     if shuffle_seed is not None:
-        tier_counts = [0] * (len(TEMPORAL_PRIORITY_TIERS) + 1)
+        tier_counts = [0] * (len(TEMPORAL_PRIORITY_LABELS) + 1)
         for pair in pending_pairs:
             tier_counts[_temporal_priority_tier(pair)] += 1
         count_summary = ", ".join(
             [
                 *(
-                    f"steps-{'-'.join(str(step) for step in steps)} tier: {count}"
-                    for steps, count in zip(
-                        TEMPORAL_PRIORITY_TIERS,
+                    f"{label}: {count}"
+                    for label, count in zip(
+                        TEMPORAL_PRIORITY_LABELS,
                         tier_counts[:-1],
                         strict=True,
                     )

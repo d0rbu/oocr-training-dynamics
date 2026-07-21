@@ -399,7 +399,7 @@ def test_seeded_temporal_order_prioritizes_requested_steps_and_resumes_stably() 
     repeated = runtime_patching._seeded_priority_temporal_order(scheduled, 20260715)
     tier_counts = [
         sum(runtime_patching._temporal_priority_tier(pair) == tier for pair in scheduled)
-        for tier in range(3)
+        for tier in range(len(runtime_patching.TEMPORAL_PRIORITY_LABELS) + 1)
     ]
     boundaries = [0]
     for count in tier_counts:
@@ -407,12 +407,19 @@ def test_seeded_temporal_order_prioritizes_requested_steps_and_resumes_stably() 
 
     assert ordered == repeated
     assert set(ordered) == set(scheduled)
-    assert tier_counts == [18, 6, 6]
+    assert tier_counts == [2, 4, 12, 6, 6]
+    assert {
+        (recipient, donor) for recipient, donor, _mode in ordered[: boundaries[1]]
+    } == {(0, 1_500), (1_500, 0)}
+    assert {
+        (recipient, donor)
+        for recipient, donor, _mode in ordered[boundaries[1] : boundaries[2]]
+    } == {(0, 96), (96, 0), (96, 1_500), (1_500, 96)}
     for tier, (start, stop) in enumerate(zip(boundaries[:-1], boundaries[1:], strict=True)):
         assert all(
             runtime_patching._temporal_priority_tier(pair) == tier for pair in ordered[start:stop]
         )
 
-    completed = {ordered[1], ordered[boundaries[1] + 1], ordered[boundaries[2] + 1]}
+    completed = {ordered[start] for start in boundaries[:-1]}
     resumed = [pair for pair in ordered if pair not in completed]
     assert resumed == [pair for pair in repeated if pair not in completed]

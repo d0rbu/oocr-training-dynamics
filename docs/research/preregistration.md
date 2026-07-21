@@ -342,6 +342,16 @@ global atlas was observed, no token-local pattern will be promoted to a preregis
 of H1-H4; interpretation will emphasize coherent token-by-layer regions and per-function
 consistency rather than isolated cells.
 
+### Token-weight atlas ordering amendment — 2026-07-21, after four token-local cells
+
+The user refined only the computation order for subsequent temporal cells. The seeded scheduler
+now processes the two off-diagonal endpoint corners first, then the four intersections of the
+step-96 row or column with the endpoint border, then the rest of the endpoint border, the rest of
+the step-96 row or column, and finally all other cells. Same-checkpoint diagonal cells remain
+analytic and unstored. Existing artifacts are skipped after the full deterministic order is built.
+This operational change does not alter the intervention, function set, token or layer axes, or
+reported metric.
+
 ## Prior information used for predictions
 
 The earlier repository replicated OLMo-2 7B rule recovery and observed OLMo-3 recovery after 4,096

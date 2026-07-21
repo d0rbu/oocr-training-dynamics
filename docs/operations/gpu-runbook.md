@@ -150,8 +150,9 @@ uv run python scripts/run_patching_matrix.py \
 
 Existing complete JSON grids are skipped per interface. For temporal plans, all pending donor
 activations are captured to CPU first. The unshuffled schedule groups donors under each recipient
-to reuse its model load. The seeded schedule shuffles within three ordered tiers: cells touching
-either endpoint (step 0 or step 1500), then step 96, then all remaining cells. Use repeated
+to reuse its model load. The seeded schedule shuffles within five ordered tiers: the two
+off-diagonal endpoint corners; the four cells joining step 96 to an endpoint; the remaining
+endpoint border; the remaining step-96 row and column; then all other cells. Use repeated
 `--recipient-step`, `--mode`, or `--interface` flags to stage a predetermined subset.
 
 To fill both directions of the independent recipient/donor selector, excluding the analytic

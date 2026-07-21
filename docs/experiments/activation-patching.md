@@ -255,6 +255,23 @@ the complete order is constructed. This amendment changes only computation order
 new block-weight atlas and subsequent resumptions of other temporal interfaces, and supersedes
 the 2026-07-18 ordering for future work.
 
+### Corner-and-step-96-border full-atlas ordering — 2026-07-21
+
+After four token-local weight cells had been stored, the user refined the ordering within the
+existing endpoint and step-96 priorities. Subsequent seeded temporal runs use five ordered tiers:
+
+1. the two computable off-diagonal corners `(recipient, donor) = (0, 1500)` and `(1500, 0)`;
+2. the four border intersections where one coordinate is step 96 and the other is step 0 or 1500;
+3. every remaining off-diagonal cell touching step 0 or step 1500;
+4. every remaining cell touching step 96;
+5. every other remaining cell.
+
+The diagonal endpoint corners `(0, 0)` and `(1500, 1500)` remain analytic identity cells and are
+not computed or stored. The fixed seed shuffles only within a tier. The complete order is still
+constructed before existing artifacts are removed, so resume preserves the relative order of all
+unfinished cells. This changes only computation order and supersedes the 2026-07-20 ordering for
+future work.
+
 ## Interpretation cautions
 
 - A probability delta is causal for this specific intervention, but it does not prove that the
