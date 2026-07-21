@@ -2097,6 +2097,11 @@
                 "bytes": 1757000,
                 "sha256": "a07e7e6f1fd813f4fafb3e46a9c53381b98fda5bcd4ee7c75b4ac9eb49956ef0",
                 "url": "data/patches/olmo3-7b/correct/token_weights/across_time/recipient_step_001500/donor_step_000000.json"
+              },
+              "64": {
+                "bytes": 1757033,
+                "sha256": "fd6b7ffe50ba7d273430c1acf9d3d8f35f4e892f548b5c7f32afc27abc9823ff",
+                "url": "data/patches/olmo3-7b/correct/token_weights/across_time/recipient_step_001500/donor_step_000064.json"
               }
             }
           }
@@ -2104,5 +2109,5 @@
       }
     }
   },
-  "real_patch_files": 377
+  "real_patch_files": 378
 }
