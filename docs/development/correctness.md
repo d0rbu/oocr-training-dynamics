@@ -71,6 +71,11 @@ exporter must preserve the complete real token axis plus its explicit weight sco
 weight patching is invalid for both interfaces because prompt variants at one checkpoint share
 weights.
 
+Performance work must preserve the original token-weight kernel as an executable reference. An
+optimized kernel is accepted only after exact recursive equality against a fresh reference run and
+the immutable 19-function endpoint artifact. Approximate tolerances, visually indistinguishable
+heatmaps, and unchanged argmaxes are not parity evidence.
+
 Raw cross-family patching is prohibited because hidden coordinates are not aligned merely because
 two models share a residual width.
 

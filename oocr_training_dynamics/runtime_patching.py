@@ -6,6 +6,7 @@ import gc
 import math
 import random
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -18,6 +19,7 @@ from oocr_training_dynamics.contracts import (
     PatchingInterface,
     PatchingMode,
     RunKey,
+    TokenWeightRuntime,
     checkpoint_label,
     training_spec_for_run,
 )
@@ -77,6 +79,7 @@ SourceBank = dict[str, SourceRecord]
 LoraLayerState = dict[str, t.Tensor]
 WeightSourceRecord = tuple[PromptPatchView, t.Tensor]
 WeightSourceBank = dict[str, WeightSourceRecord]
+ProbabilityForward = Callable[[t.nn.Module, t.Tensor, t.Tensor, t.Tensor], t.Tensor]
 
 
 @dataclass(frozen=True)
@@ -319,6 +322,36 @@ def _forward_probabilities(
         )
     logits = output.logits[:, -1, candidate_ids].to(dtype=t.float32)
     return t.softmax(logits, dim=-1).detach().cpu()
+
+
+def _forward_probabilities_last_token(
+    model: t.nn.Module,
+    input_ids: t.Tensor,
+    attention_mask: t.Tensor,
+    candidate_ids: t.Tensor,
+) -> t.Tensor:
+    """Compute only final-position vocabulary logits through the model's native API."""
+
+    with t.inference_mode():
+        output = model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            use_cache=False,
+            return_dict=True,
+            logits_to_keep=1,
+        )
+    if output.logits.ndim != 3 or output.logits.shape[1] != 1:
+        raise RuntimeError("optimized probability forward must return one logit position")
+    logits = output.logits[:, -1, candidate_ids].to(dtype=t.float32)
+    return t.softmax(logits, dim=-1).detach().cpu()
+
+
+def _token_weight_probability_forward(runtime: TokenWeightRuntime) -> ProbabilityForward:
+    if runtime is TokenWeightRuntime.REFERENCE:
+        return _forward_probabilities
+    if runtime is TokenWeightRuntime.OPTIMIZED:
+        return _forward_probabilities_last_token
+    raise AssertionError(f"unhandled token-weight runtime: {runtime}")
 
 
 def _capture(
@@ -639,6 +672,7 @@ def _token_weight_patch_grid(
     *,
     patch_batch_size: int = 8,
     progress_label: str,
+    forward_probabilities: ProbabilityForward = _forward_probabilities,
 ) -> tuple[tuple[float, ...], ...]:
     """Apply each donor block's LoRA update at one selected token per batch row."""
 
@@ -675,7 +709,7 @@ def _token_weight_patch_grid(
                 for projection in projections
             ]
             try:
-                probabilities = _forward_probabilities(
+                probabilities = forward_probabilities(
                     model,
                     input_ids.expand(len(chunk), -1),
                     attention_mask.expand(len(chunk), -1),
@@ -1146,6 +1180,9 @@ def _patch_token_weight_source_bundle(
     records: tuple[ReflectionRecord, ...],
     bundle: WeightSourceBundle,
     mode: PatchingMode,
+    *,
+    patch_batch_size: int = 8,
+    forward_probabilities: ProbabilityForward = _forward_probabilities,
 ) -> list[dict[str, object]]:
     """Patch donor LoRA updates at one token/layer coordinate at a time."""
 
@@ -1187,7 +1224,9 @@ def _patch_token_weight_source_bundle(
             projection_layers,
             positions,
             correct_choice,
+            patch_batch_size=patch_batch_size,
             progress_label=f"function={record.function_id} ({record_index}/{len(records)})",
+            forward_probabilities=forward_probabilities,
         )
         serialized.append(
             _serialize_token_weight_grid(
@@ -1385,6 +1424,8 @@ def _run_weight_temporal_pairs(
     records: tuple[ReflectionRecord, ...],
     pending_pairs: list[tuple[int, int, PatchingMode]],
     interface: PatchingInterface,
+    token_weight_runtime: TokenWeightRuntime,
+    token_weight_patch_batch_size: int,
 ) -> None:
     """Fill temporal block-weight cells while reusing CPU-resident donor adapters."""
 
@@ -1444,6 +1485,8 @@ def _run_weight_temporal_pairs(
                     records,
                     sources_by_step[donor_step],
                     mode,
+                    patch_batch_size=token_weight_patch_batch_size,
+                    forward_probabilities=_token_weight_probability_forward(token_weight_runtime),
                 )
             else:
                 serialized = _patch_weight_source_bundle(
@@ -1475,6 +1518,8 @@ def run_temporal_patching_matrix(
     *,
     shuffle_seed: int | None = None,
     allow_provisional_model: bool = False,
+    token_weight_runtime: TokenWeightRuntime = TokenWeightRuntime.REFERENCE,
+    token_weight_patch_batch_size: int = 8,
 ) -> None:
     """Fill selected checkpoint-transfer cells while reusing source and recipient loads."""
 
@@ -1492,6 +1537,10 @@ def run_temporal_patching_matrix(
         raise ValueError("temporal matrix modes must be unique checkpoint-transfer modes")
     if shuffle_seed is not None and shuffle_seed < 0:
         raise ValueError("temporal matrix shuffle seed must be non-negative")
+    if token_weight_patch_batch_size <= 0:
+        raise ValueError("token-weight patch batch size must be positive")
+    if token_weight_runtime is TokenWeightRuntime.REFERENCE and token_weight_patch_batch_size != 8:
+        raise ValueError("the token-weight reference runtime has a fixed batch size of 8")
 
     scheduled_pairs: list[tuple[int, int, PatchingMode]] = []
     for recipient_step in recipient_steps:
@@ -1564,6 +1613,8 @@ def run_temporal_patching_matrix(
             records,
             pending_pairs,
             interface,
+            token_weight_runtime,
+            token_weight_patch_batch_size,
         )
         return
     donor_steps = tuple(
@@ -1637,6 +1688,8 @@ def _run_weight_patching(
     records: tuple[ReflectionRecord, ...],
     plan: PatchingPlan,
     pending: tuple[int, ...],
+    token_weight_runtime: TokenWeightRuntime,
+    token_weight_patch_batch_size: int,
 ) -> None:
     """Run an explicitly selected set of checkpoint-to-checkpoint weight patches."""
 
@@ -1671,6 +1724,8 @@ def _run_weight_patching(
                     records,
                     bundle,
                     plan.mode,
+                    patch_batch_size=token_weight_patch_batch_size,
+                    forward_probabilities=_token_weight_probability_forward(token_weight_runtime),
                 )
             else:
                 serialized = _patch_weight_source_bundle(
@@ -1705,9 +1760,15 @@ def run_patching(
     plan: PatchingPlan,
     *,
     allow_provisional_model: bool = False,
+    token_weight_runtime: TokenWeightRuntime = TokenWeightRuntime.REFERENCE,
+    token_weight_patch_batch_size: int = 8,
 ) -> None:
     if not t.cuda.is_available():
         raise RuntimeError("checkpoint patching requires CUDA")
+    if token_weight_patch_batch_size <= 0:
+        raise ValueError("token-weight patch batch size must be positive")
+    if token_weight_runtime is TokenWeightRuntime.REFERENCE and token_weight_patch_batch_size != 8:
+        raise ValueError("the token-weight reference runtime has a fixed batch size of 8")
     spec = get_model_spec(run.model, allow_provisional=allow_provisional_model)
     processor = load_processor(spec)
     records = _selected_records(run.seed)
@@ -1734,6 +1795,8 @@ def run_patching(
             records,
             plan,
             pending,
+            token_weight_runtime,
+            token_weight_patch_batch_size,
         )
         return
     if plan.mode is PatchingMode.ACROSS_SAMPLE:

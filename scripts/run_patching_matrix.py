@@ -11,6 +11,7 @@ from oocr_training_dynamics.contracts import (
     PatchingInterface,
     PatchingMode,
     RunKey,
+    TokenWeightRuntime,
     TrainingCondition,
 )
 from oocr_training_dynamics.gpu_guard import require_gpu_authorization
@@ -49,6 +50,12 @@ def parse_args() -> argparse.Namespace:
         help="repeat to stage selected recipients; defaults to every trained checkpoint",
     )
     parser.add_argument("--allow-provisional-gemma", action="store_true")
+    parser.add_argument(
+        "--token-weight-runtime",
+        choices=[runtime.value for runtime in TokenWeightRuntime],
+        default=TokenWeightRuntime.REFERENCE.value,
+    )
+    parser.add_argument("--token-weight-patch-batch-size", type=int, default=8)
     parser.add_argument(
         "--shuffle-seed",
         type=int,
@@ -106,6 +113,8 @@ def main() -> None:
                         interface=interface,
                     ),
                     allow_provisional_model=args.allow_provisional_gemma,
+                    token_weight_runtime=TokenWeightRuntime(args.token_weight_runtime),
+                    token_weight_patch_batch_size=args.token_weight_patch_batch_size,
                 )
         temporal_modes = tuple(mode for mode in modes if mode is not PatchingMode.ACROSS_SAMPLE)
         if temporal_modes:
@@ -117,6 +126,8 @@ def main() -> None:
                 interface,
                 shuffle_seed=args.shuffle_seed,
                 allow_provisional_model=args.allow_provisional_gemma,
+                token_weight_runtime=TokenWeightRuntime(args.token_weight_runtime),
+                token_weight_patch_batch_size=args.token_weight_patch_batch_size,
             )
 
 

@@ -12,18 +12,22 @@ from oocr_training_dynamics.contracts import (
     PatchingInterface,
     PatchingMode,
     RunKey,
+    TokenWeightRuntime,
     TrainingCondition,
 )
 from oocr_training_dynamics.patching import PatchingPlan
 from oocr_training_dynamics.runtime_patching import (
     _capture_lora_layer_state,
     _copy_lora_layer_state,
+    _forward_probabilities,
+    _forward_probabilities_last_token,
     _patch_output_path,
     _replace_hidden_input,
     _replace_hidden_positions,
     _replace_lora_output_at_positions,
     _resolve_patch_targets,
     _token_lora_projections,
+    _token_weight_probability_forward,
     run_temporal_patching_matrix,
 )
 
@@ -33,6 +37,55 @@ class _FakeBlock(t.nn.Module):
         super().__init__()
         self.self_attn = t.nn.Identity()
         self.mlp = t.nn.Identity()
+
+
+class _FakeCausalLM(t.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.logit_requests: list[int] = []
+
+    def forward(
+        self,
+        *,
+        input_ids: t.Tensor,
+        attention_mask: t.Tensor,
+        use_cache: bool,
+        return_dict: bool,
+        logits_to_keep: int = 0,
+    ) -> SimpleNamespace:
+        assert attention_mask.shape == input_ids.shape
+        assert not use_cache
+        assert return_dict
+        self.logit_requests.append(logits_to_keep)
+        vocab = t.arange(7, dtype=t.float32).view(1, 1, 7)
+        logits = input_ids.to(dtype=t.float32).unsqueeze(-1) * 0.25 + vocab
+        if logits_to_keep:
+            logits = logits[:, -logits_to_keep:, :]
+        return SimpleNamespace(logits=logits)
+
+
+def test_last_token_probability_kernel_is_exact_on_the_same_logits() -> None:
+    model = _FakeCausalLM()
+    input_ids = t.tensor([[3, 5, 2], [1, 4, 6]])
+    attention_mask = t.ones_like(input_ids)
+    candidate_ids = t.tensor([0, 2, 3, 5, 6])
+
+    reference = _forward_probabilities(model, input_ids, attention_mask, candidate_ids)
+    optimized = _forward_probabilities_last_token(
+        model,
+        input_ids,
+        attention_mask,
+        candidate_ids,
+    )
+
+    assert t.equal(optimized, reference)
+    assert model.logit_requests == [0, 1]
+    assert _token_weight_probability_forward(TokenWeightRuntime.REFERENCE) is (
+        _forward_probabilities
+    )
+    assert _token_weight_probability_forward(TokenWeightRuntime.OPTIMIZED) is (
+        _forward_probabilities_last_token
+    )
 
 
 def test_every_interface_resolves_one_concrete_target_per_layer() -> None:
@@ -343,7 +396,14 @@ def test_temporal_matrix_dispatches_block_weights_without_activation_capture(
     tmp_path: Path,
 ) -> None:
     run = RunKey("olmo3-7b", TrainingCondition.CORRECT)
-    dispatched: list[tuple[list[tuple[int, int, PatchingMode]], PatchingInterface]] = []
+    dispatched: list[
+        tuple[
+            list[tuple[int, int, PatchingMode]],
+            PatchingInterface,
+            TokenWeightRuntime,
+            int,
+        ]
+    ] = []
 
     monkeypatch.setattr(runtime_patching, "CHECKPOINT_STEPS", (0, 1))
     monkeypatch.setattr(runtime_patching.t.cuda, "is_available", lambda: True)
@@ -358,8 +418,8 @@ def test_temporal_matrix_dispatches_block_weights_without_activation_capture(
     monkeypatch.setattr(
         runtime_patching,
         "_run_weight_temporal_pairs",
-        lambda _root, _run, _spec, _processor, _records, pairs, interface: dispatched.append(
-            (pairs, interface)
+        lambda _root, _run, _spec, _processor, _records, pairs, interface, runtime, batch_size: (
+            dispatched.append((pairs, interface, runtime, batch_size))
         ),
     )
     monkeypatch.setattr(
@@ -381,9 +441,36 @@ def test_temporal_matrix_dispatches_block_weights_without_activation_capture(
         )
 
     assert dispatched == [
-        ([(1, 0, PatchingMode.ACROSS_TIME)], PatchingInterface.BLOCK_WEIGHTS),
-        ([(1, 0, PatchingMode.ACROSS_TIME)], PatchingInterface.TOKEN_WEIGHTS),
+        (
+            [(1, 0, PatchingMode.ACROSS_TIME)],
+            PatchingInterface.BLOCK_WEIGHTS,
+            TokenWeightRuntime.REFERENCE,
+            8,
+        ),
+        (
+            [(1, 0, PatchingMode.ACROSS_TIME)],
+            PatchingInterface.TOKEN_WEIGHTS,
+            TokenWeightRuntime.REFERENCE,
+            8,
+        ),
     ]
+
+
+def test_reference_token_weight_runtime_rejects_batch_shape_changes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(runtime_patching.t.cuda, "is_available", lambda: True)
+    with pytest.raises(ValueError, match="fixed batch size of 8"):
+        run_temporal_patching_matrix(
+            tmp_path,
+            RunKey("olmo3-7b", TrainingCondition.CORRECT),
+            (64,),
+            (PatchingMode.ACROSS_TIME,),
+            PatchingInterface.TOKEN_WEIGHTS,
+            token_weight_runtime=TokenWeightRuntime.REFERENCE,
+            token_weight_patch_batch_size=16,
+        )
 
 
 def test_seeded_temporal_order_prioritizes_requested_steps_and_resumes_stably() -> None:
