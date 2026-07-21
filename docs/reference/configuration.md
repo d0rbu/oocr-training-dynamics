@@ -82,6 +82,21 @@ All training, evaluation, and patching CLIs require:
 
 Gemma additionally requires `--allow-provisional-gemma`.
 
+## Token-weight execution settings
+
+Token-local weight patching exposes `--token-weight-runtime reference|optimized` and
+`--token-weight-patch-batch-size`. The reference runtime is permanently fixed to batch size 8 and
+computes full-sequence logits exactly as commit `956bfa4` did. The candidate optimized runtime keeps
+that same readout but reuses exact recipient activations upstream of the patched layer. Both
+production runtimes are fixed to batch size 8; other shapes are benchmark-only until they pass the
+complete exact-parity gate.
+
+The reference runtime remains the conservative rollback default. The optimized runtime passed the
+complete 19-function exact-parity and GPU benchmark ladder in
+[token-weight-performance.md](../development/token-weight-performance.md) and may be selected
+explicitly for production matrices. These settings change execution only; they never enter or
+alter scientific artifact identity.
+
 ## Tooling
 
 `pyproject.toml` pins Python 3.13 and configures `uv`, Ruff, ty, pytest, coverage, and pre-commit.

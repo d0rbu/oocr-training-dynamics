@@ -29,6 +29,10 @@ The tests cover:
 The package threshold is 92% branch-aware coverage. Live runtime modules are omitted from that
 threshold and must not be treated as tested merely because the CPU suite passes.
 
+Token-local weight-kernel optimizations also follow the bit-exact GPU parity ladder in
+[token-weight-performance.md](token-weight-performance.md). A faster timing or a close floating-
+point match is not sufficient to change the default runtime.
+
 ## Tokenizer/config probe
 
 ```bash

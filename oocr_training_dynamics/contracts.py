@@ -100,6 +100,13 @@ class PatchingInterface(StrEnum):
         return self is PatchingInterface.BLOCK_WEIGHTS
 
 
+class TokenWeightRuntime(StrEnum):
+    """Execution kernel for token-local learned-weight interventions."""
+
+    REFERENCE = "reference"
+    OPTIMIZED = "optimized"
+
+
 @beartype
 @dataclass(frozen=True)
 class RunKey:
