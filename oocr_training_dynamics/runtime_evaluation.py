@@ -225,6 +225,14 @@ def evaluate_run(
     index: list[dict[str, object]] = []
     for row in _checkpoint_rows(root, run):
         step = cast(int, row["step"])
+        examples_seen = row.get("examples_seen")
+        if not isinstance(examples_seen, int):
+            raise TypeError("checkpoint index row lacks integer examples_seen")
+        expected_examples = step * run.effective_batch_size
+        if examples_seen != expected_examples:
+            raise RuntimeError(
+                f"checkpoint examples_seen {examples_seen} != expected {expected_examples}"
+            )
         adapter_path = row.get("adapter_path")
         if step > 0:
             if not isinstance(adapter_path, str):
@@ -255,7 +263,7 @@ def evaluate_run(
         freeform = evaluate_freeform(model, processor, records, run.condition)
         result = {
             "step": step,
-            "examples_seen": step * 64,
+            "examples_seen": examples_seen,
             "aggregate": aggregate,
             "per_function": per_function,
             "freeform": freeform,

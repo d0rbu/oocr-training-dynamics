@@ -5,7 +5,9 @@ This project makes experiment state explicit and fails before producing an ambig
 ## Frozen identities
 
 - model identifiers include full 40-character revisions;
-- a run key contains model, condition, and seed;
+- a run key contains model, condition, seed, effective batch, and LoRA rank/full identity; the
+  batch-64 rank-32 baseline retains the original artifact path while every nonbaseline axis value
+  receives an isolated child directory;
 - the condition enum prevents ad hoc control names;
 - checkpoint steps are strictly increasing, include frozen step 0, and end at step 1500;
 - the function derangement is a bijection with no fixed points and preserves output type and
@@ -13,12 +15,16 @@ This project makes experiment state explicit and fails before producing an ambig
 
 Changing one of these is a new experiment contract, not a cosmetic refactor.
 
+LoRA alpha must equal twice the rank. `lora_rank=None` reserves a true full-finetuning identity,
+but the LoRA contract rejects it so a high-rank adapter cannot be mislabeled as full finetuning.
+
 ## Exact loss aggregation
 
-For one effective batch, let `T` be the number of assistant target tokens over all 64 records.
+For one effective batch, let `T` be the number of assistant target tokens over all records in that
+batch (64 in the baseline; 32 through 1 in the dated ablation).
 Each microbatch computes a *sum* of token cross-entropies, divides by the shared `T`, and calls
-backward. The accumulated gradient is therefore the gradient of the 64-record token-mean loss up
-to floating-point reduction order. It is not an average of microbatch means.
+backward. The accumulated gradient is therefore the gradient of the effective-batch token-mean
+loss up to floating-point reduction order. It is not an average of microbatch means.
 
 Global norm clipping occurs once after all microbatches are accumulated. The pre-clip norm is
 stored. Nonfinite loss or norm is fatal.
@@ -51,6 +57,19 @@ start.
 Earlier-checkpoint donors must precede the recipient; later-checkpoint donors must follow it.
 Sample donors use the same checkpoint. A complete patch row contains a finite correct-choice
 probability and raw recipient delta for every expected layer and selected token position.
+
+Global `block_weights` is parameter-level rather than an activation boundary. Donor and recipient
+LoRA keys and shapes must match exactly, recipient factors must be restored in a `finally` path,
+and the exporter must preserve its `layer_only` axis without token placeholders.
+
+Token-local `token_weights` must resolve exactly one ordinary, active, unmerged, zero-dropout LoRA
+adapter for each of Q/K/V/O and gate/up/down. For a selected batch row and token, the hook replaces
+only the recipient LoRA output contribution with the donor contribution on the same current input;
+nonselected output coordinates and all recipient parameters must remain unchanged. Donor and
+recipient schemas and shapes must match, all hooks must be removed in `finally` paths, and the
+exporter must preserve the complete real token axis plus its explicit weight scope. Across-sample
+weight patching is invalid for both interfaces because prompt variants at one checkpoint share
+weights.
 
 Raw cross-family patching is prohibited because hidden coordinates are not aligned merely because
 two models share a residual width.

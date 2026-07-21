@@ -15,6 +15,7 @@ from oocr_training_dynamics.contracts import (
 from oocr_training_dynamics.data import DERANGEMENT, FUNCTION_BY_ID, ChatMessage, ReflectionRecord
 
 PATCH_POSITION = "reverse_from_sequence_end"
+WEIGHT_PATCH_SCOPE = "entire_decoder_block"
 
 
 @beartype
@@ -32,7 +33,7 @@ class PatchingPlan:
     mode: PatchingMode
     recipient_step: int
     donor_steps: tuple[int, ...]
-    patch_position: str = PATCH_POSITION
+    patch_position: str | None = None
     interface: PatchingInterface = PatchingInterface.RESID_POST
 
     def __post_init__(self) -> None:
@@ -54,8 +55,23 @@ class PatchingPlan:
             raise ValueError("later-checkpoint donors must follow the recipient checkpoint")
         if self.mode is PatchingMode.ACROSS_SAMPLE and self.donor_steps != (self.recipient_step,):
             raise ValueError("across-sample patching uses the recipient checkpoint as donor")
-        if self.patch_position != PATCH_POSITION:
-            raise ValueError("patching must proceed backward from the sequence end")
+        if self.interface.patches_weights and self.mode is PatchingMode.ACROSS_SAMPLE:
+            raise ValueError(
+                "decoder-block weight patching requires two distinct checkpoints; "
+                "different-name prompts at one checkpoint share the same weights"
+            )
+        expected_scope = (
+            WEIGHT_PATCH_SCOPE if self.interface.patches_all_token_weights else PATCH_POSITION
+        )
+        if self.patch_position is None:
+            object.__setattr__(self, "patch_position", expected_scope)
+        elif self.patch_position != expected_scope:
+            if self.interface.patches_all_token_weights:
+                raise ValueError("weight patching must replace one entire decoder block")
+            raise ValueError(
+                "token-local activation or weight patching must proceed backward "
+                "from the sequence end"
+            )
 
 
 @beartype
@@ -175,6 +191,7 @@ def relative_depth(layer: int, layer_count: int) -> float:
 
 __all__ = [
     "PATCH_POSITION",
+    "WEIGHT_PATCH_SCOPE",
     "PatchCell",
     "PatchPromptPair",
     "PatchingPlan",

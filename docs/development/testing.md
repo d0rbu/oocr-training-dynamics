@@ -6,6 +6,8 @@
 CUDA_VISIBLE_DEVICES='' uv run ruff check .
 CUDA_VISIBLE_DEVICES='' uv run ty check
 CUDA_VISIBLE_DEVICES='' uv run pytest
+CUDA_VISIBLE_DEVICES='' uv run python scripts/plan_batch_size_ablation.py
+CUDA_VISIBLE_DEVICES='' uv run python scripts/plan_lora_rank_ablation.py
 CUDA_VISIBLE_DEVICES='' uv run python scripts/export_site.py
 node --check site/app.js
 ```
@@ -13,6 +15,8 @@ node --check site/app.js
 The tests cover:
 
 - fixed schedules, run IDs, and storage arithmetic;
+- example-matched effective-batch schedules plus isolated batch/rank/full artifact paths;
+- rank-scaled LoRA parameter, storage, optimizer-state, alpha, and microbatch arithmetic;
 - model revision/dimension and provisional-model contracts;
 - deterministic matched corpora and exact wrong-alias/wrong-implementation semantics;
 - reflection option coverage for intended, deranged, and inverse-deranged rules;
@@ -46,6 +50,12 @@ After the user releases the GPU, follow the runbook's step-1 capacity probe. Acc
 - step-1 adapter, digest, optimizer/RNG resume state, and paused marker are present;
 - `--resume` continues from step 2 instead of replaying step 1.
 
-Run this separately for each model family before launching its 1,500-step matrix. An OOM is a
-capacity result, not permission to weaken the effective-batch contract; reduce only the physical
-microbatch to another positive divisor of 64.
+Run this separately for each model family before launching its 1,500-step baseline matrix. An OOM
+is a capacity result, not permission to weaken the baseline contract; reduce only the physical
+microbatch to another positive divisor of 64. The separately registered batch-size ablation uses
+`scripts/run_batch_size_sweep.py` and must not be mistaken for a capacity workaround.
+
+The rank sweep uses `scripts/run_lora_rank_sweep.py`. Probe each model at rank 256 before assuming
+it fits, and do not use gradient accumulation as a claim that ranks 512/1024 fit: their native
+parameter/optimizer state exceeds the safety budget before activations. Full finetuning requires
+a separate offload and objective-parity smoke-test ladder that is not yet implemented.

@@ -14,10 +14,13 @@ from oocr_training_dynamics.analysis import (
 )
 from oocr_training_dynamics.artifacts import read_json, run_dir, write_json
 from oocr_training_dynamics.contracts import (
-    CHECKPOINT_STEPS,
+    EFFECTIVE_BATCH_SIZE,
+    LORA_RANKS,
     PRIMARY_SEED,
+    SUPPORTED_EFFECTIVE_BATCH_SIZES,
     RunKey,
     TrainingCondition,
+    training_spec_for_run,
 )
 from oocr_training_dynamics.data import FUNCTION_IDS
 from oocr_training_dynamics.models import ModelKey
@@ -88,8 +91,9 @@ def _load_trajectories(
                     "mean_planted_choice_probability",
                 )
             )
-    if tuple(steps) != CHECKPOINT_STEPS:
-        raise RuntimeError(f"analysis requires the complete frozen schedule: {steps!r}")
+    expected_steps = training_spec_for_run(run).checkpoint_steps
+    if tuple(steps) != expected_steps:
+        raise RuntimeError(f"analysis requires the complete run schedule: {steps!r}")
     return (
         tuple(steps),
         {key: tuple(values) for key, values in intended.items()},
@@ -105,6 +109,13 @@ def parse_args() -> argparse.Namespace:
         required=True,
         choices=[condition.value for condition in TrainingCondition],
     )
+    parser.add_argument(
+        "--effective-batch-size",
+        type=int,
+        choices=SUPPORTED_EFFECTIVE_BATCH_SIZES,
+        default=EFFECTIVE_BATCH_SIZE,
+    )
+    parser.add_argument("--lora-rank", type=int, choices=LORA_RANKS, default=32)
     parser.add_argument("--bootstrap-resamples", type=int, default=10_000)
     return parser.parse_args()
 
@@ -112,9 +123,14 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     root = Path(__file__).resolve().parents[1]
-    run = RunKey(args.model, TrainingCondition(args.condition))
+    run = RunKey(
+        args.model,
+        TrainingCondition(args.condition),
+        effective_batch_size=args.effective_batch_size,
+        lora_rank=args.lora_rank,
+    )
     steps, intended, planted = _load_trajectories(root, run)
-    examples = tuple(step * 64 for step in steps)
+    examples = tuple(step * run.effective_batch_size for step in steps)
     intended_aucs = tuple(
         frozen_adjusted_auc(examples, intended[function_id]) for function_id in FUNCTION_IDS
     )
@@ -163,6 +179,7 @@ def main() -> None:
         {
             "status": "measured_complete_schedule",
             "run": run,
+            "effective_batch_size": run.effective_batch_size,
             "analysis_seed": ANALYSIS_SEED,
             "function_clusters": len(FUNCTION_IDS),
             "bootstrap_resamples": args.bootstrap_resamples,

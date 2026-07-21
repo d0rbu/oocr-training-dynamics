@@ -11,17 +11,22 @@ from typing import cast
 
 from oocr_training_dynamics.artifacts import read_json, run_dir, write_json
 from oocr_training_dynamics.contracts import (
+    BATCH_ABLATION_SIZES,
     CHECKPOINT_STEPS,
+    DEFAULT_LORA_RANK,
     EFFECTIVE_BATCH_SIZE,
+    LORA_RANKS,
     PRIMARY_SEED,
+    TRAINING_EXAMPLES,
     PatchingInterface,
     PatchingMode,
     RunKey,
     TrainingCondition,
+    training_spec_for_run,
 )
 from oocr_training_dynamics.data import FUNCTIONS, build_reflection_records
 from oocr_training_dynamics.models import MODEL_SPECS, ModelKey
-from oocr_training_dynamics.patching import PATCH_POSITION
+from oocr_training_dynamics.patching import PATCH_POSITION, WEIGHT_PATCH_SCOPE
 from oocr_training_dynamics.runtime_models import load_processor
 from oocr_training_dynamics.runtime_patching import build_token_axis_metadata
 
@@ -236,6 +241,46 @@ def _compact_patch_record(record: PatchRecord, *, context: str) -> PatchRecord:
     layer_count = (
         max(int(_number(cell, "layer", context=f"{context}.cells[]")) for cell in mapped_cells) + 1
     )
+    required = (
+        "function_id",
+        "source_function_id",
+        "recipient_function_id",
+        "choice_function_ids",
+        "correct_choice_index",
+        "source_probabilities",
+        "recipient_probabilities",
+        "site_probability",
+    )
+    if any(key not in record for key in required):
+        raise KeyError(f"{context} lacks compact-export metadata")
+    axis_kind = record.get("axis_kind", "token_layer")
+    if axis_kind == "layer_only":
+        layer_probabilities: list[float | None] = [None] * layer_count
+        for cell in mapped_cells:
+            layer = int(_number(cell, "layer", context=f"{context}.cells[]"))
+            probability = _number(cell, "probability", context=f"{context}.cells[]")
+            if not 0.0 <= probability <= 1.0:
+                raise ValueError(f"{context} contains an out-of-range probability")
+            if layer_probabilities[layer] is not None:
+                raise ValueError(f"{context} contains a duplicate layer-only cell")
+            layer_probabilities[layer] = probability
+        if any(value is None for value in layer_probabilities):
+            raise ValueError(f"{context} contains an incomplete layer-only grid")
+        weight_required = (
+            "weight_scope",
+            "source_rendered_prompt",
+            "recipient_rendered_prompt",
+        )
+        if any(key not in record for key in weight_required):
+            raise KeyError(f"{context} lacks layer-only weight metadata")
+        return {
+            **{key: record[key] for key in required},
+            **{key: record[key] for key in weight_required},
+            "axis_kind": "layer_only",
+            "probabilities": [layer_probabilities],
+        }
+    if axis_kind != "token_layer":
+        raise ValueError(f"{context}.axis_kind is unsupported: {axis_kind!r}")
     token_count = (
         max(
             int(_number(cell, "token_reverse_index", context=f"{context}.cells[]"))
@@ -279,33 +324,31 @@ def _compact_patch_record(record: PatchRecord, *, context: str) -> PatchRecord:
         raise ValueError(f"{context} contains an incomplete probability grid")
     if any(position is None for position in token_positions):
         raise ValueError(f"{context} contains an incomplete token axis")
-    required = (
-        "function_id",
-        "source_function_id",
-        "recipient_function_id",
-        "choice_function_ids",
-        "correct_choice_index",
-        "source_probabilities",
-        "recipient_probabilities",
-        "site_probability",
-        "token_axis",
-    )
-    if any(key not in record for key in required):
-        raise KeyError(f"{context} lacks compact-export metadata")
-    return {
+    if "token_axis" not in record:
+        raise KeyError(f"{context} lacks compact-export token-axis metadata")
+    compact: PatchRecord = {
         **{key: record[key] for key in required},
+        "token_axis": record["token_axis"],
         "token_positions": token_positions,
         "probabilities": probabilities,
     }
+    if "weight_scope" in record:
+        _mapping(record["weight_scope"], context=f"{context}.weight_scope")
+        compact["axis_kind"] = "token_layer"
+        compact["weight_scope"] = record["weight_scope"]
+    return compact
 
 
 def _write_compact_json(path: Path, value: object) -> tuple[str, int]:
-    serialized = json.dumps(
-        value,
-        allow_nan=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8") + b"\n"
+    serialized = (
+        json.dumps(
+            value,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        + b"\n"
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_bytes(serialized)
@@ -326,8 +369,6 @@ def _export_real_patches(root: Path) -> tuple[dict[str, object], int]:
         interface = plan.get("interface", PatchingInterface.RESID_POST.value)
         mode = plan.get("mode")
         records = artifact.get("records")
-        if plan.get("patch_position") != PATCH_POSITION:
-            continue
         if not isinstance(model, str) or model not in {key.value for key in ModelKey}:
             raise TypeError(f"{path}.run.model is invalid")
         if not isinstance(condition, str) or condition not in {
@@ -340,6 +381,13 @@ def _export_real_patches(root: Path) -> tuple[dict[str, object], int]:
             item.value for item in PatchingInterface
         }:
             raise TypeError(f"{path}.plan.interface is invalid")
+        expected_scope = (
+            WEIGHT_PATCH_SCOPE
+            if interface == PatchingInterface.BLOCK_WEIGHTS.value
+            else PATCH_POSITION
+        )
+        if plan.get("patch_position") != expected_scope:
+            continue
         if not isinstance(records, list):
             raise TypeError(f"{path}.records must be an array")
         recipient_step = int(_number(plan, "recipient_step", context=f"{path}.plan"))
@@ -432,6 +480,96 @@ def main() -> None:
                 curve_sources[model.value][condition.value] = "synthetic_preview"
             curves[model.value][condition.value] = aggregate_curve
             function_curves[model.value][condition.value] = per_function_curves
+
+    batch_curves: dict[str, dict[str, dict[str, list[CurveRow]]]] = {}
+    batch_function_curves: dict[str, dict[str, dict[str, FunctionCurves]]] = {}
+    batch_curve_sources: dict[str, dict[str, dict[str, str]]] = {}
+    measured_batch_runs = 0
+    for model in ModelKey:
+        batch_curves[model.value] = {}
+        batch_function_curves[model.value] = {}
+        batch_curve_sources[model.value] = {}
+        for condition in TrainingCondition:
+            baseline_key = str(EFFECTIVE_BATCH_SIZE)
+            batch_curves[model.value][condition.value] = {
+                baseline_key: curves[model.value][condition.value]
+            }
+            batch_function_curves[model.value][condition.value] = {
+                baseline_key: function_curves[model.value][condition.value]
+            }
+            batch_curve_sources[model.value][condition.value] = {
+                baseline_key: curve_sources[model.value][condition.value]
+            }
+            for batch_size in BATCH_ABLATION_SIZES:
+                run = RunKey(
+                    model.value,
+                    condition,
+                    effective_batch_size=batch_size,
+                )
+                real = _real_curves(root, run)
+                if real is None:
+                    continue
+                aggregate_curve, per_function_curves = real
+                key = str(batch_size)
+                batch_curves[model.value][condition.value][key] = aggregate_curve
+                batch_function_curves[model.value][condition.value][key] = per_function_curves
+                batch_curve_sources[model.value][condition.value][key] = (
+                    "measured_complete"
+                    if len(aggregate_curve) == len(training_spec_for_run(run).checkpoint_steps)
+                    else "measured_partial"
+                )
+                measured_batch_runs += 1
+
+    rank_curves: dict[str, dict[str, dict[str, list[CurveRow]]]] = {}
+    rank_function_curves: dict[str, dict[str, dict[str, FunctionCurves]]] = {}
+    rank_curve_sources: dict[str, dict[str, dict[str, str]]] = {}
+    measured_rank_runs = 0
+    for model in ModelKey:
+        rank_curves[model.value] = {}
+        rank_function_curves[model.value] = {}
+        rank_curve_sources[model.value] = {}
+        for condition in TrainingCondition:
+            baseline_key = str(DEFAULT_LORA_RANK)
+            rank_curves[model.value][condition.value] = {
+                baseline_key: curves[model.value][condition.value]
+            }
+            rank_function_curves[model.value][condition.value] = {
+                baseline_key: function_curves[model.value][condition.value]
+            }
+            rank_curve_sources[model.value][condition.value] = {
+                baseline_key: curve_sources[model.value][condition.value]
+            }
+            if condition is not TrainingCondition.CORRECT:
+                continue
+            for rank in LORA_RANKS:
+                if rank == DEFAULT_LORA_RANK:
+                    continue
+                run = RunKey(model.value, condition, lora_rank=rank)
+                real = _real_curves(root, run)
+                if real is None:
+                    continue
+                aggregate_curve, per_function_curves = real
+                key = str(rank)
+                rank_curves[model.value][condition.value][key] = aggregate_curve
+                rank_function_curves[model.value][condition.value][key] = per_function_curves
+                rank_curve_sources[model.value][condition.value][key] = (
+                    "measured_complete"
+                    if len(aggregate_curve) == len(training_spec_for_run(run).checkpoint_steps)
+                    else "measured_partial"
+                )
+                measured_rank_runs += 1
+            full_run = RunKey(model.value, condition, lora_rank=None)
+            full_real = _real_curves(root, full_run)
+            if full_real is not None:
+                aggregate_curve, per_function_curves = full_real
+                rank_curves[model.value][condition.value]["full"] = aggregate_curve
+                rank_function_curves[model.value][condition.value]["full"] = per_function_curves
+                rank_curve_sources[model.value][condition.value]["full"] = (
+                    "measured_complete"
+                    if len(aggregate_curve) == len(CHECKPOINT_STEPS)
+                    else "measured_partial"
+                )
+                measured_rank_runs += 1
     patch_manifest, real_patch_files = _export_real_patches(root)
     write_json(
         root / "site" / "data" / "patch-manifest.json",
@@ -462,6 +600,23 @@ def main() -> None:
             ),
             "checkpoints": CHECKPOINT_STEPS,
             "effective_batch_size": EFFECTIVE_BATCH_SIZE,
+            "training_examples": TRAINING_EXAMPLES,
+            "batch_ablation": {
+                "effective_batch_sizes": [EFFECTIVE_BATCH_SIZE, *BATCH_ABLATION_SIZES],
+                "measured_runs": measured_batch_runs,
+                "curves": batch_curves,
+                "function_curves": batch_function_curves,
+                "curve_sources": batch_curve_sources,
+            },
+            "rank_ablation": {
+                "lora_ranks": [*LORA_RANKS, "full"],
+                "effective_batch_size": EFFECTIVE_BATCH_SIZE,
+                "measured_runs": measured_rank_runs,
+                "curves": rank_curves,
+                "function_curves": rank_function_curves,
+                "curve_sources": rank_curve_sources,
+                "full_finetuning_status": "planned_requires_offload_backend",
+            },
             "models": {
                 key.value: {
                     "label": spec.label,

@@ -24,6 +24,41 @@ The physical microbatch defaults to 32 for OLMo and 16 for Qwen/provisional Gemm
 only to another positive divisor of 64 after a capacity result. That does not change the effective
 batch or target-token denominator.
 
+## Effective-batch ablation settings
+
+The original table remains frozen for the batch-64 baseline. The dated exploratory sweep supports
+effective batches `32, 16, 8, 4, 2, 1` for the correct-condition OLMo and Qwen runs. Every size
+uses all 96,000 records, the same order and seed, and the same optimizer hyperparameters. Its
+default physical microbatch is the largest model default no greater than the selected effective
+batch. Nonbaseline artifacts live under `effective_batch_<B>/` beneath the original seed path.
+
+Comparison checkpoints are aligned by examples seen. A smaller-batch run additionally saves step
+1 and refreshes its single rolling resume state at every saved checkpoint.
+
+## LoRA-rank ablation settings
+
+The exploratory rank axis is `1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024`, followed by a
+separately implemented full-finetuning endpoint. The first sweep is correct-condition OLMo/Qwen
+only at effective batch 64. Rank 32 is the existing baseline; other adapter artifacts live under
+`lora_rank_<R>/`.
+
+For every LoRA rank:
+
+```text
+alpha = 2 * rank
+dropout = 0
+targets = q/k/v/o + gate/up/down projections
+```
+
+The default rank-scaled physical microbatches for ranks 32, 64, 128, 256, 512, and 1024 are
+`32, 16, 8, 4, 2, 1` for OLMo and `16, 8, 4, 2, 1, 1` for Qwen. Rank 1–32 uses the model's
+baseline physical microbatch. Every value divides 64, so gradient accumulation preserves the
+effective-batch target-token mean and one-clip-per-update contract.
+
+Full finetuning has no rank or alpha. `RunKey(lora_rank=None)` reserves `full_finetune/`, while the
+LoRA training-spec constructor rejects it. Its offload backend is deliberately not runnable until
+the full-parameter objective-parity and capacity gates in the runbook are implemented and passed.
+
 ## Checkpoint and resume settings
 
 Adapters are saved at steps:

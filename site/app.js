@@ -1,7 +1,7 @@
 "use strict";
 
-const DATA_URL = "data/experiment.json?v=20260716d";
-const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260716d";
+const DATA_URL = "data/experiment.json?v=20260721a";
+const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260721a";
 const CONDITION_LABELS = {
   correct: "Correct I/O",
   wrong_alias: "Wrong alias",
@@ -25,6 +25,8 @@ const PATCH_INTERFACE_LABELS = {
   attention_output: "Attention output",
   mlp_input: "MLP input",
   mlp_output: "MLP output",
+  token_weights: "Weights · selected token",
+  block_weights: "Weights · all tokens",
 };
 const PATCH_INTERFACE_DESCRIPTIONS = {
   resid_post: "Decoder-block output after both attention and MLP residual additions.",
@@ -32,6 +34,8 @@ const PATCH_INTERFACE_DESCRIPTIONS = {
   attention_output: "Self-attention output after the O projection, before branch normalization or residual addition.",
   mlp_input: "The hidden vector passed into the gated MLP. OLMo receives the post-attention residual; Qwen receives its RMS-normalized form.",
   mlp_output: "MLP output after the down projection, before branch normalization or residual addition.",
+  token_weights: "At each token × layer cell, the donor checkpoint’s learned LoRA contribution replaces the recipient contribution in Q/K/V/O and gate/up/down only at the selected token. Other tokens keep recipient contributions; donor K/V at the selected token can causally affect later tokens through attention.",
+  block_weights: "All-token control: all learned LoRA A/B factors in one decoder block (Q/K/V/O and gate/up/down) are replaced at once, affecting every prompt position. This is the earlier global intervention, retained separately from selected-token weight patching.",
 };
 const SLIDER_UNITS = 10000;
 const ALL_FUNCTIONS_ID = "__all__";
@@ -47,6 +51,8 @@ const state = {
   data: null,
   model: "olmo3-7b",
   condition: "correct",
+  curveBatchSize: 64,
+  curveLoraRank: "32",
   curveMetric: "correct_probability",
   curveTimeScale: "logarithmic",
   curveFunctionId: ALL_FUNCTIONS_ID,
@@ -114,20 +120,51 @@ function sliderValueForStep(step, scale) {
   return Math.round(scaledStepFraction(step, scale) * SLIDER_UNITS);
 }
 
+function scaledExamplesFraction(examples, scale) {
+  const finalExamples = state.data.training_examples;
+  return scale === "logarithmic"
+    ? Math.log1p(examples) / Math.log1p(finalExamples)
+    : examples / finalExamples;
+}
+
+function examplesFromSlider(value, scale) {
+  const finalExamples = state.data.training_examples;
+  const fraction = Math.max(0, Math.min(1, value / SLIDER_UNITS));
+  return scale === "logarithmic"
+    ? Math.expm1(fraction * Math.log1p(finalExamples))
+    : fraction * finalExamples;
+}
+
+function sliderValueForExamples(examples, scale) {
+  return Math.round(scaledExamplesFraction(examples, scale) * SLIDER_UNITS);
+}
+
+function selectedCurveBucket(name) {
+  if (state.curveLoraRank === "32") {
+    return state.data.batch_ablation?.[name]?.[state.model]?.[state.condition]
+      ?.[String(state.curveBatchSize)];
+  }
+  return state.data.rank_ablation?.[name]?.[state.model]?.[state.condition]
+    ?.[state.curveLoraRank];
+}
+
 function curveRows() {
   if (state.curveFunctionId !== ALL_FUNCTIONS_ID) {
-    const rows = state.data.function_curves?.[state.model]?.[state.condition]
-      ?.[state.curveFunctionId];
+    const rows = selectedCurveBucket("function_curves")?.[state.curveFunctionId];
     if (!Array.isArray(rows)) {
       throw new Error("Selected function does not have a measured learning curve");
     }
     return rows;
   }
-  return state.data.curves[state.model][state.condition];
+  const rows = selectedCurveBucket("curves");
+  if (!Array.isArray(rows)) {
+    throw new Error("Selected effective batch does not have an exported learning curve");
+  }
+  return rows;
 }
 
 function curveSource() {
-  return state.data.curve_sources[state.model][state.condition];
+  return selectedCurveBucket("curve_sources");
 }
 
 function setupStatus() {
@@ -182,6 +219,108 @@ function buildConditionControls() {
   });
 }
 
+function availableBatchCurves() {
+  return state.data.batch_ablation?.curves?.[state.model]?.[state.condition] ?? {};
+}
+
+function availableBatchSizes() {
+  const available = availableBatchCurves();
+  return state.data.batch_ablation.effective_batch_sizes.filter(
+    (batchSize) => Array.isArray(available[String(batchSize)]),
+  );
+}
+
+function availableRankCurves() {
+  return state.data.rank_ablation?.curves?.[state.model]?.[state.condition] ?? {};
+}
+
+function normalizeCurveAxisSelections() {
+  const availableRanks = availableRankCurves();
+  if (!Array.isArray(availableRanks[state.curveLoraRank])) {
+    state.curveLoraRank = "32";
+  }
+  const available = availableBatchCurves();
+  if (!Array.isArray(available[String(state.curveBatchSize)])) {
+    state.curveBatchSize = 64;
+  }
+  if (state.curveLoraRank !== "32") state.curveBatchSize = 64;
+  if (state.curveBatchSize !== 64) state.curveLoraRank = "32";
+  const batchSizes = availableBatchSizes();
+  const slider = document.getElementById("curve-batch-slider");
+  const selectedIndex = Math.max(0, batchSizes.indexOf(state.curveBatchSize));
+  slider.min = "0";
+  slider.max = String(Math.max(0, batchSizes.length - 1));
+  slider.value = String(selectedIndex);
+  slider.disabled = state.curveLoraRank !== "32" || batchSizes.length <= 1;
+  slider.setAttribute(
+    "aria-valuetext",
+    `Effective batch ${state.curveBatchSize}`,
+  );
+  document.getElementById("curve-batch-value").textContent = String(state.curveBatchSize);
+  const ticks = document.getElementById("curve-batch-ticks");
+  ticks.replaceChildren();
+  batchSizes.forEach((batchSize) => {
+    const tick = el("span", {}, String(batchSize));
+    tick.classList.toggle("active", batchSize === state.curveBatchSize);
+    ticks.append(tick);
+  });
+  const measured = Object.entries(
+    state.data.batch_ablation?.curve_sources?.[state.model]?.[state.condition] ?? {},
+  ).filter(([, source]) => source.startsWith("measured_")).length;
+  const missing = state.data.batch_ablation.effective_batch_sizes.filter(
+    (batchSize) => !Array.isArray(available[String(batchSize)]),
+  );
+  document.getElementById("curve-batch-note").textContent = measured > 1
+    ? `${measured} measured trajectories. Unprocessed: ${missing.join(", ")}.`
+    : `Only batch ${state.curveBatchSize} is available. Unprocessed: ${missing.join(", ")}.`;
+  const rankSelect = document.getElementById("curve-rank-select");
+  rankSelect.querySelectorAll("option").forEach((option) => {
+    option.disabled = state.curveBatchSize !== 64 || !Array.isArray(availableRanks[option.value]);
+  });
+  rankSelect.value = state.curveLoraRank;
+  const measuredRanks = Object.values(
+    state.data.rank_ablation?.curve_sources?.[state.model]?.[state.condition] ?? {},
+  ).filter((source) => source.startsWith("measured_")).length;
+  document.getElementById("curve-rank-note").textContent = measuredRanks > 1
+    ? `${measuredRanks} measured rank trajectories available at effective batch 64.`
+    : "Ranks 1–1024 and full finetuning are planned; unmeasured entries stay disabled.";
+}
+
+function buildCurveBatchSlider() {
+  const slider = document.getElementById("curve-batch-slider");
+  slider.addEventListener("input", () => {
+    const priorExamples = curveAt(state.checkpointIndex).examples_seen;
+    const batchSizes = availableBatchSizes();
+    state.curveBatchSize = batchSizes[Number(slider.value)];
+    if (state.curveBatchSize !== 64) state.curveLoraRank = "32";
+    state.checkpointIndex = nearestCurveCheckpointIndex(priorExamples);
+    normalizeCurveFunctionSelection();
+    renderCheckpointTicks();
+    renderAll();
+  });
+}
+
+function buildCurveRankSelect() {
+  const select = document.getElementById("curve-rank-select");
+  select.replaceChildren();
+  state.data.rank_ablation.lora_ranks.forEach((rank) => {
+    const value = String(rank);
+    const label = value === "full"
+      ? "Full finetuning · offload required"
+      : `${value}${value === "32" ? " · baseline" : ""}`;
+    select.append(el("option", { value }, label));
+  });
+  select.addEventListener("change", () => {
+    const priorExamples = curveAt(state.checkpointIndex).examples_seen;
+    state.curveLoraRank = select.value;
+    if (state.curveLoraRank !== "32") state.curveBatchSize = 64;
+    state.checkpointIndex = nearestCurveCheckpointIndex(priorExamples);
+    normalizeCurveFunctionSelection();
+    renderCheckpointTicks();
+    renderAll();
+  });
+}
+
 function buildFunctionSelect() {
   const select = document.getElementById("function-select");
   select.replaceChildren();
@@ -201,7 +340,7 @@ function buildFunctionSelect() {
 }
 
 function availableCurveFunctions() {
-  return state.data.function_curves?.[state.model]?.[state.condition] ?? {};
+  return selectedCurveBucket("function_curves") ?? {};
 }
 
 function normalizeCurveFunctionSelection() {
@@ -244,9 +383,9 @@ function buildCurveFunctionSelect() {
 function renderCheckpointTicks() {
   const ticks = document.getElementById("checkpoint-ticks");
   ticks.replaceChildren();
-  state.data.checkpoints.forEach((step) => {
+  curveRows().forEach((row) => {
     const tick = el("i");
-    tick.style.left = `${scaledStepFraction(step, state.curveTimeScale) * 100}%`;
+    tick.style.left = `${scaledExamplesFraction(row.examples_seen, state.curveTimeScale) * 100}%`;
     ticks.append(tick);
   });
 }
@@ -273,7 +412,9 @@ function renderCurve() {
   const margin = { left: 52, right: 22, top: 18, bottom: 38 };
   const innerWidth = width - margin.left - margin.right;
   const innerHeight = height - margin.top - margin.bottom;
-  const x = (step) => margin.left + scaledStepFraction(step, state.curveTimeScale) * innerWidth;
+  const x = (examples) => (
+    margin.left + scaledExamplesFraction(examples, state.curveTimeScale) * innerWidth
+  );
   const y = (value) => margin.top + (1 - value) * innerHeight;
 
   const defs = svg("defs");
@@ -289,16 +430,16 @@ function renderCurve() {
     label.textContent = `${Math.round(value * 100)}%`;
     chart.append(label);
   });
-  const axisSteps = state.curveTimeScale === "logarithmic"
-    ? [0, 1, 4, 16, 64, 256, 1024, 1500]
-    : [0, 250, 500, 750, 1000, 1250, 1500];
-  axisSteps.forEach((step) => {
-    const label = svg("text", { x: x(step), y: height - 10, class: "axis-label", "text-anchor": "middle" });
-    label.textContent = formatExamples(step * state.data.effective_batch_size);
+  const axisExamples = state.curveTimeScale === "logarithmic"
+    ? [0, 64, 256, 1024, 4096, 16384, 65536, 96000]
+    : [0, 16000, 32000, 48000, 64000, 80000, 96000];
+  axisExamples.forEach((examples) => {
+    const label = svg("text", { x: x(examples), y: height - 10, class: "axis-label", "text-anchor": "middle" });
+    label.textContent = formatExamples(examples);
     chart.append(label);
   });
 
-  const points = rows.map((row) => [x(row.step), y(row[metric])]);
+  const points = rows.map((row) => [x(row.examples_seen), y(row[metric])]);
   const line = points.map(([px, py], index) => `${index === 0 ? "M" : "L"}${px.toFixed(2)},${py.toFixed(2)}`).join(" ");
   const area = `${line} L${points.at(-1)[0]},${y(0)} L${points[0][0]},${y(0)} Z`;
   chart.append(svg("path", { d: area, class: "curve-area" }));
@@ -306,12 +447,12 @@ function renderCurve() {
 
   const secondaryKey = SECONDARY_METRICS[metric];
   if (secondaryKey && rows[0][secondaryKey] !== undefined) {
-    const secondary = rows.map((row, index) => `${index === 0 ? "M" : "L"}${x(row.step).toFixed(2)},${y(row[secondaryKey]).toFixed(2)}`).join(" ");
+    const secondary = rows.map((row, index) => `${index === 0 ? "M" : "L"}${x(row.examples_seen).toFixed(2)},${y(row[secondaryKey]).toFixed(2)}`).join(" ");
     chart.append(svg("path", { d: secondary, class: "curve-secondary" }));
   }
 
   const selected = rows[state.checkpointIndex];
-  const cursorX = x(selected.step);
+  const cursorX = x(selected.examples_seen);
   chart.append(svg("line", { x1: cursorX, x2: cursorX, y1: margin.top, y2: y(0), class: "curve-cursor" }));
   chart.append(svg("circle", { cx: cursorX, cy: y(selected[metric]), r: 7, class: "curve-dot" }));
 
@@ -326,7 +467,10 @@ function renderCurve() {
   const probeLabel = selectedFunction
     ? selectedFunction.alias
     : `average n=${state.data.functions.length}`;
-  document.getElementById("curve-kicker").textContent = `${state.data.models[state.model].label} · ${CONDITION_LABELS[state.condition]} · ${probeLabel} · ${source.replaceAll("_", " ")}`;
+  const adaptationLabel = state.curveLoraRank === "full"
+    ? "full finetuning"
+    : `LoRA rank ${state.curveLoraRank}`;
+  document.getElementById("curve-kicker").textContent = `${state.data.models[state.model].label} · effective batch ${state.curveBatchSize} · ${adaptationLabel} · ${CONDITION_LABELS[state.condition]} · ${probeLabel} · ${source.replaceAll("_", " ")}`;
   document.getElementById("curve-title").textContent = selectedFunction
     ? `${METRIC_LABELS[metric]} · ${selectedFunction.alias}`.replace(/^./, (letter) => letter.toUpperCase())
     : METRIC_LABELS[metric].replace(/^./, (letter) => letter.toUpperCase());
@@ -349,6 +493,22 @@ function usesCheckpointDonor() {
   return state.patchMode === "checkpoint";
 }
 
+function weightPatchSelected() {
+  return ["token_weights", "block_weights"].includes(state.patchInterface);
+}
+
+function tokenWeightPatchSelected() {
+  return state.patchInterface === "token_weights";
+}
+
+function allTokenWeightPatchSelected() {
+  return state.patchInterface === "block_weights";
+}
+
+function patchSelectionApplicable() {
+  return !weightPatchSelected() || usesCheckpointDonor();
+}
+
 function resolvedArtifactMode() {
   if (!usesCheckpointDonor()) return "across_sample";
   if (state.donorIndex < state.recipientIndex) return "across_time";
@@ -357,6 +517,7 @@ function resolvedArtifactMode() {
 }
 
 function selectedPatchReference() {
+  if (!patchSelectionApplicable()) return null;
   const mode = resolvedArtifactMode();
   if (!mode) return null;
   const recipientStep = state.data.checkpoints[state.recipientIndex];
@@ -496,6 +657,7 @@ function compactPatchChunk(records) {
     });
     const correctIndex = record.correct_choice_index;
     compact[functionId] = {
+      axisKind: record.axis_kind ?? "token_layer",
       layerCount,
       tokenCount,
       probabilities,
@@ -504,6 +666,9 @@ function compactPatchChunk(records) {
       target: record.choice_function_ids[correctIndex],
       sourceFunctionId: record.source_function_id ?? functionId,
       recipientFunctionId: record.recipient_function_id ?? functionId,
+      sourceRenderedPrompt: record.source_rendered_prompt ?? null,
+      recipientRenderedPrompt: record.recipient_rendered_prompt ?? null,
+      weightScope: record.weight_scope ?? null,
     };
   });
   return compact;
@@ -628,12 +793,33 @@ function nearestCheckpointIndex(value, minimumIndex, maximumIndex) {
   return bestIndex;
 }
 
+function nearestCurveCheckpointIndex(examples) {
+  const rows = curveRows();
+  let bestIndex = 0;
+  let bestDistance = Math.abs(rows[0].examples_seen - examples);
+  for (let index = 1; index < rows.length; index += 1) {
+    const distance = Math.abs(rows[index].examples_seen - examples);
+    if (distance < bestDistance) {
+      bestIndex = index;
+      bestDistance = distance;
+    }
+  }
+  return bestIndex;
+}
+
 function unprocessedPatchForFunction(functionId) {
   const layers = state.data.models[state.model].layer_count;
   const fnIndex = state.data.functions.findIndex((fn) => fn.id === functionId);
   const fn = state.data.functions[fnIndex];
   const exactAxis = state.data.token_axes?.[state.model]?.[tokenAxisMode()]?.[functionId];
-  const tokenPositions = exactAxis?.positions
+  const axisKind = allTokenWeightPatchSelected() ? "layer_only" : "token_layer";
+  const tokenPositions = axisKind === "layer_only"
+    ? [{
+      axisKind: "layer_only",
+      sourceToken: "donor decoder-block weights",
+      recipientToken: "recipient decoder-block weights",
+    }]
+    : exactAxis?.positions
     ? exactAxis.positions.map((position) => ({
       reverseIndex: position.reverse_index,
       sourceIndex: position.source_index,
@@ -661,7 +847,7 @@ function unprocessedPatchForFunction(functionId) {
     target: fn.definition,
     outcomeLabel: "correct-implementation probability",
     sourceFunctionId: exactAxis?.source_function_id ?? (
-      state.patchMode === "across_sample"
+      state.patchMode === "across_sample" && !weightPatchSelected()
         ? state.data.functions[(fnIndex + 1) % state.data.functions.length].id
         : fn.id
     ),
@@ -670,6 +856,8 @@ function unprocessedPatchForFunction(functionId) {
     recipientRenderedPrompt: exactAxis?.recipient_rendered_prompt ?? "Exact tokenizer metadata is unavailable for this provisional model.",
     measured: false,
     processed: false,
+    applicable: patchSelectionApplicable(),
+    axisKind,
     aggregate: false,
     functionCount: 1,
   };
@@ -681,10 +869,20 @@ function measuredPatchForFunction(functionId) {
   const record = records?.[functionId] ?? null;
   if (!record) return null;
   const exactAxis = state.data.token_axes?.[state.model]?.[tokenAxisMode()]?.[functionId];
-  if (!exactAxis?.positions || exactAxis.positions.length !== record.tokenCount) {
+  const layerOnly = record.axisKind === "layer_only";
+  if (!layerOnly && (!exactAxis?.positions || exactAxis.positions.length !== record.tokenCount)) {
     throw new Error("Measured patch grid does not match its exact tokenizer axis");
   }
-  const tokenPositions = exactAxis.positions.map((position) => ({
+  if (layerOnly && record.tokenCount !== 1) {
+    throw new Error("Measured all-token weight patch must contain exactly one layer-only row");
+  }
+  const tokenPositions = layerOnly
+    ? [{
+      axisKind: "layer_only",
+      sourceToken: "donor decoder-block weights",
+      recipientToken: "recipient decoder-block weights",
+    }]
+    : exactAxis.positions.map((position) => ({
       reverseIndex: position.reverse_index,
       sourceIndex: position.source_index,
       recipientIndex: position.recipient_index,
@@ -709,10 +907,16 @@ function measuredPatchForFunction(functionId) {
     outcomeLabel: "correct-implementation probability",
     sourceFunctionId: record.sourceFunctionId,
     recipientFunctionId: record.recipientFunctionId,
-    sourceRenderedPrompt: exactAxis.source_rendered_prompt,
-    recipientRenderedPrompt: exactAxis.recipient_rendered_prompt,
+    sourceRenderedPrompt: layerOnly
+      ? record.sourceRenderedPrompt
+      : exactAxis.source_rendered_prompt,
+    recipientRenderedPrompt: layerOnly
+      ? record.recipientRenderedPrompt
+      : exactAxis.recipient_rendered_prompt,
     measured: true,
     processed: true,
+    applicable: true,
+    axisKind: record.axisKind,
     aggregate: false,
     functionCount: 1,
   };
@@ -737,10 +941,24 @@ function averagePatches(patches) {
   if (patches.some((patch) => patch.layers !== layers)) {
     throw new Error("Cannot average patch grids with different layer counts");
   }
+  const axisKind = patches[0].axisKind;
+  if (patches.some((patch) => patch.axisKind !== axisKind)) {
+    throw new Error("Cannot average token-level and layer-only patch grids together");
+  }
   const functionCount = patches.length;
   const processed = patches.every((patch) => patch.processed);
-  const sharedTokenCount = Math.min(...patches.map((patch) => patch.tokenPositions.length));
-  const tokenPositions = Array.from({ length: sharedTokenCount }, (_, reverseIndex) => {
+  const applicable = patches.every((patch) => patch.applicable);
+  const sharedTokenCount = axisKind === "layer_only"
+    ? 1
+    : Math.min(...patches.map((patch) => patch.tokenPositions.length));
+  const tokenPositions = axisKind === "layer_only"
+    ? [{
+      axisKind: "layer_only",
+      sourceToken: `donor decoder-block weights · n=${functionCount}`,
+      recipientToken: `recipient decoder-block weights · n=${functionCount}`,
+      aggregate: true,
+    }]
+    : Array.from({ length: sharedTokenCount }, (_, reverseIndex) => {
     const sourceTokens = patches.map((patch) => patch.tokenPositions[reverseIndex].sourceToken);
     const recipientTokens = patches.map((patch) => patch.tokenPositions[reverseIndex].recipientToken);
     return {
@@ -755,7 +973,7 @@ function averagePatches(patches) {
       recipientTokenSignature: JSON.stringify(recipientTokens),
       aggregate: true,
     };
-  });
+    });
   const matrix = Array.from({ length: sharedTokenCount }, (_, tokenIndex) => (
     Array.from({ length: layers }, (_, layer) => (
       processed ? mean(patches.map((patch) => patch.matrix[tokenIndex][layer])) : null
@@ -776,6 +994,8 @@ function averagePatches(patches) {
     recipientRenderedPrompt: `Aggregate view over ${functionCount} model-rendered recipient prompts. Select an individual function to inspect exact text and tokenizer IDs.`,
     measured,
     processed,
+    applicable,
+    axisKind,
     aggregate: true,
     functionCount,
   };
@@ -853,26 +1073,35 @@ function renderPatching() {
     heatmap.append(el("div", { class: "heatmap-layer" }, layer % 4 === 0 ? String(layer) : "·"));
   }
   patch.tokenPositions.forEach((position, tokenIndex) => {
-    const sameCoordinate = position.aggregate
+    const layerOnly = patch.axisKind === "layer_only";
+    const sameCoordinate = layerOnly || (position.aggregate
       ? position.sourceTokenSignature === position.recipientTokenSignature
       : position.sourceToken === position.recipientToken
         && position.sourceIndex === position.recipientIndex
-        && position.sourceTokenId === position.recipientTokenId;
+        && position.sourceTokenId === position.recipientTokenId);
     const sourcePrefix = state.patchMode === "across_sample" ? "dirty/source " : "source ";
     const recipientPrefix = state.patchMode === "across_sample" ? "clean/recipient " : "recipient ";
-    const sourceCoordinate = position.aggregate
-      ? aggregateTokenCoordinate(sourcePrefix, position.sourceToken)
-      : tokenCoordinate(sourcePrefix, position.sourceIndex, position.sourceTokenId, position.sourceToken);
-    const recipientCoordinate = position.aggregate
-      ? aggregateTokenCoordinate(recipientPrefix, position.recipientToken)
-      : tokenCoordinate(recipientPrefix, position.recipientIndex, position.recipientTokenId, position.recipientToken);
-    const tokenText = sameCoordinate
-      ? (position.aggregate
-        ? aggregateTokenCoordinate("", position.sourceToken)
-        : tokenCoordinate("", position.sourceIndex, position.sourceTokenId, position.sourceToken))
-      : `${sourceCoordinate} → ${recipientCoordinate}`;
-    const label = el("div", { class: `heatmap-token${position.reverseIndex === 0 ? " anchor" : ""}` });
-    label.append(el("b", {}, position.reverseIndex === 0 ? "−0 · end" : `−${position.reverseIndex}`));
+    const sourceCoordinate = layerOnly
+      ? "donor checkpoint · complete learned block update"
+      : position.aggregate
+        ? aggregateTokenCoordinate(sourcePrefix, position.sourceToken)
+        : tokenCoordinate(sourcePrefix, position.sourceIndex, position.sourceTokenId, position.sourceToken);
+    const recipientCoordinate = layerOnly
+      ? "recipient checkpoint · complete learned block update"
+      : position.aggregate
+        ? aggregateTokenCoordinate(recipientPrefix, position.recipientToken)
+        : tokenCoordinate(recipientPrefix, position.recipientIndex, position.recipientTokenId, position.recipientToken);
+    const tokenText = layerOnly
+      ? "All sequence positions · entire decoder block"
+      : sameCoordinate
+        ? (position.aggregate
+          ? aggregateTokenCoordinate("", position.sourceToken)
+          : tokenCoordinate("", position.sourceIndex, position.sourceTokenId, position.sourceToken))
+        : `${sourceCoordinate} → ${recipientCoordinate}`;
+    const label = el("div", { class: `heatmap-token${!layerOnly && position.reverseIndex === 0 ? " anchor" : ""}` });
+    label.append(el("b", {}, layerOnly
+      ? "all tokens"
+      : position.reverseIndex === 0 ? "−0 · end" : `−${position.reverseIndex}`));
     label.append(el("span", { title: tokenText }, tokenText));
     heatmap.append(label);
     for (let layer = 0; layer < patch.layers; layer += 1) {
@@ -880,13 +1109,20 @@ function renderPatching() {
       const cell = el("div", { class: "heat-cell", tabindex: "0" });
       if (!patch.processed) {
         cell.classList.add("unprocessed");
-        const unavailableReason = patchLoadError
+        const unavailableReason = !patch.applicable
+          ? "Different function-name prompts use the same checkpoint weights, so there is no distinct donor weight state to patch. Select Checkpoint transfer."
+          : patchLoadError
           ? "A measured file exists, but it could not be loaded. No fallback value is displayed."
           : patchLoading
             ? "Measured values are loading. No temporary numeric value is displayed."
-            : "No activation-patching value has been measured for this recipient/donor selection.";
-        bindHeatTooltip(cell, `<b>No displayed value</b><br>Layer ${layer} · reverse token −${position.reverseIndex}<br><br>${unavailableReason}`);
-        cell.setAttribute("aria-label", `layer ${layer}, reverse token ${position.reverseIndex}, unprocessed`);
+            : `No ${weightPatchSelected() ? "weight" : "activation"}-patching value has been measured for this recipient/donor selection.`;
+        const coordinate = layerOnly
+          ? `Layer ${layer} · entire decoder block`
+          : `Layer ${layer} · reverse token −${position.reverseIndex}`;
+        bindHeatTooltip(cell, `<b>No displayed value</b><br>${coordinate}<br><br>${unavailableReason}`);
+        cell.setAttribute("aria-label", layerOnly
+          ? `layer ${layer}, entire decoder block, unprocessed`
+          : `layer ${layer}, reverse token ${position.reverseIndex}, unprocessed`);
         heatmap.append(cell);
         continue;
       }
@@ -898,8 +1134,16 @@ function renderPatching() {
       const baselineScope = patch.aggregate
         ? `mean of ${patch.functionCount} single code-choice probes`
         : "same single code-choice probe";
-      bindHeatTooltip(cell, `<b>Layer ${layer} · reverse token −${position.reverseIndex}</b>${averagingNote}<br>${escapeHtml(sourceCoordinate)}<br>${escapeHtml(recipientCoordinate)}<br><br>patched result: ${formatPercent(probability)}<br>unpatched recipient baseline: ${formatPercent(patch.recipient)}<br>unpatched donor/source baseline: ${formatPercent(patch.source)}<br>change from recipient: ${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(2)} pp<br><small>${baselineScope}</small>`);
-      cell.setAttribute("aria-label", `layer ${layer}, reverse token ${position.reverseIndex}, ${display}`);
+      const coordinate = layerOnly
+        ? `Layer ${layer} · entire decoder block`
+        : `Layer ${layer} · reverse token −${position.reverseIndex}`;
+      const interventionNote = tokenWeightPatchSelected()
+        ? "<br><small>donor LoRA contribution used only at this token; all other token contributions stay recipient</small>"
+        : "";
+      bindHeatTooltip(cell, `<b>${coordinate}</b>${averagingNote}<br>${escapeHtml(sourceCoordinate)}<br>${escapeHtml(recipientCoordinate)}${interventionNote}<br><br>patched result: ${formatPercent(probability)}<br>unpatched recipient baseline: ${formatPercent(patch.recipient)}<br>unpatched donor/source baseline: ${formatPercent(patch.source)}<br>change from recipient: ${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(2)} pp<br><small>${baselineScope}</small>`);
+      cell.setAttribute("aria-label", layerOnly
+        ? `layer ${layer}, entire decoder block, ${display}`
+        : `layer ${layer}, reverse token ${position.reverseIndex}, ${display}`);
       heatmap.append(cell);
     }
   });
@@ -912,13 +1156,15 @@ function renderPatching() {
   const aggregateStatus = patch.aggregate
     ? patch.processed ? ` · mean n=${patch.functionCount}` : ` · n=${patch.functionCount} functions`
     : "";
-  patchStatus.textContent = (patch.processed
-    ? `measured · ${interfaceLabel}`
-    : patchLoadError
-      ? `load failed · ${interfaceLabel}`
-      : patchLoading
-        ? `loading · ${interfaceLabel}`
-        : `unprocessed · ${interfaceLabel}`) + aggregateStatus;
+  patchStatus.textContent = (!patch.applicable
+    ? `not applicable · ${interfaceLabel}`
+    : patch.processed
+      ? `measured · ${interfaceLabel}`
+      : patchLoadError
+        ? `load failed · ${interfaceLabel}`
+        : patchLoading
+          ? `loading · ${interfaceLabel}`
+          : `unprocessed · ${interfaceLabel}`) + aggregateStatus;
   patchStatus.classList.toggle("measured", patch.measured);
   patchStatus.classList.toggle("loading", patchLoading);
   patchStatus.classList.toggle("load-error", Boolean(patchLoadError));
@@ -929,6 +1175,9 @@ function renderPatching() {
     legend.append(el("span", {}, "lower P(correct)"));
     legend.append(el("i"));
     legend.append(el("span", {}, "higher P(correct)"));
+  } else if (!patch.applicable) {
+    legend.append(el("i", { class: "unprocessed" }));
+    legend.append(el("span", {}, "not applicable · checkpoint weights do not depend on prompt name"));
   } else if (patchLoading) {
     legend.append(el("i", { class: "unprocessed" }));
     legend.append(el("span", {}, "loading measured values · no value shown yet"));
@@ -942,6 +1191,9 @@ function renderPatching() {
   document.getElementById("patch-interface-description").textContent = PATCH_INTERFACE_DESCRIPTIONS[state.patchInterface];
   document.getElementById("recipient-label").textContent = recipient === 0 ? "frozen base" : `step ${recipient}`;
   document.getElementById("donor-label").textContent = donor === 0 ? "frozen base" : `step ${donor}`;
+  document.getElementById("donor-kind-label").textContent = weightPatchSelected()
+    ? "weight source"
+    : "activation source";
   document.getElementById("donor-control").style.opacity = state.patchMode === "across_sample" ? ".38" : "1";
   const donorSlider = document.getElementById("donor-slider");
   donorSlider.disabled = state.patchMode === "across_sample";
@@ -956,35 +1208,61 @@ function renderPatching() {
   document.getElementById("recipient-question-label").textContent = "clean recipient question";
   if (state.patchMode === "checkpoint") {
     const questionCount = patch.aggregate ? `same ${patch.functionCount} clean questions` : "same clean question";
-    document.getElementById("source-question-label").textContent = donor < recipient
-      ? "earlier donor checkpoint"
-      : donor > recipient
-        ? "later donor checkpoint"
-        : "same donor checkpoint";
+    document.getElementById("source-question-label").textContent = weightPatchSelected()
+      ? "donor checkpoint weights"
+      : donor < recipient
+        ? "earlier donor checkpoint"
+        : donor > recipient
+          ? "later donor checkpoint"
+          : "same donor checkpoint";
     document.getElementById("source-question").textContent = `${questionCount} · ${donor === 0 ? "frozen base" : `step ${donor}`}`;
-    if (donor < recipient) {
+    if (tokenWeightPatchSelected() && donor !== recipient) {
+      document.getElementById("patch-explanation").textContent = "For each square, all seven learned donor LoRA projection contributions in that layer replace the recipient contributions only at the selected token. Every other token and layer keeps the recipient checkpoint’s computation. A selected token’s donor K/V contribution can affect later query positions through causal attention; that propagation is part of the intervention.";
+    } else if (allTokenWeightPatchSelected() && donor !== recipient) {
+      document.getElementById("patch-explanation").textContent = "For each column, all seven learned LoRA projection updates in that donor decoder block replace the recipient block’s updates for the entire prompt. Every other layer and the final readout remain from the recipient checkpoint. This is the separately retained all-token control.";
+    } else if (donor < recipient) {
       document.getElementById("patch-explanation").textContent = "Replacing a later recipient’s selected activation with an earlier donor state tests where newly acquired OOCR information is causally necessary. The remaining computation uses the recipient checkpoint’s weights.";
     } else if (donor > recipient) {
       document.getElementById("patch-explanation").textContent = "Injecting a later donor activation into an earlier recipient—including the frozen base—tests where the learned state is sufficient to boost the correct OOCR answer. The remaining computation uses the recipient checkpoint’s weights.";
     } else {
-      document.getElementById("patch-explanation").textContent = "Recipient and donor are the same checkpoint. This identity cell is not run or assigned a value because replacing an activation with itself should leave the answer unchanged.";
+      document.getElementById("patch-explanation").textContent = weightPatchSelected()
+        ? "Recipient and donor are the same checkpoint. This identity cell is not run or assigned a value because substituting a checkpoint’s learned update with itself cannot change the answer."
+        : "Recipient and donor are the same checkpoint. This identity cell is not run or assigned a value because replacing an activation with itself should leave the answer unchanged.";
     }
   } else {
     const dirty = patch.aggregate
       ? null
       : state.data.functions.find((item) => item.id === patch.sourceFunctionId);
-    document.getElementById("source-question-label").textContent = "dirty activation source";
+    document.getElementById("source-question-label").textContent = weightPatchSelected()
+      ? "no distinct weight source"
+      : "dirty activation source";
     document.getElementById("source-question").textContent = patch.aggregate
-      ? `Mean over all ${patch.functionCount} fixed-derangement dirty-name questions`
-      : `What is the definition of ${dirty.alias}?`;
-    document.getElementById("patch-explanation").textContent = "Patching dirty-name states into the clean prompt tests where the alternate identity suppresses the correct implementation. Cells show P(correct) directly, so a successful corruption moves downward.";
+      ? weightPatchSelected()
+        ? `Same checkpoint weights across all ${patch.functionCount} prompt pairs`
+        : `Mean over all ${patch.functionCount} fixed-derangement dirty-name questions`
+      : weightPatchSelected()
+        ? "Same checkpoint weights for dirty and clean prompts"
+        : `What is the definition of ${dirty.alias}?`;
+    document.getElementById("patch-explanation").textContent = weightPatchSelected()
+      ? "Changing only the function name changes activations, but it does not create a second set of checkpoint weights. Weight patching is therefore undefined for this source mode; select Checkpoint transfer to choose distinct donor and recipient weights."
+      : "Patching dirty-name states into the clean prompt tests where the alternate identity suppresses the correct implementation. Cells show P(correct) directly, so a successful corruption moves downward.";
   }
-  if (patchLoadError) {
+  if (!patch.applicable) {
+    document.getElementById("patch-explanation").textContent = `Changing only the function name changes activations, but it does not create a second set of checkpoint weights. Weight patching is therefore undefined for this source mode; select Checkpoint transfer to choose distinct donor and recipient weights. The purple ${allTokenWeightPatchSelected() ? "row" : "squares"} encode no result.`;
+  } else if (patchLoadError) {
     document.getElementById("patch-explanation").textContent = `A measured artifact exists for this selection, but its data file could not be loaded (${patchLoadError}). No fallback value is shown.`;
   } else if (patchLoading) {
     document.getElementById("patch-explanation").textContent = "A measured artifact exists for this selection and is loading. The temporary purple hatch encodes no probability or delta.";
   } else if (!patch.processed) {
-    document.getElementById("patch-explanation").textContent = "This selection has not been processed. The purple hatched squares are availability markers only: they encode no probability, delta, interpolation, or synthetic result.";
+    document.getElementById("patch-explanation").textContent = usesCheckpointDonor() && donor === recipient
+      ? weightPatchSelected()
+        ? `Recipient and donor are the same checkpoint. This exact identity intervention is not run or assigned a value. The purple ${allTokenWeightPatchSelected() ? "row" : "squares"} encode no result.`
+        : "Recipient and donor are the same checkpoint. This exact identity intervention is not run or assigned a value. The purple squares encode no result."
+      : allTokenWeightPatchSelected()
+        ? "This all-token layer-wise weight transfer has not been processed. The purple row is an availability marker only: it encodes no probability, delta, interpolation, or synthetic result."
+        : tokenWeightPatchSelected()
+          ? "This token × layer weight transfer has not been processed. The purple squares are availability markers only: they encode no probability, delta, interpolation, or synthetic result."
+        : "This selection has not been processed. The purple hatched squares are availability markers only: they encode no probability, delta, interpolation, or synthetic result.";
   } else {
     document.getElementById("patch-explanation").textContent += " Patch-grid baselines use one code-choice probe per function. The learning curve above averages 16 code-choice and 16 language-choice variants per function, so these probabilities are not expected to match exactly.";
   }
@@ -995,12 +1273,14 @@ function renderPatching() {
 }
 
 function renderAll() {
+  normalizeCurveAxisSelections();
   normalizeCurveFunctionSelection();
   const maxIndex = curveRows().length - 1;
   state.checkpointIndex = Math.min(state.checkpointIndex, maxIndex);
   normalizePatchCheckpointIndices();
-  document.getElementById("checkpoint-slider").value = sliderValueForStep(
-    state.data.checkpoints[state.checkpointIndex],
+  renderCheckpointTicks();
+  document.getElementById("checkpoint-slider").value = sliderValueForExamples(
+    curveRows()[state.checkpointIndex].examples_seen,
     state.curveTimeScale,
   );
   document.getElementById("recipient-slider").value = sliderValueForStep(
@@ -1023,22 +1303,22 @@ async function initialize() {
   setupStatus();
   buildModelControls();
   buildConditionControls();
+  buildCurveRankSelect();
+  buildCurveBatchSlider();
   buildCurveFunctionSelect();
   buildFunctionSelect();
   renderCheckpointTicks();
   const checkpoint = document.getElementById("checkpoint-slider");
   checkpoint.max = SLIDER_UNITS;
   checkpoint.addEventListener("input", () => {
-    state.checkpointIndex = nearestCheckpointIndex(
-      stepFromSlider(Number(checkpoint.value), state.curveTimeScale),
-      0,
-      curveRows().length - 1,
+    state.checkpointIndex = nearestCurveCheckpointIndex(
+      examplesFromSlider(Number(checkpoint.value), state.curveTimeScale),
     );
     renderCurve();
   });
   checkpoint.addEventListener("change", () => {
-    checkpoint.value = sliderValueForStep(
-      state.data.checkpoints[state.checkpointIndex],
+    checkpoint.value = sliderValueForExamples(
+      curveRows()[state.checkpointIndex].examples_seen,
       state.curveTimeScale,
     );
   });

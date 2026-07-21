@@ -135,16 +135,27 @@ def _validate_resume_config(root: Path, training: TrainingSpec) -> None:
         "model": training.run.model,
         "condition": training.run.condition.value,
         "seed": training.run.seed,
+        "run_effective_batch_size": training.run.effective_batch_size,
+        "run_lora_rank": training.run.lora_rank,
         "sample_count": training.sample_count,
         "effective_batch_size": training.effective_batch_size,
+        "lora_rank": training.lora_rank,
+        "lora_alpha": training.lora_alpha,
         "checkpoint_steps": list(training.checkpoint_steps),
     }
     actual = {
         "model": raw_run.get("model"),
         "condition": raw_run.get("condition"),
         "seed": raw_run.get("seed"),
+        "run_effective_batch_size": raw_run.get(
+            "effective_batch_size",
+            raw.get("effective_batch_size"),
+        ),
+        "run_lora_rank": raw_run.get("lora_rank", raw.get("lora_rank")),
         "sample_count": raw.get("sample_count"),
         "effective_batch_size": raw.get("effective_batch_size"),
+        "lora_rank": raw.get("lora_rank"),
+        "lora_alpha": raw.get("lora_alpha"),
         "checkpoint_steps": raw.get("checkpoint_steps"),
     }
     if actual != expected:
@@ -229,7 +240,13 @@ def run_training(
     if not t.cuda.is_available():
         raise RuntimeError("training requires CUDA")
     spec = get_model_spec(training.run.model, allow_provisional=allow_provisional_model)
-    micro = micro_batch_size or spec.default_micro_batch_size
+    if micro_batch_size is None:
+        micro = spec.recommended_lora_micro_batch_size(
+            training.effective_batch_size,
+            training.lora_rank,
+        )
+    else:
+        micro = micro_batch_size
     if micro <= 0 or training.effective_batch_size % micro != 0:
         raise ValueError("microbatch size must be a positive divisor of effective batch size")
     if stop_after_step is not None and (
@@ -288,16 +305,27 @@ def run_training(
         raise RuntimeError(
             f"LoRA trainable parameter count {actual_trainable:,} != expected {expected_trainable:,}"
         )
+    actual_total = sum(parameter.numel() for parameter in model.parameters())
+    if (
+        spec.base_parameter_count is not None
+        and actual_total - actual_trainable != spec.base_parameter_count
+    ):
+        raise RuntimeError(
+            f"base parameter count {actual_total - actual_trainable:,} != "
+            f"expected {spec.base_parameter_count:,}"
+        )
     write_json(
         output / "model_manifest.json",
         {
             "model": spec,
-            "parameter_count": sum(parameter.numel() for parameter in model.parameters()),
+            "parameter_count": actual_total,
             "trainable_parameter_count": actual_trainable,
             "dtype": "bfloat16",
             "lora_target_modules": LORA_TARGET_MODULES,
             "micro_batch_size": micro,
             "effective_batch_size": training.effective_batch_size,
+            "lora_rank": training.lora_rank,
+            "lora_alpha": training.lora_alpha,
         },
     )
     optimizer = t.optim.AdamW(
@@ -333,6 +361,7 @@ def run_training(
     model.train()
     cast(Any, model).config.use_cache = False
     stopped_early = False
+    metric_flush_steps = max(1, 640 // training.effective_batch_size)
     for start in range(
         initial_step * training.effective_batch_size,
         len(records),
@@ -378,9 +407,10 @@ def run_training(
             "elapsed_seconds": elapsed_before + time.monotonic() - started,
         }
         metrics.append(row)
-        if step == 1 or step % 10 == 0:
+        if step == 1 or step % metric_flush_steps == 0 or step in training.checkpoint_steps:
             print(
                 f"[train] {training.run.model}/{training.run.condition.value} "
+                f"effective_batch={training.effective_batch_size} "
                 f"step={step}/{training.final_step} loss={loss_value:.4f} "
                 f"peak={row['peak_allocated_gib']:.2f}GiB",
                 flush=True,

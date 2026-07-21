@@ -27,6 +27,7 @@ class ModelSpec:
     intermediate_size: int
     query_width: int
     key_value_width: int
+    base_parameter_count: int | None
     default_micro_batch_size: int
     provisional: bool = False
     provisional_reason: str | None = None
@@ -46,6 +47,8 @@ class ModelSpec:
             self.default_micro_batch_size,
         ) <= 0:
             raise ValueError("model dimensions and batch size must be positive")
+        if self.base_parameter_count is not None and self.base_parameter_count <= 0:
+            raise ValueError("base parameter count must be positive when known")
         if len(self.revision) != 40 or any(character not in "0123456789abcdef" for character in self.revision):
             raise ValueError("model revision must be a full lowercase commit SHA")
         if self.provisional != (self.provisional_reason is not None):
@@ -67,6 +70,42 @@ class ModelSpec:
             raise ValueError("bytes per parameter must be positive")
         return self.lora_parameter_count(rank) * bytes_per_parameter / 2**20
 
+    def recommended_lora_micro_batch_size(
+        self,
+        effective_batch_size: int,
+        rank: int,
+    ) -> int:
+        """Return a conservative rank-scaled physical microbatch heuristic."""
+
+        if effective_batch_size <= 0 or rank <= 0:
+            raise ValueError("batch size and LoRA rank must be positive")
+        candidate = min(
+            effective_batch_size,
+            self.default_micro_batch_size,
+            max(1, self.default_micro_batch_size * 32 // max(32, rank)),
+        )
+        while effective_batch_size % candidate != 0:
+            candidate -= 1
+        return candidate
+
+    def lora_training_state_lower_bound_gib(self, rank: int) -> float:
+        """BF16 base plus BF16 LoRA parameter, gradient, and two Adam moments."""
+
+        if self.base_parameter_count is None:
+            raise RuntimeError("base parameter count is unmeasured for this model slot")
+        return (
+            self.base_parameter_count * 2 + self.lora_parameter_count(rank) * 8
+        ) / 2**30
+
+    def full_training_state_lower_bound_gib(self, bytes_per_parameter: int = 16) -> float:
+        """Conservative full-Adam state before activations and framework buffers."""
+
+        if bytes_per_parameter <= 0:
+            raise ValueError("bytes per parameter must be positive")
+        if self.base_parameter_count is None:
+            raise RuntimeError("base parameter count is unmeasured for this model slot")
+        return self.base_parameter_count * bytes_per_parameter / 2**30
+
 
 MODEL_SPECS: dict[ModelKey, ModelSpec] = {
     ModelKey.OLMO3_7B: ModelSpec(
@@ -80,6 +119,7 @@ MODEL_SPECS: dict[ModelKey, ModelSpec] = {
         intermediate_size=11_008,
         query_width=4_096,
         key_value_width=4_096,
+        base_parameter_count=7_298_011_136,
         default_micro_batch_size=32,
     ),
     ModelKey.QWEN3_8B: ModelSpec(
@@ -93,6 +133,7 @@ MODEL_SPECS: dict[ModelKey, ModelSpec] = {
         intermediate_size=12_288,
         query_width=4_096,
         key_value_width=1_024,
+        base_parameter_count=8_190_735_360,
         default_micro_batch_size=16,
     ),
     ModelKey.GEMMA4_E4B: ModelSpec(
@@ -106,6 +147,7 @@ MODEL_SPECS: dict[ModelKey, ModelSpec] = {
         intermediate_size=10_240,
         query_width=2_048,
         key_value_width=512,
+        base_parameter_count=None,
         default_micro_batch_size=16,
         provisional=True,
         provisional_reason=(

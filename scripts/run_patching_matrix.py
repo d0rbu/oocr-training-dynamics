@@ -31,7 +31,10 @@ def parse_args() -> argparse.Namespace:
         "--interface",
         action="append",
         choices=[interface.value for interface in PatchingInterface],
-        help="repeat to select interfaces; defaults to resid_post only",
+        help=(
+            "repeat to select activation boundaries, token_weights, or global block_weights; "
+            "defaults to resid_post only"
+        ),
     )
     parser.add_argument(
         "--mode",
@@ -50,7 +53,7 @@ def parse_args() -> argparse.Namespace:
         "--shuffle-seed",
         type=int,
         help=(
-            "deterministically shuffle temporal cells with step-0/step-1500 borders first"
+            "deterministically shuffle temporal cells in endpoint, step-96, then remainder tiers"
         ),
     )
     parser.add_argument("--confirm-gpu-run", action="store_true")
@@ -86,7 +89,12 @@ def main() -> None:
         raise ValueError("recipient steps must be unique, increasing, registered checkpoints")
     run = RunKey(args.model, TrainingCondition(args.condition))
     for interface in interfaces:
-        if PatchingMode.ACROSS_SAMPLE in modes:
+        if interface.patches_weights and args.mode and PatchingMode.ACROSS_SAMPLE in modes:
+            raise ValueError(
+                f"{interface.value} cannot use across_sample because prompt variants at one "
+                "checkpoint have identical weights"
+            )
+        if PatchingMode.ACROSS_SAMPLE in modes and not interface.patches_weights:
             for recipient in recipients:
                 run_patching(
                     root,

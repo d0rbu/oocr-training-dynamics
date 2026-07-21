@@ -6,6 +6,7 @@ from oocr_training_dynamics.contracts import PatchingInterface, PatchingMode
 from oocr_training_dynamics.data import FUNCTION_BY_ID, build_reflection_records
 from oocr_training_dynamics.patching import (
     PATCH_POSITION,
+    WEIGHT_PATCH_SCOPE,
     PatchCell,
     PatchingPlan,
     TokenPositionPair,
@@ -56,6 +57,48 @@ def test_sample_plan_uses_the_same_checkpoint() -> None:
     PatchingPlan(PatchingMode.ACROSS_SAMPLE, recipient_step=64, donor_steps=(64,))
     with pytest.raises(ValueError, match="recipient checkpoint"):
         PatchingPlan(PatchingMode.ACROSS_SAMPLE, recipient_step=64, donor_steps=(32,))
+
+
+def test_block_weight_plan_is_layer_only_and_requires_checkpoint_transfer() -> None:
+    plan = PatchingPlan(
+        PatchingMode.ACROSS_TIME,
+        recipient_step=64,
+        donor_steps=(0,),
+        interface=PatchingInterface.BLOCK_WEIGHTS,
+    )
+    assert plan.patch_position == WEIGHT_PATCH_SCOPE
+    with pytest.raises(ValueError, match="distinct checkpoints"):
+        PatchingPlan(
+            PatchingMode.ACROSS_SAMPLE,
+            recipient_step=64,
+            donor_steps=(64,),
+            interface=PatchingInterface.BLOCK_WEIGHTS,
+        )
+
+
+def test_token_weight_plan_uses_token_axis_and_requires_checkpoint_transfer() -> None:
+    plan = PatchingPlan(
+        PatchingMode.ACROSS_TIME,
+        recipient_step=64,
+        donor_steps=(0,),
+        interface=PatchingInterface.TOKEN_WEIGHTS,
+    )
+    assert plan.patch_position == PATCH_POSITION
+    with pytest.raises(ValueError, match="distinct checkpoints"):
+        PatchingPlan(
+            PatchingMode.ACROSS_SAMPLE,
+            recipient_step=64,
+            donor_steps=(64,),
+            interface=PatchingInterface.TOKEN_WEIGHTS,
+        )
+    with pytest.raises(ValueError, match="entire decoder block"):
+        PatchingPlan(
+            PatchingMode.ACROSS_TIME,
+            recipient_step=64,
+            donor_steps=(0,),
+            patch_position=PATCH_POSITION,
+            interface=PatchingInterface.BLOCK_WEIGHTS,
+        )
 
 
 def test_patch_cell_and_relative_depth_validate_grid_coordinates() -> None:

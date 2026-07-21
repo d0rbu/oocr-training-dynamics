@@ -5,15 +5,21 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from typing import cast
 
 from oocr_training_dynamics.contracts import (
+    BATCH_ABLATION_SIZES,
     CHECKPOINT_STEPS,
+    DEFAULT_LORA_RANK,
+    EFFECTIVE_BATCH_SIZE,
+    LORA_RANKS,
     PatchingInterface,
     PatchingMode,
     TrainingCondition,
 )
 from oocr_training_dynamics.data import FUNCTIONS
 from oocr_training_dynamics.models import ModelKey
+from scripts.export_site import _compact_patch_record
 
 
 def test_committed_site_payload_discloses_measurement_status() -> None:
@@ -66,21 +72,11 @@ def test_site_has_every_preregistered_preview_curve() -> None:
             }
             measured_runs += int(source.startswith("measured_"))
             if source.startswith("measured_"):
-                assert set(function_curves) == {
-                    function.function_id for function in FUNCTIONS
-                }
+                assert set(function_curves) == {function.function_id for function in FUNCTIONS}
                 for function_rows in function_curves.values():
-                    assert [row["step"] for row in function_rows] == [
-                        row["step"] for row in rows
-                    ]
-                    assert all(
-                        0.0 <= row["correct_probability"] <= 1.0
-                        for row in function_rows
-                    )
-                    assert all(
-                        row["freeform_accuracy"] in {0.0, 1.0}
-                        for row in function_rows
-                    )
+                    assert [row["step"] for row in function_rows] == [row["step"] for row in rows]
+                    assert all(0.0 <= row["correct_probability"] <= 1.0 for row in function_rows)
+                    assert all(row["freeform_accuracy"] in {0.0, 1.0} for row in function_rows)
                 for row_index, aggregate_row in enumerate(rows):
                     for metric in (
                         "correct_probability",
@@ -103,6 +99,59 @@ def test_site_has_every_preregistered_preview_curve() -> None:
             assert all(0.0 <= row["correct_probability"] <= 1.0 for row in rows)
             assert all(0.0 <= row["planted_probability"] <= 1.0 for row in rows)
     assert measured_runs == payload["real_runs"]
+
+
+def test_site_batch_ablation_has_no_synthetic_nonbaseline_curves() -> None:
+    root = Path(__file__).resolve().parents[1]
+    payload = json.loads((root / "site" / "data" / "experiment.json").read_text())
+    ablation = payload["batch_ablation"]
+
+    assert ablation["effective_batch_sizes"] == [
+        EFFECTIVE_BATCH_SIZE,
+        *BATCH_ABLATION_SIZES,
+    ]
+    measured = 0
+    for model in ModelKey:
+        for condition in TrainingCondition:
+            curves = ablation["curves"][model.value][condition.value]
+            sources = ablation["curve_sources"][model.value][condition.value]
+            functions = ablation["function_curves"][model.value][condition.value]
+            assert "64" in curves
+            assert set(curves) == set(sources) == set(functions)
+            for batch_key, rows in curves.items():
+                batch_size = int(batch_key)
+                assert all(row["examples_seen"] == row["step"] * batch_size for row in rows)
+                if batch_size != EFFECTIVE_BATCH_SIZE:
+                    assert sources[batch_key].startswith("measured_")
+                    measured += 1
+    assert measured == ablation["measured_runs"]
+
+
+def test_site_rank_ablation_has_no_synthetic_nonbaseline_curves() -> None:
+    root = Path(__file__).resolve().parents[1]
+    payload = json.loads((root / "site" / "data" / "experiment.json").read_text())
+    ablation = payload["rank_ablation"]
+
+    assert ablation["lora_ranks"] == [*LORA_RANKS, "full"]
+    assert ablation["effective_batch_size"] == EFFECTIVE_BATCH_SIZE
+    assert ablation["full_finetuning_status"] == "planned_requires_offload_backend"
+    measured = 0
+    for model in ModelKey:
+        for condition in TrainingCondition:
+            curves = ablation["curves"][model.value][condition.value]
+            sources = ablation["curve_sources"][model.value][condition.value]
+            functions = ablation["function_curves"][model.value][condition.value]
+            assert str(DEFAULT_LORA_RANK) in curves
+            assert set(curves) == set(sources) == set(functions)
+            for rank_key, rows in curves.items():
+                assert all(
+                    row["examples_seen"] == row["step"] * EFFECTIVE_BATCH_SIZE for row in rows
+                )
+                if rank_key != str(DEFAULT_LORA_RANK):
+                    assert condition is TrainingCondition.CORRECT
+                    assert sources[rank_key].startswith("measured_")
+                    measured += 1
+    assert measured == ablation["measured_runs"]
 
 
 def test_site_token_axes_are_exact_model_tokenizer_coordinates() -> None:
@@ -140,9 +189,7 @@ def test_site_token_axes_are_exact_model_tokenizer_coordinates() -> None:
                 recipient_indices = [row["recipient_index"] for row in positions]
                 assert positions[0]["source_index"] == axis["source_token_count"] - 1
                 assert positions[0]["recipient_index"] == axis["recipient_token_count"] - 1
-                assert source_indices == list(
-                    range(source_indices[0], source_indices[-1] - 1, -1)
-                )
+                assert source_indices == list(range(source_indices[0], source_indices[-1] - 1, -1))
                 assert recipient_indices == list(
                     range(recipient_indices[0], recipient_indices[-1] - 1, -1)
                 )
@@ -178,6 +225,19 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert 'const ALL_FUNCTIONS_ID = "__all__"' in javascript
     assert "Average over all" in javascript
     assert 'id="curve-function-select"' in html
+    assert 'id="curve-batch-slider"' in html
+    assert 'id="curve-batch-value"' in html
+    assert 'id="curve-batch-ticks"' in html
+    assert 'id="curve-rank-select"' in html
+    assert "function buildCurveBatchSlider()" in javascript
+    assert "function availableBatchSizes()" in javascript
+    assert 'href="styles.css?v=20260721a"' in html
+    assert 'src="app.js?v=20260721a"' in html
+    assert 'const DATA_URL = "data/experiment.json?v=20260721a"' in javascript
+    assert "function buildCurveRankSelect()" in javascript
+    assert "function normalizeCurveAxisSelections()" in javascript
+    assert "function scaledExamplesFraction(" in javascript
+    assert "function nearestCurveCheckpointIndex(" in javascript
     assert "function buildCurveFunctionSelect()" in javascript
     assert "function normalizeCurveFunctionSelection()" in javascript
     assert "function resolvedArtifactMode()" in javascript
@@ -198,6 +258,13 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert "averages 16 code-choice and 16 language-choice variants" in javascript
     assert 'id="patch-prefetch-status"' in html
     assert 'id="patch-legend"' in html
+    assert "function weightPatchSelected()" in javascript
+    assert "function tokenWeightPatchSelected()" in javascript
+    assert "function allTokenWeightPatchSelected()" in javascript
+    assert "function patchSelectionApplicable()" in javascript
+    assert "entire decoder block" in javascript
+    assert 'value="token_weights"' in html
+    assert "Weights · selected token" in html
 
 
 def test_measured_site_patches_use_compact_complete_grids() -> None:
@@ -229,12 +296,91 @@ def test_measured_site_patches_use_compact_complete_grids() -> None:
         assert set(by_function) == {function.function_id for function in FUNCTIONS}
         for record in by_function.values():
             assert "cells" not in record
-            assert len(record["probabilities"]) == len(record["token_positions"])
+            if record.get("axis_kind") == "layer_only":
+                assert "token_positions" not in record
+                assert len(record["probabilities"]) == 1
+                assert record["weight_scope"]["scope"] == "entire_decoder_block"
+            else:
+                assert record.get("axis_kind", "token_layer") == "token_layer"
+                assert len(record["probabilities"]) == len(record["token_positions"])
+                if "weight_scope" in record:
+                    assert record["weight_scope"]["scope"] == "selected_token_decoder_block"
             layer_count = len(record["probabilities"][0])
             assert layer_count > 0
             assert all(len(row) == layer_count for row in record["probabilities"])
-            assert all(
-                0.0 <= value <= 1.0
-                for row in record["probabilities"]
-                for value in row
-            )
+            assert all(0.0 <= value <= 1.0 for row in record["probabilities"] for value in row)
+
+
+def test_weight_patch_compaction_preserves_a_real_layer_only_axis() -> None:
+    record: dict[str, object] = {
+        "function_id": "identity",
+        "source_function_id": "identity",
+        "recipient_function_id": "identity",
+        "choice_function_ids": ["identity", "add", "sub", "mul", "mod"],
+        "correct_choice_index": 0,
+        "source_probabilities": [0.2] * 5,
+        "recipient_probabilities": [0.2] * 5,
+        "site_probability": "correct",
+        "axis_kind": "layer_only",
+        "source_rendered_prompt": "clean prompt",
+        "recipient_rendered_prompt": "clean prompt",
+        "weight_scope": {
+            "scope": "entire_decoder_block",
+            "sequence_scope": "all prompt positions",
+        },
+        "cells": [
+            {"layer": 0, "probability": 0.25, "delta_from_recipient": 0.05},
+            {"layer": 1, "probability": 0.4, "delta_from_recipient": 0.2},
+        ],
+    }
+
+    compact = _compact_patch_record(record, context="weight fixture")
+
+    assert compact["axis_kind"] == "layer_only"
+    assert compact["probabilities"] == [[0.25, 0.4]]
+    assert "token_positions" not in compact
+    weight_scope = compact["weight_scope"]
+    assert isinstance(weight_scope, dict)
+    assert cast(dict[str, object], weight_scope)["scope"] == "entire_decoder_block"
+
+
+def test_token_weight_compaction_preserves_token_axis_and_weight_scope() -> None:
+    record: dict[str, object] = {
+        "function_id": "identity",
+        "source_function_id": "identity",
+        "recipient_function_id": "identity",
+        "choice_function_ids": ["identity", "add", "sub", "mul", "mod"],
+        "correct_choice_index": 0,
+        "source_probabilities": [0.2] * 5,
+        "recipient_probabilities": [0.2] * 5,
+        "site_probability": "correct",
+        "axis_kind": "token_layer",
+        "token_axis": {"positions": 1},
+        "weight_scope": {
+            "scope": "selected_token_decoder_block",
+            "sequence_scope": "one selected prompt token per intervention",
+        },
+        "cells": [
+            {
+                "layer": layer,
+                "token_reverse_index": 0,
+                "source_token_index": 3,
+                "recipient_token_index": 3,
+                "source_token_id": 17,
+                "recipient_token_id": 17,
+                "source_token": "token",
+                "recipient_token": "token",
+                "probability": probability,
+                "delta_from_recipient": probability - 0.2,
+            }
+            for layer, probability in enumerate((0.25, 0.4))
+        ],
+    }
+
+    compact = _compact_patch_record(record, context="token weight fixture")
+
+    assert compact["axis_kind"] == "token_layer"
+    assert compact["probabilities"] == [[0.25, 0.4]]
+    assert len(cast(list[object], compact["token_positions"])) == 1
+    weight_scope = cast(dict[str, object], compact["weight_scope"])
+    assert weight_scope["scope"] == "selected_token_decoder_block"

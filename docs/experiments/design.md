@@ -86,6 +86,41 @@ decoder layer. Expected trainable parameter counts are checked before training:
 AdamW uses learning rate `2e-4`, betas `(0.9, 0.999)`, epsilon `1e-8`, no weight decay, and a
 global gradient-norm cap of 1.0 after complete effective-batch accumulation.
 
+### Effective-batch ablation
+
+The dated 2026-07-18 exploratory sweep repeats only the correct condition for confirmed OLMo and
+Qwen at effective batches 32, 16, 8, 4, 2, and 1. Batch 64 remains the original baseline. Run
+identities and artifact directories include the nonbaseline effective batch, so no adapter,
+resume state, evaluation, or metric file can overwrite the original experiment.
+
+All sizes process the same 96,000 records in the same seeded order for one epoch. At batch `B`,
+the final optimizer step is `96,000 / B`. Checkpoints align to the baseline's fixed examples-seen
+coordinates; a separate step-1 checkpoint captures the first update for each smaller batch.
+Smaller batches use correspondingly smaller physical microbatches and still clip once per complete
+effective batch. Learning rate and all AdamW settings stay fixed, so the ablation intentionally
+measures the total consequence of batch size rather than a pure gradient-noise effect.
+
+### LoRA-rank ablation
+
+The dated 2026-07-18 rank sweep repeats the correct-condition, effective-batch-64 OLMo and Qwen
+runs at powers of two from rank 1 through 1024. Rank 32 reuses the original trajectory. Every rank
+targets the same seven projection families, and `alpha = 2 × rank` keeps the LoRA multiplier fixed
+at two. Corpus, ordering, one-epoch exposure, optimizer settings, gradient clipping, evaluation,
+and examples-seen checkpoints remain unchanged. Artifacts outside the baseline live under
+`lora_rank_<R>/`.
+
+The default physical microbatch is rank-aware. Above rank 32 it halves for each rank doubling,
+subject to being a positive divisor of effective batch 64. This increases gradient accumulation
+without changing the mathematical target-token mean, clip timing, or optimizer-step count.
+Gradient accumulation cannot reduce adapter parameters, gradients, or Adam moments; rank 256 is
+therefore a capacity-probe boundary, while ranks 512 and 1024 exceed the 22 GiB native-state safety
+budget before activations for at least one model and require explicit override or an offload path.
+
+Full finetuning is a separate endpoint, not a LoRA rank. Native AdamW state is over 100 GiB for
+both confirmed models, so its reserved artifact namespace cannot be launched by the LoRA runner.
+A future ZeRO-3 CPU/NVMe-offload implementation must prove target-loss, effective-batch, clip, and
+checkpoint-evaluation parity before this endpoint can produce a measured curve.
+
 ## Checkpoints
 
 Step 0 is the frozen base. Seventeen adapters are saved on a dense log-like early schedule and a
@@ -114,6 +149,17 @@ requiring literal string equality.
 
 Training examples and reflection prompts are generated independently and serve different tasks;
 no reflection answer is placed into the I/O corpus.
+
+## Exploratory causal interfaces
+
+Activation patching transplants a selected hidden vector at one layer and token. The separately
+dated global `block_weights` intervention instead replaces all learned LoRA factors in one decoder
+block between two checkpoints for the full clean-prompt forward pass. Since all non-LoRA block
+parameters are frozen and shared, this is an exact layer-wise learned-weight substitution and is
+displayed on a layer-only axis. The later `token_weights` intervention replaces the donor-versus-
+recipient LoRA projection contribution only at one selected token in one layer and therefore uses
+the real token × layer axis. Both are checkpoint-transfer only; neither fabricates token values for
+the global result.
 
 ## What is and is not controlled
 

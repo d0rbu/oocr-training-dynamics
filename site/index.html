@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="Interactive preregistration and results explorer for OOCR training dynamics and activation patching." />
+    <meta name="description" content="Interactive results explorer for OOCR training dynamics, activation patching, and decoder-block weight patching." />
     <title>OOCR Atlas · training dynamics</title>
-    <link rel="stylesheet" href="styles.css?v=20260716d" />
-    <script src="app.js?v=20260716d" defer></script>
+    <link rel="stylesheet" href="styles.css?v=20260721a" />
+    <script src="app.js?v=20260721a" defer></script>
   </head>
   <body>
     <div class="grain" aria-hidden="true"></div>
@@ -81,6 +81,31 @@
               <div id="condition-controls" class="segmented vertical"></div>
             </fieldset>
             <fieldset>
+              <legend>Effective batch</legend>
+              <div class="batch-slider-shell">
+                <div class="batch-slider-readout">
+                  <span>available runs</span>
+                  <output id="curve-batch-value" for="curve-batch-slider">64</output>
+                </div>
+                <input
+                  id="curve-batch-slider"
+                  type="range"
+                  min="0"
+                  max="0"
+                  value="0"
+                  step="1"
+                  aria-label="Effective training batch size"
+                />
+                <div id="curve-batch-ticks" class="batch-slider-ticks"></div>
+              </div>
+              <small id="curve-batch-note" class="control-note">Smaller-batch runs are unprocessed.</small>
+            </fieldset>
+            <fieldset>
+              <legend>LoRA rank</legend>
+              <select id="curve-rank-select"></select>
+              <small id="curve-rank-note" class="control-note">Rank sweep is unprocessed.</small>
+            </fieldset>
+            <fieldset>
               <legend>Function probe</legend>
               <select id="curve-function-select"></select>
               <small id="curve-function-note" class="control-note">Average over all registered functions.</small>
@@ -141,11 +166,11 @@
             <h2>A layer-by-layer movie of the answer</h2>
           </div>
           <p>
-            Each column patches one decoder layer at the selected residual, attention, or MLP
-            boundary; each row patches a prompt token reverse-indexed from the true end of the
-            model-rendered generation prompt. Move through donor time to watch learned causal
-            influence appear across depth and position. Recipient and donor checkpoints move
-            independently; their ordering determines the transfer direction.
+            Each column intervenes on one decoder layer at a residual, attention, MLP, or learned
+            weight boundary. Rows are prompt tokens reverse-indexed from the true end of the
+            model-rendered prompt, including the selected-token weight intervention. The separate
+            all-token weight control uses one honest global row. Recipient and donor checkpoints
+            move independently, and their ordering determines the transfer direction.
           </p>
         </div>
 
@@ -170,6 +195,8 @@
                 <option value="attention_output">Attention output</option>
                 <option value="mlp_input">MLP input</option>
                 <option value="mlp_output">MLP output</option>
+                <option value="token_weights">Weights · selected token</option>
+                <option value="block_weights">Weights · all tokens</option>
               </select>
             </label>
             <label>
@@ -200,7 +227,7 @@
               <input id="recipient-slider" type="range" min="0" max="10000" value="10000" step="1" />
             </label>
             <label id="donor-control">
-              <span><b>Donor step</b> · activation source</span>
+              <span><b>Donor step</b> · <span id="donor-kind-label">activation source</span></span>
               <strong id="donor-label">frozen base</strong>
               <input id="donor-slider" type="range" min="0" max="10000" value="0" step="1" />
             </label>

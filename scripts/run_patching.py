@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one gated across-sample or across-time patching grid."""
+"""Run one gated activation- or decoder-block-weight patching grid."""
 
 from __future__ import annotations
 
@@ -31,6 +31,10 @@ def parse_args() -> argparse.Namespace:
         "--interface",
         default=PatchingInterface.RESID_POST.value,
         choices=[interface.value for interface in PatchingInterface],
+        help=(
+            "activation boundary, token-local token_weights intervention, or "
+            "global all-token block_weights intervention"
+        ),
     )
     parser.add_argument("--recipient-step", required=True, type=int)
     parser.add_argument("--donor-step", required=True, type=int, action="append")

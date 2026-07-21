@@ -39,6 +39,49 @@ captured before those post-branch norms. The site describes this distinction bes
 At input boundaries only the branch input is replaced; the recipient residual skip remains
 untouched. At output boundaries only the branch output is replaced before the recipient continues.
 
+## Exploratory decoder-block weight patching
+
+There are two deliberately separate weight interfaces. The earlier `block_weights` selector is a
+global all-token control. For each displayed layer, all learned LoRA A/B factors for that decoder
+block's Q/K/V/O and gate/up/down projections are copied from the donor checkpoint into the
+recipient checkpoint for one complete forward pass. The recipient factors are restored exactly
+afterward. Because the frozen base matrices and normalization parameters are identical across
+checkpoints, this swaps the donor's complete learned effective-weight update for that block while
+leaving every other block and the final readout at the recipient checkpoint.
+
+The intervention applies at every sequence position, so it has one honest **all tokens** row rather
+than duplicating one layer result over a fake token axis. It is defined only for checkpoint
+transfer. Dirty-name and clean-name prompts at one checkpoint use exactly the same weights, so
+`Different function name` is labeled not applicable for this selector and stores no values.
+
+The frozen step-0 checkpoint is represented as the same rank-32 adapter parameterization with all
+LoRA A/B tensors set exactly to zero. Copying a trained donor block into step 0 therefore inserts
+that block's learned update; copying step 0 into a trained recipient removes that block's learned
+update. No weight interpolation or cross-family transplantation is performed.
+
+The later `token_weights` selector is the requested token-local intervention. A parameter tensor
+itself has no token axis, so mutating it would necessarily affect every token. Instead, for one
+selected `(token, layer)` cell and each targeted projection `m`, the projection output is changed
+from the recipient LoRA contribution to the donor LoRA contribution on the same current input:
+
+```text
+y[m, t] <- y_recipient[m, t]
+           + (DeltaW_donor[m] - DeltaW_recipient[m]) h[m, t]
+```
+
+All nonselected output positions are byte-for-byte untouched by that hook. The correction is
+applied to all seven target projections in the selected decoder block: Q/K/V/O and gate/up/down.
+Later projections receive the causally current hybrid forward input, including any effect already
+created by earlier patched projections in that block. In particular, donor K/V contributions at
+the selected token may change attention at later query positions. This is expected causal
+propagation, not evidence that later tokens were directly weight-patched.
+
+`token_weights` therefore uses the same real reverse-token × layer axis as activation patching and
+writes to `patching/sequence_end/token_weights/`. The existing global results remain under
+`patching/layer_only/block_weights/` and are never relabeled as token-local evidence. Both weight
+interfaces are checkpoint-transfer only because dirty and clean prompts at one checkpoint have
+the same learned parameters.
+
 ## Across-sample intervention
 
 For a clean reflection record such as:
@@ -127,6 +170,11 @@ Each artifact identifies model/run/interface/plan/donor step and stores, per fun
 - the correct-option probability for every `(reverse token, layer)` cell;
 - raw delta from recipient.
 
+Global `block_weights` artifacts instead store one probability per decoder layer, the clean source
+and recipient baselines, the exact rendered prompt, and an explicit `layer_only` axis marker. They
+do not store or fabricate token coordinates. Token-local `token_weights` artifacts store a complete
+probability for every real `(reverse token, layer)` cell plus an explicit weight-scope record.
+
 The site maps layer depth to x and reverse prompt-token position to y, and lets recipient/donor
 checkpoint change. Both modes display correct-option probability, so a successful dirty-source
 corruption appears as a decrease. A selected view is labeled `measured intervention` only when
@@ -176,6 +224,37 @@ change the relative order of any unmeasured cells. This supersedes the earlier u
 shuffle for subsequent cells; it does not invalidate the 51 already measured cells. The
 same-checkpoint diagonal remains analytic and unstored.
 
+### Checkpoint-priority full-atlas ordering — 2026-07-18
+
+Before the next resume, the user replaced the two-tier border rule with four ordered tiers:
+
+1. every remaining off-diagonal cell whose recipient or donor is step 0;
+2. then every remaining cell whose recipient or donor is step 128;
+3. then every remaining cell whose recipient or donor is step 1500;
+4. then every other remaining cell.
+
+A cell that touches more than one priority checkpoint belongs to the earliest matching tier. The
+seeded generator shuffles within each tier, never across tiers. As before, the full deterministic
+order is constructed before existing artifacts are removed, so resume preserves the relative
+order of unfinished cells. This amendment changes only computation order, not any intervention or
+metric, and supersedes the 2026-07-16 border-first ordering for future work.
+
+### Endpoint-and-step-96 full-atlas ordering — 2026-07-20
+
+Before the first decoder-block weight atlas run, the user replaced the preceding four-tier order
+with three ordered tiers:
+
+1. every off-diagonal cell whose recipient or donor is either endpoint checkpoint, step 0 or
+   step 1500;
+2. then every remaining cell whose recipient or donor is step 96;
+3. then every other remaining cell.
+
+The endpoint checkpoints deliberately share one tier and are shuffled together. The seeded
+generator remains deterministic within each tier, and existing artifacts are filtered only after
+the complete order is constructed. This amendment changes only computation order, applies to the
+new block-weight atlas and subsequent resumptions of other temporal interfaces, and supersedes
+the 2026-07-18 ordering for future work.
+
 ## Interpretation cautions
 
 - A probability delta is causal for this specific intervention, but it does not prove that the
@@ -184,6 +263,9 @@ same-checkpoint diagonal remains analytic and unstored.
 - Branch-input patches leave the recipient skip path intact; branch-output and `resid_post`
   patches intervene on different computational objects and should not be compared as if their
   magnitudes shared one scale.
+- A global `block_weights` patch changes every token's computation through one layer. A
+  `token_weights` patch directly changes one token's seven learned projection contributions, but
+  the selected token's K/V contribution may still causally affect later positions.
 - Raw probability deltas depend on the recipient's baseline confidence and must be read alongside
   the absolute probability view.
 - A donor-state patch may introduce off-manifold combinations with recipient weights.

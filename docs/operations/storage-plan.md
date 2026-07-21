@@ -19,6 +19,39 @@ The resulting conservative retained-artifact budget is **30.71 GiB**, excluding 
 These are architecture-derived estimates, not measured filesystem sizes. The step-1 probe must
 record real adapter and resume-state sizes before extrapolating the complete matrix.
 
+## Effective-batch ablation budget — 2026-07-18
+
+The planned correct-condition sweep adds six nonbaseline runs for each confirmed OLMo and Qwen
+family. Example-aligned checkpointing plus the extra first-update checkpoint retains 18 trained
+adapters per run: 216 adapters total. The architecture-derived payload is **33.64 GiB**. Applying
+the same conservative 35% allowance for one rolling optimizer/RNG state per run, metadata,
+evaluation, and atomic-write headroom gives **45.42 GiB** beyond the original experiment.
+
+This is a plan, not measured disk consumption. Run `scripts/plan_batch_size_ablation.py`, inspect
+live free space, preserve the 8 GiB reserve, and process one model family at a time. The sweep
+never retains multiple optimizer snapshots per run; each checkpoint atomically replaces the one
+rolling state.
+
+## LoRA-rank ablation budget — 2026-07-18
+
+Across two confirmed models, eleven ranks, and 17 trained checkpoints, the complete selectable
+rank axis contains 374 adapter checkpoints including the 34 already measured rank-32 baselines.
+The architecture-derived BF16 adapter payload is **338.77 GiB**. Excluding those existing
+baselines, the incremental payload is **333.48 GiB**. Applying the same 35% allowance for rolling
+optimizer state, metadata, evaluations, and atomic writes yields **457.34 GiB total** or
+**450.19 GiB incremental**.
+
+This large estimate is driven by ranks 512 and 1024; it is not authorization to fill the disk.
+Before each rank, rerun `scripts/plan_lora_rank_ablation.py`, measure live artifact/cache usage,
+and retain the 8 GiB hard reserve. Process ranks from low to high and one model at a time. A
+capacity failure must not leave a partial adapter mislabeled as a behavioral curve.
+
+Retaining 17 BF16 full-model snapshots would add **231.09 GiB** for OLMo and **259.36 GiB** for
+Qwen before optimizer state or atomic-write headroom. That cannot be combined casually with the
+complete adapter sweep. The planned full-finetuning endpoint therefore evaluates all registered
+times online and will retain only a separately preregistered sparse resume set once its offload
+backend exists. No full-model storage is currently allocated or claimed.
+
 ## Base-model cache
 
 Pinned BF16 base weights are external Hugging Face cache entries and can each be roughly
@@ -56,6 +89,7 @@ Retain:
 - adapter SHA-256 index, config, dataset/model manifests, metrics, and completion marker;
 - one latest rolling optimizer/RNG state per run until the whole matrix and analysis are complete;
 - all compact evaluation and patch JSON;
+- global `block_weights` and token-local `token_weights` artifacts in their distinct namespaces;
 - compact site payload and dated results report.
 
 Do not retain:
@@ -63,6 +97,7 @@ Do not retain:
 - a full optimizer snapshot at every adapter checkpoint;
 - duplicate base weights inside run directories;
 - raw hidden-state banks after patch probabilities have been validated and serialized;
+- temporary CPU donor LoRA banks after weight-patch probabilities have been serialized;
 - unlabeled temporary previews mistaken for measured data.
 
 Any later cleanup is a separate, explicit operation. Before deletion, verify completion markers,

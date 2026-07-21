@@ -8,6 +8,14 @@ causally affect the answer.
 > and Qwen 3 8B. OLMo `resid_post` across-name and frozen-base-to-step-1024 patch grids are also
 > measured. Missing learning curves remain explicitly synthetic; missing patch selections are
 > labeled unprocessed and encode no values.
+>
+> **Planned amendment — 2026-07-18:** an effective-batch ablation is prepared, but no ablation GPU
+> run has started. It repeats the correct-condition OLMo and Qwen runs at batches 32, 16, 8, 4,
+> 2, and 1, with checkpoints aligned by examples seen.
+>
+> **Planned amendment — 2026-07-18:** a separate LoRA-rank axis is also prepared at ranks 1, 2,
+> 4, …, 1024, reusing rank 32 and reserving a true full-finetuning endpoint. No rank-ablation GPU
+> run has started; full finetuning remains blocked on a validated ZeRO-3 CPU/NVMe-offload path.
 
 ## Experiment at a glance
 
@@ -48,6 +56,18 @@ That is 17 trained adapters per run and 153 adapters across the complete 3 x 3 m
 estimated adapter payload is 22.75 GiB; the conservative adapter-plus-rolling-resume budget is
 30.71 GiB. See [the storage plan](docs/operations/storage-plan.md) before any launch.
 
+The 2026-07-18 batch-size amendment keeps the baseline above intact and adds isolated artifact
+namespaces for smaller effective batches. It keeps the corpus order, one-epoch exposure, optimizer
+settings, clipping rule, and evaluation prompts fixed. Because a smaller batch makes more AdamW
+updates per example at the same learning rate, this is an end-to-end batch-size intervention—not
+a claim to isolate gradient variance alone.
+
+The rank amendment is another one-factor-at-a-time sweep: effective batch stays 64, `alpha/r`
+stays 2, and physical microbatch shrinks as rank grows. The website rank selector never invents
+missing trajectories. Ranks 512/1024 cross the native optimizer-state safety budget, and full
+finetuning needs separate CPU/NVMe offload; these entries remain visibly unprocessed until a real
+run succeeds.
+
 ## Causal analysis
 
 The primary activation intervention patches `resid_post` one layer and tokenizer position at a
@@ -62,6 +82,13 @@ An exploratory selector also patches the exact input or output of each attention
 These branch views were added after the first residual grids and are not retroactively treated as
 preregistered confirmation.
 
+Two exploratory selectors patch learned weight updates across checkpoints. `token_weights` uses
+the donor LoRA contribution for all seven target projections at one selected token and layer, so
+the site shows a real token × layer heatmap. The separately retained `block_weights` control swaps
+the full block update for every token and therefore has one honest all-token row. Both are
+checkpoint-transfer only: changing a function name does not create different weights within one
+checkpoint.
+
 Raw activations are patched only within one pinned model family. Cross-family hidden bases are
 not assumed to be aligned. The site renders layer by reverse-token-position heatmaps and lets the
 recipient step, donor step, patch boundary, and function probe move wherever measured artifacts
@@ -73,6 +100,8 @@ reverse-token support.
 ```bash
 uv sync
 CUDA_VISIBLE_DEVICES='' uv run python scripts/plan_experiments.py
+CUDA_VISIBLE_DEVICES='' uv run python scripts/plan_batch_size_ablation.py
+CUDA_VISIBLE_DEVICES='' uv run python scripts/plan_lora_rank_ablation.py
 CUDA_VISIBLE_DEVICES='' uv run python scripts/validate_tokenizers.py
 CUDA_VISIBLE_DEVICES='' uv run python scripts/export_site.py
 CUDA_VISIBLE_DEVICES='' uv run pre-commit run --all-files

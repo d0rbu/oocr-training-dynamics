@@ -83,6 +83,14 @@ legend, .patch-toolbar small, .patch-time-grid span, .patch-context small { marg
 .segmented button.active { background: var(--ink); color: white; border-color: var(--ink); }
 .control-rail select { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 2px; background: var(--paper-bright); color: var(--ink); font-size: 11px; }
 .control-note { display: block; margin-top: 8px; color: var(--muted); font: 9px/1.45 ui-monospace, monospace; }
+.batch-slider-shell { padding: 10px 10px 8px; border: 1px solid var(--line); background: var(--paper-bright); }
+.batch-slider-readout { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; margin-bottom: 8px; }
+.batch-slider-readout span { color: var(--muted); font: 700 8px/1 ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; }
+.batch-slider-readout output { color: var(--green); font: 750 18px/1 ui-monospace, monospace; }
+.batch-slider-shell input[type="range"] { display: block; margin: 0; }
+.batch-slider-shell input[type="range"]:disabled { cursor: not-allowed; opacity: .45; }
+.batch-slider-ticks { display: flex; justify-content: space-between; gap: 6px; margin-top: 5px; color: var(--muted); font: 8px/1 ui-monospace, monospace; }
+.batch-slider-ticks span.active { color: var(--green); font-weight: 800; }
 #patch-mode-controls { display: grid; grid-template-columns: 1fr; }
 .visual-stage { min-width: 0; padding: 34px 40px 28px; }
 .chart-header { display: flex; justify-content: space-between; gap: 30px; align-items: start; }

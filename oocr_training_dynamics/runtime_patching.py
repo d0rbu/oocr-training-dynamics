@@ -5,6 +5,7 @@ from __future__ import annotations
 import gc
 import math
 import random
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -18,6 +19,7 @@ from oocr_training_dynamics.contracts import (
     PatchingMode,
     RunKey,
     checkpoint_label,
+    training_spec_for_run,
 )
 from oocr_training_dynamics.data import (
     DERANGEMENT,
@@ -28,6 +30,7 @@ from oocr_training_dynamics.data import (
 )
 from oocr_training_dynamics.models import ModelSpec, get_model_spec
 from oocr_training_dynamics.patching import (
+    WEIGHT_PATCH_SCOPE,
     PatchingPlan,
     TokenPositionPair,
     build_across_sample_pair,
@@ -35,7 +38,9 @@ from oocr_training_dynamics.patching import (
     token_index_covering_character,
 )
 from oocr_training_dynamics.runtime_models import (
+    LORA_TARGET_MODULES,
     attach_inference_lora,
+    attach_trainable_lora,
     load_base_model,
     load_processor,
     resolve_decoder_blocks,
@@ -69,6 +74,29 @@ class PatchTarget:
 
 SourceRecord = tuple[PromptPatchView, tuple[t.Tensor, ...], t.Tensor]
 SourceBank = dict[str, SourceRecord]
+LoraLayerState = dict[str, t.Tensor]
+WeightSourceRecord = tuple[PromptPatchView, t.Tensor]
+WeightSourceBank = dict[str, WeightSourceRecord]
+
+
+@dataclass(frozen=True)
+class WeightSourceBundle:
+    """CPU-resident donor LoRA parameters and clean-prompt baselines."""
+
+    layer_states: tuple[LoraLayerState, ...]
+    records: WeightSourceBank
+
+
+@dataclass(frozen=True)
+class TokenLoraProjection:
+    """One recipient LoRA projection plus the donor factors used at selected tokens."""
+
+    name: str
+    module: t.nn.Module
+    adapter: str
+    donor_a: t.Tensor
+    donor_b: t.Tensor
+    scaling: float
 
 
 def _candidate_ids(processor: Any, record: ReflectionRecord) -> t.Tensor:
@@ -189,6 +217,8 @@ def _resolve_patch_targets(
     blocks: tuple[t.nn.Module, ...],
     interface: PatchingInterface,
 ) -> tuple[PatchTarget, ...]:
+    if interface.patches_weights:
+        raise ValueError("decoder-block weights are parameters, not an activation hook target")
     if interface is PatchingInterface.RESID_POST:
         return tuple(PatchTarget(block, capture_input=False) for block in blocks)
     attribute = (
@@ -411,6 +441,301 @@ def _patch_grid(
     return tuple(tuple(row) for row in values)
 
 
+def _lora_parameters(block: t.nn.Module) -> dict[str, t.nn.Parameter]:
+    """Return exactly the learned LoRA factors belonging to one decoder block."""
+
+    parameters = {
+        name: parameter
+        for name, parameter in block.named_parameters()
+        if "lora_A" in name or "lora_B" in name
+    }
+    if not parameters:
+        raise RuntimeError("weight patching requires LoRA A/B parameters in every decoder block")
+    a_count = sum("lora_A" in name for name in parameters)
+    b_count = sum("lora_B" in name for name in parameters)
+    if a_count != b_count:
+        raise RuntimeError("decoder-block LoRA A/B parameter counts do not match")
+    return parameters
+
+
+def _capture_lora_layer_state(block: t.nn.Module) -> LoraLayerState:
+    """Clone one block's learned adapter factors to CPU."""
+
+    return {
+        name: parameter.detach().cpu().clone()
+        for name, parameter in _lora_parameters(block).items()
+    }
+
+
+def _copy_lora_layer_state(block: t.nn.Module, state: LoraLayerState) -> None:
+    """Replace one block's adapter factors after exact key/shape validation."""
+
+    parameters = _lora_parameters(block)
+    if set(parameters) != set(state):
+        missing = sorted(set(parameters) - set(state))
+        unexpected = sorted(set(state) - set(parameters))
+        raise RuntimeError(
+            "donor and recipient block adapter schemas differ: "
+            f"missing={missing}, unexpected={unexpected}"
+        )
+    with t.no_grad():
+        for name, parameter in parameters.items():
+            source = state[name]
+            if source.shape != parameter.shape:
+                raise RuntimeError(
+                    f"LoRA parameter shape mismatch for {name}: "
+                    f"donor={tuple(source.shape)} recipient={tuple(parameter.shape)}"
+                )
+            parameter.copy_(source.to(device=parameter.device, dtype=parameter.dtype))
+
+
+def _active_lora_adapter(module: t.nn.Module, name: str) -> str:
+    """Resolve the one ordinary, unmerged adapter used by a LoRA projection."""
+
+    raw_adapters = getattr(module, "active_adapters", None)
+    if isinstance(raw_adapters, str):
+        adapters = (raw_adapters,)
+    elif isinstance(raw_adapters, list | tuple) and all(
+        isinstance(adapter, str) for adapter in raw_adapters
+    ):
+        adapters = tuple(raw_adapters)
+    else:
+        raise RuntimeError(f"LoRA projection {name} does not expose active adapters")
+    if len(adapters) != 1:
+        raise RuntimeError(
+            f"token-local weight patching requires one active adapter in {name}; found {adapters}"
+        )
+    adapter = adapters[0]
+    if bool(getattr(module, "disable_adapters", False)):
+        raise RuntimeError(f"LoRA adapters are disabled for projection {name}")
+    if bool(getattr(module, "merged", False)):
+        raise RuntimeError(f"LoRA projection {name} must be unmerged for token-local patching")
+    use_dora = getattr(module, "use_dora", {})
+    if isinstance(use_dora, dict) and bool(use_dora.get(adapter, False)):
+        raise RuntimeError(f"DoRA projection {name} is outside the token-weight contract")
+    return adapter
+
+
+def _token_lora_projections(
+    block: t.nn.Module,
+    donor_state: LoraLayerState,
+) -> tuple[TokenLoraProjection, ...]:
+    """Resolve all seven block projections and stage donor factors on their devices."""
+
+    projections: list[TokenLoraProjection] = []
+    for name, module in block.named_modules():
+        if not name or not hasattr(module, "lora_A") or not hasattr(module, "lora_B"):
+            continue
+        leaf_name = name.rsplit(".", maxsplit=1)[-1]
+        if leaf_name not in LORA_TARGET_MODULES:
+            raise RuntimeError(f"unexpected LoRA target in decoder block: {name}")
+        adapter = _active_lora_adapter(module, name)
+        lora_module = cast(Any, module)
+        lora_a = lora_module.lora_A
+        lora_b = lora_module.lora_B
+        if adapter not in lora_a or adapter not in lora_b:
+            raise RuntimeError(f"active adapter {adapter!r} is missing from projection {name}")
+        recipient_a = getattr(lora_a[adapter], "weight", None)
+        recipient_b = getattr(lora_b[adapter], "weight", None)
+        if not isinstance(recipient_a, t.Tensor) or not isinstance(recipient_b, t.Tensor):
+            raise RuntimeError(f"projection {name} lacks ordinary LoRA A/B weight tensors")
+        dropout_by_adapter = getattr(module, "lora_dropout", {})
+        dropout = dropout_by_adapter[adapter]
+        dropout_probability = getattr(dropout, "p", 0.0)
+        if not isinstance(dropout_probability, int | float) or dropout_probability != 0.0:
+            raise RuntimeError(f"projection {name} requires zero LoRA dropout at inference")
+        scaling_by_adapter = getattr(module, "scaling", {})
+        scaling = scaling_by_adapter[adapter]
+        if not isinstance(scaling, int | float) or not math.isfinite(float(scaling)):
+            raise RuntimeError(f"projection {name} has a non-finite LoRA scaling")
+        a_key = f"{name}.lora_A.{adapter}.weight"
+        b_key = f"{name}.lora_B.{adapter}.weight"
+        if a_key not in donor_state or b_key not in donor_state:
+            raise RuntimeError(f"donor state lacks LoRA factors for projection {name}")
+        donor_a = donor_state[a_key]
+        donor_b = donor_state[b_key]
+        if donor_a.shape != recipient_a.shape or donor_b.shape != recipient_b.shape:
+            raise RuntimeError(
+                f"donor/recipient LoRA shape mismatch in {name}: "
+                f"A={tuple(donor_a.shape)}/{tuple(recipient_a.shape)}, "
+                f"B={tuple(donor_b.shape)}/{tuple(recipient_b.shape)}"
+            )
+        projections.append(
+            TokenLoraProjection(
+                name=name,
+                module=module,
+                adapter=adapter,
+                donor_a=donor_a.to(device=recipient_a.device, dtype=recipient_a.dtype),
+                donor_b=donor_b.to(device=recipient_b.device, dtype=recipient_b.dtype),
+                scaling=float(scaling),
+            )
+        )
+    observed = [projection.name.rsplit(".", maxsplit=1)[-1] for projection in projections]
+    if len(observed) != len(LORA_TARGET_MODULES) or set(observed) != set(LORA_TARGET_MODULES):
+        raise RuntimeError(
+            "token-local weight patching requires exactly q/k/v/o and gate/up/down; "
+            f"found {sorted(observed)}"
+        )
+    if set(donor_state) != set(_lora_parameters(block)):
+        raise RuntimeError("donor and recipient block adapter schemas differ")
+    return tuple(projections)
+
+
+def _lora_delta(
+    hidden: t.Tensor,
+    lora_a: t.Tensor,
+    lora_b: t.Tensor,
+    scaling: float,
+) -> t.Tensor:
+    projected = t.nn.functional.linear(hidden.to(dtype=lora_a.dtype), lora_a)
+    return t.nn.functional.linear(projected, lora_b) * scaling
+
+
+def _replace_lora_output_at_positions(
+    projection: TokenLoraProjection,
+    args: tuple[Any, ...],
+    output: Any,
+    positions: tuple[int, ...],
+) -> t.Tensor:
+    """Use donor rather than recipient LoRA factors for one token in each batch row."""
+
+    if not args or not isinstance(args[0], t.Tensor):
+        raise RuntimeError(f"projection {projection.name} did not receive a tensor input")
+    hidden = args[0]
+    if not isinstance(output, t.Tensor) or hidden.ndim != 3 or output.ndim != 3:
+        raise RuntimeError(
+            f"projection {projection.name} must map [batch, sequence, hidden] tensors"
+        )
+    if hidden.shape[:2] != output.shape[:2] or len(positions) != hidden.shape[0]:
+        raise RuntimeError(f"token coordinates do not match projection {projection.name}")
+    if any(position < 0 or position >= hidden.shape[1] for position in positions):
+        raise ValueError(f"token coordinate is outside projection {projection.name}")
+    lora_module = cast(Any, projection.module)
+    lora_a = lora_module.lora_A[projection.adapter].weight
+    lora_b = lora_module.lora_B[projection.adapter].weight
+    rows = t.arange(hidden.shape[0], device=hidden.device)
+    columns = t.tensor(positions, dtype=t.int64, device=hidden.device)
+    selected = hidden[rows, columns, :]
+    donor_delta = _lora_delta(
+        selected,
+        projection.donor_a,
+        projection.donor_b,
+        projection.scaling,
+    )
+    recipient_delta = _lora_delta(selected, lora_a, lora_b, projection.scaling)
+    replaced = output.clone()
+    replaced[rows, columns, :] += (donor_delta - recipient_delta).to(dtype=output.dtype)
+    return replaced
+
+
+def _token_weight_patch_grid(
+    model: t.nn.Module,
+    input_ids: t.Tensor,
+    attention_mask: t.Tensor,
+    candidate_ids: t.Tensor,
+    projection_layers: tuple[tuple[TokenLoraProjection, ...], ...],
+    positions: tuple[TokenPositionPair, ...],
+    correct_choice_index: int,
+    *,
+    patch_batch_size: int = 8,
+    progress_label: str,
+) -> tuple[tuple[float, ...], ...]:
+    """Apply each donor block's LoRA update at one selected token per batch row."""
+
+    if not projection_layers:
+        raise ValueError("token-local weight patching requires decoder projection layers")
+    if not positions or patch_batch_size <= 0:
+        raise ValueError("token-local weight patching requires positions and a batch size")
+    if not 0 <= correct_choice_index < 5:
+        raise ValueError("correct choice index must be in the five-way candidate set")
+    layer_count = len(projection_layers)
+    batches_per_layer = math.ceil(len(positions) / patch_batch_size)
+    values = [[float("nan")] * layer_count for _ in positions]
+    started = time.monotonic()
+    print(
+        f"[token-weight] {progress_label} positions={len(positions)} layers={layer_count} "
+        f"batches_per_layer={batches_per_layer}",
+        flush=True,
+    )
+    for layer, projections in enumerate(projection_layers):
+        for start in range(0, len(positions), patch_batch_size):
+            chunk = positions[start : start + patch_batch_size]
+            recipient_positions = tuple(position.recipient_index for position in chunk)
+            handles = [
+                projection.module.register_forward_hook(
+                    lambda _module, args, output, selected_projection=projection, selected_positions=recipient_positions: (
+                        _replace_lora_output_at_positions(
+                            selected_projection,
+                            args,
+                            output,
+                            selected_positions,
+                        )
+                    )
+                )
+                for projection in projections
+            ]
+            try:
+                probabilities = _forward_probabilities(
+                    model,
+                    input_ids.expand(len(chunk), -1),
+                    attention_mask.expand(len(chunk), -1),
+                    candidate_ids,
+                )
+            finally:
+                for handle in handles:
+                    handle.remove()
+            for offset, probability in enumerate(probabilities[:, correct_choice_index].tolist()):
+                values[start + offset][layer] = float(probability)
+        completed = layer + 1
+        if completed == 1 or completed % 4 == 0 or completed == layer_count:
+            elapsed = time.monotonic() - started
+            remaining = elapsed / completed * (layer_count - completed)
+            print(
+                f"[token-weight] {progress_label} layers={completed}/{layer_count} "
+                f"elapsed={elapsed:.1f}s eta={remaining:.1f}s",
+                flush=True,
+            )
+    if any(not math.isfinite(value) for row in values for value in row):
+        raise RuntimeError("token-local weight grid contains an unfilled or non-finite cell")
+    return tuple(tuple(row) for row in values)
+
+
+def _zero_lora_parameters(model: t.nn.Module) -> None:
+    """Represent the frozen step-0 model in the same adapter parameterization."""
+
+    parameters = {
+        name: parameter
+        for name, parameter in model.named_parameters()
+        if "lora_A" in name or "lora_B" in name
+    }
+    if not parameters:
+        raise RuntimeError("step-0 weight patching could not attach a blank LoRA adapter")
+    with t.no_grad():
+        for parameter in parameters.values():
+            parameter.zero_()
+
+
+def _load_weight_checkpoint_model(
+    root: Path,
+    run: RunKey,
+    spec: ModelSpec,
+    step: int,
+) -> t.nn.Module:
+    """Load every checkpoint as a common PEFT model, including an exact-zero step 0."""
+
+    base = load_base_model(spec, training=False)
+    if step == 0:
+        model = attach_trainable_lora(base, training_spec_for_run(run))
+        _zero_lora_parameters(model)
+        model.requires_grad_(False)
+        model.eval()
+        return model
+    path = adapter_dir(root, run, step)
+    if not path.is_dir():
+        raise FileNotFoundError(f"missing adapter checkpoint: {path}")
+    return attach_inference_lora(base, path)
+
+
 def _load_checkpoint_model(root: Path, run: RunKey, spec: ModelSpec, step: int) -> t.nn.Module:
     base = load_base_model(spec, training=False)
     if step == 0:
@@ -462,6 +787,34 @@ def _capture_clean_source_bank(
             source_probabilities,
         )
     return source_by_record
+
+
+def _capture_weight_source_bundle(
+    model: t.nn.Module,
+    blocks: tuple[t.nn.Module, ...],
+    processor: Any,
+    records: tuple[ReflectionRecord, ...],
+) -> WeightSourceBundle:
+    """Capture donor adapter factors and clean-prompt answer baselines."""
+
+    layer_states = tuple(_capture_lora_layer_state(block) for block in blocks)
+    source_by_record: WeightSourceBank = {}
+    for record in records:
+        source_view = _prompt_patch_view(
+            processor,
+            record,
+            record.messages,
+            FUNCTION_BY_ID[record.function_id].alias,
+            stop_at_sequence_start=True,
+        )
+        source_probabilities = _forward_probabilities(
+            model,
+            source_view.input_ids,
+            source_view.attention_mask,
+            _candidate_ids(processor, record),
+        )[0]
+        source_by_record[record.record_id] = (source_view, source_probabilities)
+    return WeightSourceBundle(layer_states=layer_states, records=source_by_record)
 
 
 def build_token_axis_metadata(
@@ -532,8 +885,14 @@ def build_token_axis_metadata(
 
 
 def _patch_output_path(root: Path, run: RunKey, plan: PatchingPlan, donor_step: int) -> Path:
-    base = run_dir(root, run) / "patching" / "sequence_end"
-    if plan.interface is not PatchingInterface.RESID_POST:
+    if plan.interface.patches_all_token_weights:
+        base = run_dir(root, run) / "patching" / "layer_only" / plan.interface.value
+    else:
+        base = run_dir(root, run) / "patching" / "sequence_end"
+    if (
+        plan.interface is not PatchingInterface.RESID_POST
+        and not plan.interface.patches_all_token_weights
+    ):
         base /= plan.interface.value
     return (
         base
@@ -603,6 +962,248 @@ def _serialize_grid(
     }
 
 
+def _serialize_weight_grid(
+    record: ReflectionRecord,
+    source: t.Tensor,
+    recipient: t.Tensor,
+    source_view: PromptPatchView,
+    recipient_view: PromptPatchView,
+    probabilities: tuple[float, ...],
+) -> dict[str, object]:
+    """Serialize a layer-only decoder-block parameter intervention."""
+
+    correct_choice = record.choice_function_ids.index(record.function_id)
+    recipient_target = float(recipient[correct_choice].item())
+    if not probabilities or any(not math.isfinite(value) for value in probabilities):
+        raise RuntimeError("weight patching produced an empty or non-finite layer grid")
+    return {
+        "function_id": record.function_id,
+        "source_function_id": record.function_id,
+        "recipient_function_id": record.function_id,
+        "choice_function_ids": record.choice_function_ids,
+        "correct_choice_index": correct_choice,
+        "source_probabilities": source.tolist(),
+        "recipient_probabilities": recipient.tolist(),
+        "site_probability": "correct",
+        "axis_kind": "layer_only",
+        "source_rendered_prompt": source_view.rendered_prompt,
+        "recipient_rendered_prompt": recipient_view.rendered_prompt,
+        "weight_scope": {
+            "scope": WEIGHT_PATCH_SCOPE,
+            "sequence_scope": "all prompt positions",
+            "learned_parameters": ("LoRA A/B factors for q/k/v/o and gate/up/down projections"),
+            "shared_parameters": (
+                "frozen base weights and layer norms are identical across checkpoints"
+            ),
+        },
+        "cells": [
+            {
+                "layer": layer,
+                "probability": probability,
+                "delta_from_recipient": probability - recipient_target,
+            }
+            for layer, probability in enumerate(probabilities)
+        ],
+    }
+
+
+def _serialize_token_weight_grid(
+    record: ReflectionRecord,
+    source: t.Tensor,
+    recipient: t.Tensor,
+    positions: tuple[TokenPositionPair, ...],
+    source_view: PromptPatchView,
+    recipient_view: PromptPatchView,
+    grid: tuple[tuple[float, ...], ...],
+    mode: PatchingMode,
+) -> dict[str, object]:
+    """Serialize a decoder-block LoRA transplant localized to one prompt token."""
+
+    serialized = _serialize_grid(
+        record,
+        source,
+        recipient,
+        positions,
+        source_view,
+        recipient_view,
+        grid,
+        mode,
+    )
+    serialized["axis_kind"] = "token_layer"
+    serialized["weight_scope"] = {
+        "scope": "selected_token_decoder_block",
+        "sequence_scope": "one selected prompt token per intervention",
+        "learned_parameters": "LoRA A/B updates for q/k/v/o and gate/up/down projections",
+        "recipient_input": "each projection receives the causally current recipient hidden input",
+        "attention_coupling": (
+            "a selected token's donor K/V updates may affect later query positions"
+        ),
+        "shared_parameters": "frozen base weights and layer norms remain from the recipient",
+    }
+    return serialized
+
+
+def _patch_weight_source_bundle(
+    model: t.nn.Module,
+    blocks: tuple[t.nn.Module, ...],
+    processor: Any,
+    records: tuple[ReflectionRecord, ...],
+    bundle: WeightSourceBundle,
+) -> list[dict[str, object]]:
+    """Patch one donor checkpoint's complete learned block update, one layer at a time."""
+
+    if len(bundle.layer_states) != len(blocks):
+        raise ValueError("donor and recipient decoder layer counts differ")
+    probes: list[
+        tuple[
+            ReflectionRecord,
+            PromptPatchView,
+            PromptPatchView,
+            t.Tensor,
+            t.Tensor,
+            t.Tensor,
+        ]
+    ] = []
+    values_by_record: dict[str, list[float]] = {
+        record.record_id: [float("nan")] * len(blocks) for record in records
+    }
+    for record in records:
+        source_view, source_probabilities = bundle.records[record.record_id]
+        recipient_view = _prompt_patch_view(
+            processor,
+            record,
+            record.messages,
+            FUNCTION_BY_ID[record.function_id].alias,
+            stop_at_sequence_start=True,
+        )
+        candidate_ids = _candidate_ids(processor, record)
+        recipient_probabilities = _forward_probabilities(
+            model,
+            recipient_view.input_ids,
+            recipient_view.attention_mask,
+            candidate_ids,
+        )[0]
+        probes.append(
+            (
+                record,
+                source_view,
+                recipient_view,
+                candidate_ids,
+                source_probabilities,
+                recipient_probabilities,
+            )
+        )
+
+    for layer, (block, donor_state) in enumerate(zip(blocks, bundle.layer_states, strict=True)):
+        recipient_state = _capture_lora_layer_state(block)
+        try:
+            _copy_lora_layer_state(block, donor_state)
+            for (
+                record,
+                _source_view,
+                recipient_view,
+                candidate_ids,
+                _source_probabilities,
+                _recipient_probabilities,
+            ) in probes:
+                correct_choice = record.choice_function_ids.index(record.function_id)
+                probability = _forward_probabilities(
+                    model,
+                    recipient_view.input_ids,
+                    recipient_view.attention_mask,
+                    candidate_ids,
+                )[0, correct_choice]
+                values_by_record[record.record_id][layer] = float(probability.item())
+        finally:
+            _copy_lora_layer_state(block, recipient_state)
+
+    serialized: list[dict[str, object]] = []
+    for (
+        record,
+        source_view,
+        recipient_view,
+        _candidate_ids_value,
+        source_probabilities,
+        recipient_probabilities,
+    ) in probes:
+        serialized.append(
+            _serialize_weight_grid(
+                record,
+                source_probabilities,
+                recipient_probabilities,
+                source_view,
+                recipient_view,
+                tuple(values_by_record[record.record_id]),
+            )
+        )
+    return serialized
+
+
+def _patch_token_weight_source_bundle(
+    model: t.nn.Module,
+    blocks: tuple[t.nn.Module, ...],
+    processor: Any,
+    records: tuple[ReflectionRecord, ...],
+    bundle: WeightSourceBundle,
+    mode: PatchingMode,
+) -> list[dict[str, object]]:
+    """Patch donor LoRA updates at one token/layer coordinate at a time."""
+
+    if len(bundle.layer_states) != len(blocks):
+        raise ValueError("donor and recipient decoder layer counts differ")
+    projection_layers = tuple(
+        _token_lora_projections(block, donor_state)
+        for block, donor_state in zip(blocks, bundle.layer_states, strict=True)
+    )
+    serialized: list[dict[str, object]] = []
+    for record_index, record in enumerate(records, start=1):
+        source_view, source_probabilities = bundle.records[record.record_id]
+        recipient_view = _prompt_patch_view(
+            processor,
+            record,
+            record.messages,
+            FUNCTION_BY_ID[record.function_id].alias,
+            stop_at_sequence_start=True,
+        )
+        positions = reverse_token_position_pairs(
+            source_view.anchor_index,
+            recipient_view.anchor_index,
+            source_view.stop_index,
+            recipient_view.stop_index,
+        )
+        candidate_ids = _candidate_ids(processor, record)
+        recipient_probabilities = _forward_probabilities(
+            model,
+            recipient_view.input_ids,
+            recipient_view.attention_mask,
+            candidate_ids,
+        )[0]
+        correct_choice = record.choice_function_ids.index(record.function_id)
+        grid = _token_weight_patch_grid(
+            model,
+            recipient_view.input_ids,
+            recipient_view.attention_mask,
+            candidate_ids,
+            projection_layers,
+            positions,
+            correct_choice,
+            progress_label=f"function={record.function_id} ({record_index}/{len(records)})",
+        )
+        serialized.append(
+            _serialize_token_weight_grid(
+                record,
+                source_probabilities,
+                recipient_probabilities,
+                positions,
+                source_view,
+                recipient_view,
+                grid,
+                mode,
+            )
+        )
+    return serialized
+
+
 def _patch_record(
     model: t.nn.Module,
     targets: tuple[PatchTarget, ...],
@@ -658,27 +1259,36 @@ def _temporal_mode(recipient_step: int, donor_step: int) -> PatchingMode:
     raise ValueError("temporal patching does not store same-checkpoint identity cells")
 
 
-def _seeded_border_first_temporal_order(
+TEMPORAL_PRIORITY_TIERS = ((0, 1_500), (96,))
+
+
+def _temporal_priority_tier(
+    pair: tuple[int, int, PatchingMode],
+) -> int:
+    """Return the first requested checkpoint tier touched by a temporal cell."""
+
+    recipient_step, donor_step, _mode = pair
+    for index, steps in enumerate(TEMPORAL_PRIORITY_TIERS):
+        if recipient_step in steps or donor_step in steps:
+            return index
+    return len(TEMPORAL_PRIORITY_TIERS)
+
+
+def _seeded_priority_temporal_order(
     scheduled_pairs: list[tuple[int, int, PatchingMode]],
     shuffle_seed: int,
 ) -> list[tuple[int, int, PatchingMode]]:
-    """Shuffle temporal cells deterministically, with the outer grid border first."""
+    """Shuffle temporal cells deterministically within ordered checkpoint tiers."""
 
-    boundary_steps = {CHECKPOINT_STEPS[0], CHECKPOINT_STEPS[-1]}
-    border_pairs = [
-        pair
-        for pair in scheduled_pairs
-        if pair[0] in boundary_steps or pair[1] in boundary_steps
+    tiers: list[list[tuple[int, int, PatchingMode]]] = [
+        [] for _ in range(len(TEMPORAL_PRIORITY_TIERS) + 1)
     ]
-    interior_pairs = [
-        pair
-        for pair in scheduled_pairs
-        if pair[0] not in boundary_steps and pair[1] not in boundary_steps
-    ]
+    for pair in scheduled_pairs:
+        tiers[_temporal_priority_tier(pair)].append(pair)
     randomizer = random.Random(shuffle_seed)
-    randomizer.shuffle(border_pairs)
-    randomizer.shuffle(interior_pairs)
-    return [*border_pairs, *interior_pairs]
+    for tier in tiers:
+        randomizer.shuffle(tier)
+    return [pair for tier in tiers for pair in tier]
 
 
 def _temporal_direction(mode: PatchingMode) -> str:
@@ -699,9 +1309,7 @@ def _patch_temporal_source_bank(
 ) -> list[dict[str, object]]:
     serialized: list[dict[str, object]] = []
     for record in records:
-        source_view, source_activations, source_probabilities = source_by_record[
-            record.record_id
-        ]
+        source_view, source_activations, source_probabilities = source_by_record[record.record_id]
         recipient_view = _prompt_patch_view(
             processor,
             record,
@@ -753,6 +1361,95 @@ def _write_temporal_artifact(
     )
 
 
+def _run_weight_temporal_pairs(
+    root: Path,
+    run: RunKey,
+    spec: ModelSpec,
+    processor: Any,
+    records: tuple[ReflectionRecord, ...],
+    pending_pairs: list[tuple[int, int, PatchingMode]],
+    interface: PatchingInterface,
+) -> None:
+    """Fill temporal block-weight cells while reusing CPU-resident donor adapters."""
+
+    if not interface.patches_weights:
+        raise ValueError("weight temporal runner requires a weight-patching interface")
+
+    donor_steps = tuple(
+        sorted({donor_step for _recipient_step, donor_step, _mode in pending_pairs})
+    )
+    sources_by_step: dict[int, WeightSourceBundle] = {}
+    for donor_step in donor_steps:
+        donor_model = _load_weight_checkpoint_model(root, run, spec, donor_step)
+        donor_blocks = resolve_decoder_blocks(donor_model, spec)
+        try:
+            sources_by_step[donor_step] = _capture_weight_source_bundle(
+                donor_model,
+                donor_blocks,
+                processor,
+                records,
+            )
+        finally:
+            _release_model(donor_model)
+        print(
+            f"[patch-matrix] captured {interface.value} sources at step {donor_step}",
+            flush=True,
+        )
+
+    recipient_model: t.nn.Module | None = None
+    recipient_blocks: tuple[t.nn.Module, ...] = ()
+    loaded_recipient_step: int | None = None
+    try:
+        for recipient_step, donor_step, mode in pending_pairs:
+            if recipient_step != loaded_recipient_step:
+                if recipient_model is not None:
+                    _release_model(recipient_model)
+                recipient_model = _load_weight_checkpoint_model(
+                    root,
+                    run,
+                    spec,
+                    recipient_step,
+                )
+                recipient_blocks = resolve_decoder_blocks(recipient_model, spec)
+                loaded_recipient_step = recipient_step
+            if recipient_model is None:  # pragma: no cover - guarded by the load above
+                raise AssertionError("weight-patch recipient model was not loaded")
+            plan = PatchingPlan(
+                mode=mode,
+                recipient_step=recipient_step,
+                donor_steps=(donor_step,),
+                interface=interface,
+            )
+            if interface.patches_token_weights:
+                serialized = _patch_token_weight_source_bundle(
+                    recipient_model,
+                    recipient_blocks,
+                    processor,
+                    records,
+                    sources_by_step[donor_step],
+                    mode,
+                )
+            else:
+                serialized = _patch_weight_source_bundle(
+                    recipient_model,
+                    recipient_blocks,
+                    processor,
+                    records,
+                    sources_by_step[donor_step],
+                )
+            _write_temporal_artifact(
+                root,
+                run,
+                spec,
+                plan,
+                donor_step,
+                serialized,
+            )
+    finally:
+        if recipient_model is not None:
+            _release_model(recipient_model)
+
+
 def run_temporal_patching_matrix(
     root: Path,
     run: RunKey,
@@ -766,13 +1463,15 @@ def run_temporal_patching_matrix(
     """Fill selected checkpoint-transfer cells while reusing source and recipient loads."""
 
     if not t.cuda.is_available():
-        raise RuntimeError("activation patching requires CUDA")
+        raise RuntimeError("checkpoint patching requires CUDA")
     if tuple(sorted(set(recipient_steps))) != recipient_steps or any(
         step not in CHECKPOINT_STEPS for step in recipient_steps
     ):
         raise ValueError("temporal recipient steps must be unique, increasing checkpoints")
-    if not modes or len(set(modes)) != len(modes) or any(
-        mode is PatchingMode.ACROSS_SAMPLE for mode in modes
+    if (
+        not modes
+        or len(set(modes)) != len(modes)
+        or any(mode is PatchingMode.ACROSS_SAMPLE for mode in modes)
     ):
         raise ValueError("temporal matrix modes must be unique checkpoint-transfer modes")
     if shuffle_seed is not None and shuffle_seed < 0:
@@ -788,7 +1487,7 @@ def run_temporal_patching_matrix(
                 continue
             scheduled_pairs.append((recipient_step, donor_step, mode))
     if shuffle_seed is not None:
-        scheduled_pairs = _seeded_border_first_temporal_order(
+        scheduled_pairs = _seeded_priority_temporal_order(
             scheduled_pairs,
             shuffle_seed,
         )
@@ -815,29 +1514,44 @@ def run_temporal_patching_matrix(
     if not pending_pairs:
         return
     if shuffle_seed is not None:
-        boundary_steps = {CHECKPOINT_STEPS[0], CHECKPOINT_STEPS[-1]}
-        pending_border_count = sum(
-            recipient_step in boundary_steps or donor_step in boundary_steps
-            for recipient_step, donor_step, _mode in pending_pairs
+        tier_counts = [0] * (len(TEMPORAL_PRIORITY_TIERS) + 1)
+        for pair in pending_pairs:
+            tier_counts[_temporal_priority_tier(pair)] += 1
+        count_summary = ", ".join(
+            [
+                *(
+                    f"steps-{'-'.join(str(step) for step in steps)} tier: {count}"
+                    for steps, count in zip(
+                        TEMPORAL_PRIORITY_TIERS,
+                        tier_counts[:-1],
+                        strict=True,
+                    )
+                ),
+                f"remainder: {tier_counts[-1]}",
+            ]
         )
         print(
-            f"[patch-matrix] border-first shuffled {len(pending_pairs)} missing temporal cells "
-            f"with seed {shuffle_seed} "
-            f"({pending_border_count} border, "
-            f"{len(pending_pairs) - pending_border_count} interior)",
+            f"[patch-matrix] priority-shuffled {len(pending_pairs)} missing temporal cells "
+            f"with seed {shuffle_seed} ({count_summary})",
             flush=True,
         )
 
     spec = get_model_spec(run.model, allow_provisional=allow_provisional_model)
     processor = load_processor(spec)
     records = _selected_records(run.seed)
-    donor_steps = tuple(
-        sorted(
-            {
-                donor_step
-                for _recipient_step, donor_step, _mode in pending_pairs
-            }
+    if interface.patches_weights:
+        _run_weight_temporal_pairs(
+            root,
+            run,
+            spec,
+            processor,
+            records,
+            pending_pairs,
+            interface,
         )
+        return
+    donor_steps = tuple(
+        sorted({donor_step for _recipient_step, donor_step, _mode in pending_pairs})
     )
     sources_by_step: dict[int, SourceBank] = {}
     for donor_step in donor_steps:
@@ -899,6 +1613,76 @@ def run_temporal_patching_matrix(
             _release_model(recipient_model)
 
 
+def _run_weight_patching(
+    root: Path,
+    run: RunKey,
+    spec: ModelSpec,
+    processor: Any,
+    records: tuple[ReflectionRecord, ...],
+    plan: PatchingPlan,
+    pending: tuple[int, ...],
+) -> None:
+    """Run an explicitly selected set of checkpoint-to-checkpoint weight patches."""
+
+    if plan.mode is PatchingMode.ACROSS_SAMPLE:
+        raise ValueError("weight patching is defined only for checkpoint transfer")
+    for donor_step in pending:
+        donor_model = _load_weight_checkpoint_model(root, run, spec, donor_step)
+        donor_blocks = resolve_decoder_blocks(donor_model, spec)
+        try:
+            bundle = _capture_weight_source_bundle(
+                donor_model,
+                donor_blocks,
+                processor,
+                records,
+            )
+        finally:
+            _release_model(donor_model)
+
+        recipient_model = _load_weight_checkpoint_model(
+            root,
+            run,
+            spec,
+            plan.recipient_step,
+        )
+        recipient_blocks = resolve_decoder_blocks(recipient_model, spec)
+        try:
+            if plan.interface.patches_token_weights:
+                serialized = _patch_token_weight_source_bundle(
+                    recipient_model,
+                    recipient_blocks,
+                    processor,
+                    records,
+                    bundle,
+                    plan.mode,
+                )
+            else:
+                serialized = _patch_weight_source_bundle(
+                    recipient_model,
+                    recipient_blocks,
+                    processor,
+                    records,
+                    bundle,
+                )
+        finally:
+            _release_model(recipient_model)
+        _write_temporal_artifact(
+            root,
+            run,
+            spec,
+            PatchingPlan(
+                mode=plan.mode,
+                recipient_step=plan.recipient_step,
+                donor_steps=(donor_step,),
+                interface=plan.interface,
+            ),
+            donor_step,
+            serialized,
+        )
+        del bundle
+        gc.collect()
+
+
 def run_patching(
     root: Path,
     run: RunKey,
@@ -907,7 +1691,7 @@ def run_patching(
     allow_provisional_model: bool = False,
 ) -> None:
     if not t.cuda.is_available():
-        raise RuntimeError("activation patching requires CUDA")
+        raise RuntimeError("checkpoint patching requires CUDA")
     spec = get_model_spec(run.model, allow_provisional=allow_provisional_model)
     processor = load_processor(spec)
     records = _selected_records(run.seed)
@@ -924,6 +1708,17 @@ def run_patching(
             flush=True,
         )
     if not pending:
+        return
+    if plan.interface.patches_weights:
+        _run_weight_patching(
+            root,
+            run,
+            spec,
+            processor,
+            records,
+            plan,
+            pending,
+        )
         return
     if plan.mode is PatchingMode.ACROSS_SAMPLE:
         donor_step = pending[0]

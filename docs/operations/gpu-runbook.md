@@ -150,8 +150,8 @@ uv run python scripts/run_patching_matrix.py \
 
 Existing complete JSON grids are skipped per interface. For temporal plans, all pending donor
 activations are captured to CPU first. The unshuffled schedule groups donors under each recipient
-to reuse its model load. The seeded schedule first shuffles every cell on the step-0/step-1500
-recipient-or-donor border, then shuffles the remaining interior cells. Use repeated
+to reuse its model load. The seeded schedule shuffles within three ordered tiers: cells touching
+either endpoint (step 0 or step 1500), then step 96, then all remaining cells. Use repeated
 `--recipient-step`, `--mode`, or `--interface` flags to stage a predetermined subset.
 
 To fill both directions of the independent recipient/donor selector, excluding the analytic
@@ -165,13 +165,117 @@ uv run python scripts/run_patching_matrix.py \
 ```
 
 This optimized matrix path captures each needed checkpoint's clean source bank once in CPU RAM,
-then follows the deterministic border-first shuffled order and writes every donor artifact
+then follows the deterministic checkpoint-priority shuffled order and writes every donor artifact
 atomically. On the 18-checkpoint OLMo schedule the complete directed residual grid has 306
 off-diagonal cells. Existing artifacts are removed after ordering, so resume preserves the
-relative seeded order of the remaining border and interior cells. Check host RAM before launching
+relative seeded order of the remaining cells. Check host RAM before launching
 it; source banks are never written to disk and are released when the process exits. Omitting
 `--shuffle-seed` groups cells by recipient to minimize model reloads; the seeded order
 intentionally trades some loading efficiency for early boundary coverage.
+
+Global layer-wise decoder-block weight patching uses the same checkpoint-transfer directions but
+no token axis. A focused all-token pair can be run with:
+
+```bash
+uv run python scripts/run_patching.py \
+  --model olmo3-7b --condition correct --interface block_weights \
+  --mode across_time --recipient-step 1500 --donor-step 0 \
+  --confirm-gpu-run
+```
+
+Use `later_checkpoint` when the donor follows the recipient. `block_weights` rejects
+`across_sample`: dirty and clean prompts at one checkpoint share the same weights. The full
+temporal matrix is selectable through `run_patching_matrix.py --interface block_weights`; missing
+cells remain unprocessed until a separately authorized GPU run computes them.
+
+The distinct `token_weights` interface applies the donor LoRA contribution at one selected prompt
+token and layer at a time. It is much more expensive because one checkpoint pair contains a full
+token × layer grid for all 19 functions. After authorization, time exactly one endpoint pair before
+launching any matrix:
+
+```bash
+uv run python scripts/run_patching.py \
+  --model olmo3-7b --condition correct --interface token_weights \
+  --mode across_time --recipient-step 1500 --donor-step 0 \
+  --confirm-gpu-run
+```
+
+Validate that the artifact under `patching/sequence_end/token_weights/` contains all 19 functions,
+the exact reverse-token axis, every registered layer, finite probabilities in `[0, 1]`, and the
+`selected_token_decoder_block` scope. Check measured wall time and disk/RAM/VRAM before deciding
+whether to schedule the full 306-cell temporal atlas. Never resume the earlier global
+`block_weights` command as a substitute for this token-local run. Both interfaces reject
+`across_sample` because dirty and clean prompts within one checkpoint have identical weights.
+
+## 6a. Run the effective-batch ablation only after a new GPU release
+
+The 2026-07-18 amendment adds correct-condition batches 32, 16, 8, 4, 2, and 1 for confirmed
+OLMo and Qwen. It is not a reason to alter or overwrite the batch-64 baseline. First regenerate
+and inspect the CPU plan:
+
+```bash
+CUDA_VISIBLE_DEVICES='' uv run python scripts/plan_batch_size_ablation.py
+```
+
+After the user explicitly releases the GPU, repeat the disk/capacity checks and create the
+sentinel. Then run one model family at a time:
+
+```bash
+uv run python scripts/run_batch_size_sweep.py \
+  --model olmo3-7b --condition correct \
+  --confirm-gpu-run
+
+uv run python scripts/run_batch_size_sweep.py \
+  --model qwen3-8b --condition correct \
+  --confirm-gpu-run
+```
+
+The default order is 32, 16, 8, 4, 2, 1. Completed training/evaluation phases are skipped. A
+partial training directory fails closed unless `--resume-partial` is supplied after its latest
+adapter, optimizer state, metrics, and index have been inspected. The nonbaseline schedules save
+one rolling resume state at every adapter checkpoint. Use repeated `--effective-batch-size` flags
+to stage a subset; this does not authorize the omitted sizes or any planted-control run.
+
+These runs become progressively more optimizer-step-heavy even though each sees the same number
+of examples. Do not quote an ETA from batch 32 for batch 1 without measuring the per-step overhead.
+
+## 6b. Run the LoRA-rank ablation only after a new GPU release
+
+Generate and inspect the CPU-only plan first:
+
+```bash
+CUDA_VISIBLE_DEVICES='' uv run python scripts/plan_lora_rank_ablation.py
+```
+
+The sweep is correct-condition, effective-batch-64 OLMo/Qwen only. It defaults to ranks 1 through
+1024 in ascending order, reuses an already complete rank-32 baseline, and chooses a rank-scaled
+physical microbatch. Completed training/evaluation phases are skipped; partial runs require
+`--resume-partial` after inspection.
+
+```bash
+uv run python scripts/run_lora_rank_sweep.py \
+  --model olmo3-7b --confirm-gpu-run
+
+uv run python scripts/run_lora_rank_sweep.py \
+  --model qwen3-8b --confirm-gpu-run
+```
+
+Do not launch these commands before a fresh user release and live disk/VRAM check. The native
+state arithmetic makes rank 256 a capacity probe. Rank 512 needs at least 23.12 GiB for OLMo and
+25.66 GiB for Qwen before activations; rank 1024 needs 32.66/36.07 GiB. The runner therefore stops
+before any rank above the 22 GiB safety budget unless `--allow-native-state-over-budget` is
+explicitly supplied. Gradient accumulation cannot fix this state floor. Treat the override as a
+one-step diagnostic only, not as evidence that the full run is viable. An optimizer-offload path
+is the likely route for the two highest ranks.
+
+The full-finetuning selector is intentionally not accepted by this LoRA runner. The reserved full
+endpoint requires a separate implementation using ZeRO-3 parameter and optimizer offload, which
+DeepSpeed supports for CPU or NVMe in its
+[official ZeRO-3 configuration](https://deepspeed.readthedocs.io/en/stable/zero3.html). Before it
+can run, add and pass a parity fixture proving the same 64-record target-token denominator, one
+clip per effective update, seeded corpus order, and online checkpoint evaluation. Also verify
+host RAM, swap/NVMe space, atomic-write headroom, and the sparse full-weight retention plan. Until
+those gates pass, `full_finetune/` is an artifact namespace and website label—not a result.
 
 ## 7. Refresh the site
 
@@ -187,6 +291,10 @@ the main payload remains small as temporal coverage grows.
 
 The top banner remains partial while any learning curve is synthetic. Each patch selection has its
 own measured/unprocessed badge.
+
+The acquisition panel's effective-batch and LoRA-rank selectors expose only exported curves.
+Missing batches/ranks and the unimplemented full endpoint are disabled and labeled unprocessed;
+the exporter does not synthesize them.
 
 ## 8. Relinquish the GPU
 
