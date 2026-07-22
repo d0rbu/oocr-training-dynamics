@@ -55,6 +55,18 @@ def test_top_cosine_examples_ranks_distinct_prompts_by_their_best_token() -> Non
     assert matches[1][0]["token_index"] == 0
 
 
+def test_top_cosine_examples_clamps_float32_roundoff_to_metric_range() -> None:
+    # This width deterministically produces a float32 self-dot slightly above
+    # one after normalization on CPU unless the cosine is explicitly clamped.
+    vector = t.arange(1, 14, dtype=t.float32).unsqueeze(0)
+
+    matches = _top_cosine_examples(vector, (vector,), top_k=1, device="cpu")
+
+    assert matches == [
+        [{"example_index": 0, "token_index": 0, "cosine_similarity": 1.0}]
+    ]
+
+
 def test_top_cosine_examples_rejects_shape_and_empty_contract_violations() -> None:
     with pytest.raises(ValueError, match="reference"):
         _top_cosine_examples(t.empty((0, 2)), (t.ones((1, 2)),), top_k=1, device="cpu")

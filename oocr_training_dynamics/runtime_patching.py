@@ -1509,7 +1509,10 @@ def _top_cosine_examples(
             ),
             dim=-1,
         )
-        cosine = references @ candidate_matrix.transpose(0, 1)
+        # Float32 normalization and matmul can overshoot the mathematical
+        # cosine range by a few ulps (for example, 1.0000001 for identical
+        # vectors).  Persist the metric's exact [-1, 1] contract.
+        cosine = (references @ candidate_matrix.transpose(0, 1)).clamp_(-1.0, 1.0)
         best_scores: list[t.Tensor] = []
         best_tokens: list[t.Tensor] = []
         for example_index, example_start in enumerate(candidate_starts):
