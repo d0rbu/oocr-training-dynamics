@@ -74,9 +74,10 @@ The primary activation intervention patches `resid_post` one layer and tokenizer
 time. Reverse token position zero is the final token in the model-rendered generation prompt:
 
 - **across sample:** insert the different-name dirty activation into the clean recipient prompt;
-- **answer-label controls:** at the same checkpoint, patch the reverse-aligned final suffix from
-  the same question with choices shifted +1, the same question with a deterministic random
-  derangement, or an unrelated non-coding MCQ whose correct letter differs from the clean probe;
+- **answer-label controls:** patch the reverse-aligned final suffix from the same question with
+  choices shifted +1, the same question with a deterministic random derangement, or an unrelated
+  non-coding MCQ whose correct letter differs from the clean probe; source and clean recipient
+  checkpoints can now be selected independently;
 - **checkpoint transfer:** set recipient and donor steps independently while keeping the clean
   prompt fixed. An earlier donor into a later recipient tests necessity; reversing that ordering
   tests whether a later learned state is sufficient in an earlier model.

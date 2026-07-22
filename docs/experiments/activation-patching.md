@@ -114,6 +114,11 @@ to differ from the clean probe's correct letter. The first two preserve the exac
 question and option contents. The third preserves only the five-choice response format and final
 answer instruction.
 
+The initial smoke cells ran source and recipient through step 1500. In the 2026-07-22 extension,
+the source prompt can instead run at any registered donor checkpoint while the clean prompt runs
+at any independently selected recipient checkpoint. The transplanted vector comes from the donor
+model; all computation after the patched boundary remains recipient-side.
+
 These modes intentionally do not patch the whole prompt. Their source and clean recipient token
 sequences are aligned from the final generation-prefix token backward. The grid includes every
 identical suffix token and the first unequal token pair, then stops. This makes the final token the
@@ -125,9 +130,10 @@ The colored value remains clean-label probability. Each artifact additionally re
 source-correct-label probability for every cell and its clean-recipient baseline, so hover details
 can distinguish transfer of the donor's particular answer letter from nonspecific corruption.
 The source/recipient residual states also carry a five-way answer-label logit lens: final norm,
-selected A–E unembedding rows, and a softmax over A–E. Hover text displays each side's top-p=0.9
-label set. The lens is observational and unpatched; the cell probability still comes from the full
-causal recipient forward pass.
+selected A–E unembedding rows, and a softmax over A–E. For a mixed-checkpoint cell, the source lens
+uses the donor's final norm and unembedding and the clean lens uses the recipient's. Hover text
+displays each side's top-p=0.9 label set. The lens is observational and unpatched; the cell
+probability still comes from the full causal recipient forward pass.
 
 ## Across-time intervention
 
@@ -155,13 +161,14 @@ model may be unable to read it, and the transplant may be off-manifold for its l
 
 ## Site controls and all-function mean
 
-The exported site presents the two temporal artifact directions through one **Checkpoint
-transfer** mode. Recipient and donor steps are independent: donor-before-recipient resolves to the
-registered across-time artifact, while donor-after-recipient resolves to the registered
-later-into-earlier artifact. Equal steps are shown as unprocessed identity cells because no
-same-checkpoint grid is stored. The separate prompt-source modes—**Different function name**,
-**Shift choices +1**, **Derange choices**, and **Unrelated MCQ**—keep source and recipient at one
-recipient checkpoint and disable the donor-step control.
+The exported site presents the two clean-prompt temporal artifact directions through one
+**Checkpoint transfer** mode. Recipient and donor steps are independent: donor-before-recipient
+resolves to the registered across-time artifact, while donor-after-recipient resolves to the
+registered later-into-earlier artifact. Equal steps are shown as unprocessed identity cells because
+no clean-prompt same-checkpoint grid is stored. **Different function name** remains same-checkpoint.
+**Shift choices +1**, **Derange choices**, and **Unrelated MCQ** expose independent source and
+recipient checkpoint sliders; their equal-step diagonals are measured prompt interventions rather
+than identities.
 
 The function probe includes an **Average over all 19 functions** option. A measured mean is shown
 only when the exact selection has a measured grid for every registered function. Cells are
@@ -198,7 +205,9 @@ Each artifact identifies model/run/interface/plan/donor step and stores, per fun
 
 The three final-suffix answer-label controls also store the source prompt's correct label, its
 per-cell probability and clean-recipient delta, the exact source option/question metadata, and the
-source/recipient five-way residual logit-lens distributions.
+source/recipient five-way residual logit-lens distributions. Mixed-checkpoint artifacts explicitly
+record `checkpoint_relation=cross_checkpoint`; the artifact donor step and plan recipient step
+identify which readout produced each side.
 
 Global `block_weights` artifacts instead store one probability per decoder layer, the clean source
 and recipient baselines, the exact rendered prompt, and an explicit `layer_only` axis marker. They
@@ -301,6 +310,20 @@ not computed or stored. The fixed seed shuffles only within a tier. The complete
 constructed before existing artifacts are removed, so resume preserves the relative order of all
 unfinished cells. This changes only computation order and supersedes the 2026-07-20 ordering for
 future work.
+
+### Prompt x checkpoint answer-label atlas — 2026-07-22
+
+The three answer-label prompt controls now cross all 18 donor and 18 recipient checkpoints for
+OLMo `resid_post`. Their schedule reuses the five deterministic checkpoint tiers above, but all
+four endpoint corners are computable because same-checkpoint prompt pairs are not identity
+interventions. Within each tier, recipient/donor/mode triples are shuffled with seed 20260715.
+The complete order is built before existing artifacts are removed, so the step-1500 smoke cells
+and every later interruption preserve deterministic resume ordering.
+
+Each cell intentionally captures one donor prompt bank, releases the donor model, loads the
+recipient, writes one complete JSON artifact atomically, and releases the bank. This bounds host
+memory and makes any completed cell resumable at the cost of checkpoint reloads. Partial exports
+show only finished cells and never fill the remaining plane synthetically.
 
 ## Interpretation cautions
 

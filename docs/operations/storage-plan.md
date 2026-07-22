@@ -62,6 +62,18 @@ time and inspect both repository and cache filesystems before downloading the ne
 The cache is shared state. Evict only files known to belong to this experiment and only after
 checking that no other live process is using them.
 
+## Prompt x checkpoint answer-label atlas budget — 2026-07-22
+
+The OLMo answer-label extension contains `18 × 18 × 3 = 972` residual grids. Unlike clean-prompt
+checkpoint transfer, its 54 same-checkpoint diagonal cells are real prompt interventions and are
+retained. The three step-1500 smoke artifacts measured about 7.5 MB raw and 2.0 MB each after site
+compaction. At that measured size, the complete raw plus browser-exported atlas is approximately
+8.7 GiB, including the three existing cells but excluding small logs and atomic-write headroom.
+
+No hidden-state bank or duplicate model checkpoint is retained. Every grid is written atomically;
+the donor bank for one cell is released after its recipient pass. Preserve the normal 8 GiB free-
+space reserve in addition to this estimate.
+
 ## Preflight gates
 
 Immediately before an authorized capacity probe:

@@ -13,6 +13,7 @@ from oocr_training_dynamics.contracts import (
     FINAL_STEP,
     LORA_RANKS,
     RESUME_STEPS,
+    PatchingInterface,
     RunKey,
     TrainingCondition,
     TrainingSpec,
@@ -66,9 +67,14 @@ def test_batch_ablation_run_path_is_isolated_from_the_baseline() -> None:
     )
 
     assert str(baseline.relative_dir()) == "olmo3-7b/correct/seed_20260715"
-    assert str(ablation.relative_dir()) == (
-        "olmo3-7b/correct/seed_20260715/effective_batch_16"
-    )
+    assert str(ablation.relative_dir()) == ("olmo3-7b/correct/seed_20260715/effective_batch_16")
+
+
+def test_checkpoint_batch_and_weight_interface_helpers_fail_loudly() -> None:
+    with pytest.raises(ValueError, match="effective batch size"):
+        checkpoint_steps_for_batch_size(3)
+    assert PatchingInterface.TOKEN_WEIGHTS.patches_token_weights
+    assert not PatchingInterface.RESID_POST.patches_token_weights
 
 
 def test_training_spec_rejects_run_batch_mismatch() -> None:
@@ -99,6 +105,8 @@ def test_full_finetune_namespace_is_reserved_but_not_routed_through_lora() -> No
     assert str(run.relative_dir()).endswith("full_finetune")
     with pytest.raises(ValueError, match="ZeRO-3"):
         training_spec_for_run(run)
+    with pytest.raises(ValueError, match="dedicated offload"):
+        TrainingSpec(run)
 
 
 def test_batch_and_rank_axes_cannot_be_crossed_accidentally() -> None:

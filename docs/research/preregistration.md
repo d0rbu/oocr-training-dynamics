@@ -413,6 +413,40 @@ of all labels, effects that do not track the source's actual letter, or isolated
 cells would weaken this interpretation. All layers, functions, and the complete preregistered
 suffix axis will be shown; no late-layer band will be selected after viewing results.
 
+## Prompt x checkpoint answer-label amendment — 2026-07-22, before any mixed-cell GPU run
+
+After the three OLMo step-1500 same-checkpoint controls were measured, the user requested a second
+post-hoc axis: independently vary the model checkpoint that produces the counterfactual source
+state and the checkpoint that receives it. This extension was specified after the original
+answer-label heatmaps were visible. It is exploratory and cannot retroactively strengthen H1–H4
+or the preceding readout prediction.
+
+- The first atlas is correct-condition OLMo 3 7B, `resid_post`, the same 19 code-choice records,
+  and the unchanged `cyclic_choices`, `deranged_choices`, and `unrelated_question` prompts.
+- All 18 registered recipient checkpoints and all 18 registered donor checkpoints are crossed for
+  each mode: `18 × 18 × 3 = 972` measured cells when complete. A same-checkpoint diagonal remains
+  a real prompt intervention because the source and clean prompts differ; it is neither analytic
+  identity nor an imputed value.
+- The source prompt is run through donor checkpoint `d`. Its selected activation, unpatched answer
+  probabilities, and A–E logit lens use checkpoint `d`, including `d`'s final normalization and
+  unembedding. The clean prompt, clean baseline, recipient lens, and every computation after the
+  transplanted cell use recipient checkpoint `r`.
+- Source and recipient still share one pinned base revision, tokenizer, hidden basis, LoRA target
+  schema, function set, and answer-label tokenization. No state crosses model families.
+- Raw clean-label and source-label probabilities remain the outcomes. The exact donor and
+  recipient steps are serialized; missing pairs remain unprocessed with no interpolation.
+- The deterministic seed-20260715 staging order uses the existing checkpoint tiers, generalized
+  to include meaningful diagonals: all four endpoint corners first, then endpoint/step-96
+  intersections, the remaining endpoint border, the remaining step-96 row or column, and finally
+  every other cell. Existing files are filtered only after the complete order is constructed.
+
+The key descriptive question is whether a late learned source readout transfers into recipients
+that have not yet acquired OOCR, and conversely whether early source states cease to control later
+recipients. Because prompt content and checkpoint time both differ in off-diagonal cells, this is
+a deliberately factorial causal atlas, not an estimate of either factor in isolation. Claims will
+use coherent token-by-layer/checkpoint regions and per-function consistency rather than selected
+individual cells.
+
 ## Prior information used for predictions
 
 The earlier repository replicated OLMo-2 7B rule recovery and observed OLMo-3 recovery after 4,096

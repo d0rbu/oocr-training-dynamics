@@ -71,10 +71,20 @@ class PatchingMode(StrEnum):
 
     @property
     def uses_prompt_counterfactual(self) -> bool:
-        """Whether source and recipient are prompts run at the same checkpoint."""
+        """Whether source and recipient use different rendered prompts."""
 
         return self in {
             PatchingMode.ACROSS_SAMPLE,
+            PatchingMode.CYCLIC_CHOICES,
+            PatchingMode.DERANGED_CHOICES,
+            PatchingMode.UNRELATED_QUESTION,
+        }
+
+    @property
+    def supports_independent_checkpoint_donor(self) -> bool:
+        """Whether a prompt counterfactual may also come from another checkpoint."""
+
+        return self in {
             PatchingMode.CYCLIC_CHOICES,
             PatchingMode.DERANGED_CHOICES,
             PatchingMode.UNRELATED_QUESTION,

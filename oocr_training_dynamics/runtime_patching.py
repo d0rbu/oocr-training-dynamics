@@ -87,6 +87,7 @@ WeightSourceRecord = tuple[PromptPatchView, t.Tensor]
 WeightSourceBank = dict[str, WeightSourceRecord]
 ProbabilityForward = Callable[[t.nn.Module, t.Tensor, t.Tensor, t.Tensor], t.Tensor]
 ProbabilityGrid = tuple[tuple[float, ...], ...]
+AnswerLabelLens = tuple[tuple[tuple[float, ...], ...], ...]
 ANSWER_LOGIT_LENS_TOP_P = 0.9
 
 
@@ -111,6 +112,21 @@ class PromptCounterfactualSpec:
     source_question: str | None
     patch_direction: str
     stops_at_first_difference: bool
+
+
+@dataclass(frozen=True)
+class PromptCounterfactualSourceRecord:
+    """CPU-resident donor-prompt state plus its donor-side answer readout."""
+
+    spec: PromptCounterfactualSpec
+    source_view: PromptPatchView
+    recipient_view: PromptPatchView
+    source_activations: tuple[t.Tensor, ...]
+    source_probabilities: t.Tensor
+    source_answer_logit_lens: AnswerLabelLens
+
+
+PromptCounterfactualSourceBank = dict[str, PromptCounterfactualSourceRecord]
 
 
 @dataclass(frozen=True)
@@ -659,7 +675,7 @@ def _answer_label_logit_lens(
     residual_activations: tuple[t.Tensor, ...],
     token_indices: tuple[int, ...],
     candidate_ids: t.Tensor,
-) -> tuple[tuple[tuple[float, ...], ...], ...]:
+) -> AnswerLabelLens:
     """Apply final norm and selected A-E unembedding rows to residual states."""
 
     if not residual_activations or not token_indices:
@@ -1187,6 +1203,80 @@ def _capture_clean_source_bank(
     return source_by_record
 
 
+def _capture_prompt_counterfactual_source_bank(
+    model: t.nn.Module,
+    targets: tuple[PatchTarget, ...],
+    residual_targets: tuple[PatchTarget, ...],
+    processor: Any,
+    records: tuple[ReflectionRecord, ...],
+    mode: PatchingMode,
+    interface: PatchingInterface,
+) -> PromptCounterfactualSourceBank:
+    """Capture one counterfactual prompt bank using the donor checkpoint readout."""
+
+    if not mode.uses_prompt_counterfactual:
+        raise ValueError("counterfactual source capture requires a prompt mode")
+    source_by_record: PromptCounterfactualSourceBank = {}
+    patch_direction: str | None = None
+    for record in records:
+        counterfactual = _prompt_counterfactual_spec(record, mode)
+        source_view, recipient_view = _prompt_counterfactual_views(
+            processor,
+            record,
+            mode,
+            counterfactual,
+        )
+        source_candidate_ids, _recipient_candidate_ids = _counterfactual_candidate_ids(
+            processor,
+            record,
+            counterfactual,
+        )
+        source_activations, source_probabilities = _capture(
+            model,
+            targets,
+            source_view.input_ids,
+            source_view.attention_mask,
+            source_candidate_ids,
+        )
+        if interface is PatchingInterface.RESID_POST:
+            source_residual_activations = source_activations
+        else:
+            source_residual_activations, _source_residual_probabilities = _capture(
+                model,
+                residual_targets,
+                source_view.input_ids,
+                source_view.attention_mask,
+                source_candidate_ids,
+            )
+        positions = reverse_token_position_pairs(
+            source_view.anchor_index,
+            recipient_view.anchor_index,
+            source_view.stop_index,
+            recipient_view.stop_index,
+        )
+        source_answer_logit_lens = _answer_label_logit_lens(
+            model,
+            source_residual_activations,
+            tuple(position.source_index for position in positions),
+            source_candidate_ids,
+        )
+        source_by_record[record.record_id] = PromptCounterfactualSourceRecord(
+            spec=counterfactual,
+            source_view=source_view,
+            recipient_view=recipient_view,
+            source_activations=source_activations,
+            source_probabilities=source_probabilities,
+            source_answer_logit_lens=source_answer_logit_lens,
+        )
+        if patch_direction is None:
+            patch_direction = counterfactual.patch_direction
+        elif patch_direction != counterfactual.patch_direction:
+            raise AssertionError("prompt patch direction changed across records")
+    if patch_direction is None:
+        raise RuntimeError("prompt-counterfactual patching selected no records")
+    return source_by_record
+
+
 def _capture_weight_source_bundle(
     model: t.nn.Module,
     blocks: tuple[t.nn.Module, ...],
@@ -1676,6 +1766,7 @@ def _patch_record(
     recipient_probabilities: t.Tensor | None = None,
     source_residual_activations: tuple[t.Tensor, ...] | None = None,
     recipient_residual_activations: tuple[t.Tensor, ...] | None = None,
+    precomputed_answer_logit_lens: dict[str, object] | None = None,
 ) -> dict[str, object]:
     positions = reverse_token_position_pairs(
         source_view.anchor_index,
@@ -1710,7 +1801,9 @@ def _patch_record(
     )
     if (source_residual_activations is None) != (recipient_residual_activations is None):
         raise ValueError("logit lens requires both source and recipient residual activations")
-    answer_logit_lens: dict[str, object] | None = None
+    if precomputed_answer_logit_lens is not None and source_residual_activations is not None:
+        raise ValueError("logit lens must be precomputed or derived in one model, not both")
+    answer_logit_lens = precomputed_answer_logit_lens
     if source_residual_activations is not None and recipient_residual_activations is not None:
         source_lens = _answer_label_logit_lens(
             model,
@@ -1844,6 +1937,164 @@ def _patch_temporal_source_bank(
             )
         )
     return serialized
+
+
+def _patch_prompt_counterfactual_source_bank(
+    model: t.nn.Module,
+    targets: tuple[PatchTarget, ...],
+    residual_targets: tuple[PatchTarget, ...],
+    processor: Any,
+    records: tuple[ReflectionRecord, ...],
+    mode: PatchingMode,
+    source_by_record: PromptCounterfactualSourceBank,
+    *,
+    source_step: int,
+    recipient_step: int,
+) -> tuple[list[dict[str, object]], str]:
+    """Patch donor-prompt states while keeping each side's own unpatched readout."""
+
+    serialized: list[dict[str, object]] = []
+    patch_direction: str | None = None
+    for record in records:
+        source = source_by_record[record.record_id]
+        _source_candidate_ids, recipient_candidate_ids = _counterfactual_candidate_ids(
+            processor,
+            record,
+            source.spec,
+        )
+        recipient_residual_activations, recipient_probabilities = _capture(
+            model,
+            residual_targets,
+            source.recipient_view.input_ids,
+            source.recipient_view.attention_mask,
+            recipient_candidate_ids,
+        )
+        positions = reverse_token_position_pairs(
+            source.source_view.anchor_index,
+            source.recipient_view.anchor_index,
+            source.source_view.stop_index,
+            source.recipient_view.stop_index,
+        )
+        recipient_answer_logit_lens = _answer_label_logit_lens(
+            model,
+            recipient_residual_activations,
+            tuple(position.recipient_index for position in positions),
+            recipient_candidate_ids,
+        )
+        answer_logit_lens: dict[str, object] = {
+            "kind": "five_way_answer_label",
+            "labels": tuple("ABCDE"),
+            "normalization": "softmax over A-E after each side's final norm and selected unembedding rows",
+            "display_top_p": ANSWER_LOGIT_LENS_TOP_P,
+            "residual_boundary": "decoder block output before final model normalization",
+            "source_checkpoint_step": source_step,
+            "recipient_checkpoint_step": recipient_step,
+            "source_probabilities": source.source_answer_logit_lens,
+            "recipient_probabilities": recipient_answer_logit_lens,
+        }
+        serialized.append(
+            _patch_record(
+                model,
+                targets,
+                processor,
+                record,
+                mode,
+                source.source_view,
+                source.recipient_view,
+                source.source_activations,
+                source.source_probabilities,
+                counterfactual=source.spec,
+                recipient_probabilities=recipient_probabilities,
+                precomputed_answer_logit_lens=answer_logit_lens,
+            )
+        )
+        if patch_direction is None:
+            patch_direction = source.spec.patch_direction
+        elif patch_direction != source.spec.patch_direction:
+            raise AssertionError("prompt patch direction changed across records")
+    if patch_direction is None:
+        raise RuntimeError("prompt-counterfactual patching selected no records")
+    return serialized, patch_direction
+
+
+def _run_prompt_counterfactual_pair(
+    root: Path,
+    run: RunKey,
+    spec: ModelSpec,
+    processor: Any,
+    records: tuple[ReflectionRecord, ...],
+    plan: PatchingPlan,
+    donor_step: int,
+) -> None:
+    """Run one prompt-counterfactual x checkpoint cell and write it atomically."""
+
+    if not plan.mode.uses_prompt_counterfactual or plan.interface.patches_weights:
+        raise ValueError("prompt-counterfactual pair requires an activation interface")
+    donor_model = _load_checkpoint_model(root, run, spec, donor_step)
+    donor_blocks = resolve_decoder_blocks(donor_model, spec)
+    donor_targets = _resolve_patch_targets(donor_blocks, plan.interface)
+    donor_residual_targets = _resolve_patch_targets(
+        donor_blocks,
+        PatchingInterface.RESID_POST,
+    )
+    try:
+        source_by_record = _capture_prompt_counterfactual_source_bank(
+            donor_model,
+            donor_targets,
+            donor_residual_targets,
+            processor,
+            records,
+            plan.mode,
+            plan.interface,
+        )
+    finally:
+        _release_model(donor_model)
+
+    recipient_model = _load_checkpoint_model(root, run, spec, plan.recipient_step)
+    recipient_blocks = resolve_decoder_blocks(recipient_model, spec)
+    recipient_targets = _resolve_patch_targets(recipient_blocks, plan.interface)
+    recipient_residual_targets = _resolve_patch_targets(
+        recipient_blocks,
+        PatchingInterface.RESID_POST,
+    )
+    try:
+        serialized, patch_direction = _patch_prompt_counterfactual_source_bank(
+            recipient_model,
+            recipient_targets,
+            recipient_residual_targets,
+            processor,
+            records,
+            plan.mode,
+            source_by_record,
+            source_step=donor_step,
+            recipient_step=plan.recipient_step,
+        )
+    finally:
+        _release_model(recipient_model)
+
+    output = _patch_output_path(root, run, plan, donor_step)
+    write_json(
+        output,
+        {
+            "model": spec,
+            "run": run,
+            "plan": plan,
+            "donor_step": donor_step,
+            "patch_direction": patch_direction,
+            "checkpoint_relation": (
+                "same_checkpoint" if donor_step == plan.recipient_step else "cross_checkpoint"
+            ),
+            "records": serialized,
+        },
+    )
+    print(
+        f"[patch] {run.model}/{run.condition.value} {plan.interface.value}/"
+        f"{plan.mode.value} "
+        f"recipient={plan.recipient_step} donor={donor_step} -> {output}",
+        flush=True,
+    )
+    del source_by_record
+    gc.collect()
 
 
 def _write_temporal_artifact(
@@ -2139,6 +2390,115 @@ def run_temporal_patching_matrix(
             _release_model(recipient_model)
 
 
+def run_prompt_counterfactual_patching_matrix(
+    root: Path,
+    run: RunKey,
+    recipient_steps: tuple[int, ...],
+    donor_steps: tuple[int, ...],
+    modes: tuple[PatchingMode, ...],
+    interface: PatchingInterface,
+    *,
+    shuffle_seed: int | None = None,
+    allow_provisional_model: bool = False,
+) -> None:
+    """Fill a prompt-counterfactual x checkpoint plane, including its diagonals."""
+
+    if not t.cuda.is_available():
+        raise RuntimeError("checkpoint patching requires CUDA")
+    for name, steps in (("recipient", recipient_steps), ("donor", donor_steps)):
+        if tuple(sorted(set(steps))) != steps or any(
+            step not in CHECKPOINT_STEPS for step in steps
+        ):
+            raise ValueError(
+                f"prompt-counterfactual {name} steps must be unique, increasing checkpoints"
+            )
+    if (
+        not modes
+        or len(set(modes)) != len(modes)
+        or any(not mode.supports_independent_checkpoint_donor for mode in modes)
+    ):
+        raise ValueError(
+            "prompt-counterfactual checkpoint modes must be unique answer-label controls"
+        )
+    if interface.patches_weights:
+        raise ValueError("prompt-counterfactual checkpoint matrices are activation-only")
+    if shuffle_seed is not None and shuffle_seed < 0:
+        raise ValueError("prompt-counterfactual matrix shuffle seed must be non-negative")
+
+    scheduled_pairs = [
+        (recipient_step, donor_step, mode)
+        for recipient_step in recipient_steps
+        for donor_step in donor_steps
+        for mode in modes
+    ]
+    if shuffle_seed is not None:
+        scheduled_pairs = _seeded_priority_temporal_order(scheduled_pairs, shuffle_seed)
+
+    pending_pairs: list[tuple[int, int, PatchingMode]] = []
+    skipped = 0
+    for recipient_step, donor_step, mode in scheduled_pairs:
+        plan = PatchingPlan(
+            mode=mode,
+            recipient_step=recipient_step,
+            donor_steps=(donor_step,),
+            interface=interface,
+        )
+        if _patch_output_path(root, run, plan, donor_step).is_file():
+            skipped += 1
+        else:
+            pending_pairs.append((recipient_step, donor_step, mode))
+    if skipped:
+        print(
+            f"[prompt-checkpoint-matrix] {run.model}/{run.condition.value} "
+            f"{interface.value} skipped {skipped} existing artifact(s)",
+            flush=True,
+        )
+    if not pending_pairs:
+        return
+    if shuffle_seed is not None:
+        tier_counts = [0] * (len(TEMPORAL_PRIORITY_LABELS) + 1)
+        for pair in pending_pairs:
+            tier_counts[_temporal_priority_tier(pair)] += 1
+        count_summary = ", ".join(
+            [
+                *(
+                    f"{label}: {count}"
+                    for label, count in zip(
+                        TEMPORAL_PRIORITY_LABELS,
+                        tier_counts[:-1],
+                        strict=True,
+                    )
+                ),
+                f"remainder: {tier_counts[-1]}",
+            ]
+        )
+        print(
+            f"[prompt-checkpoint-matrix] priority-shuffled {len(pending_pairs)} "
+            f"missing cells with seed {shuffle_seed} ({count_summary})",
+            flush=True,
+        )
+
+    spec = get_model_spec(run.model, allow_provisional=allow_provisional_model)
+    processor = load_processor(spec)
+    records = _selected_records(run.seed)
+    for recipient_step, donor_step, mode in pending_pairs:
+        plan = PatchingPlan(
+            mode=mode,
+            recipient_step=recipient_step,
+            donor_steps=(donor_step,),
+            interface=interface,
+        )
+        _run_prompt_counterfactual_pair(
+            root,
+            run,
+            spec,
+            processor,
+            records,
+            plan,
+            donor_step,
+        )
+
+
 def _run_weight_patching(
     root: Path,
     run: RunKey,
@@ -2260,95 +2620,16 @@ def run_patching(
         )
         return
     if plan.mode.uses_prompt_counterfactual:
-        donor_step = pending[0]
-        recipient_model = _load_checkpoint_model(root, run, spec, plan.recipient_step)
-        recipient_blocks = resolve_decoder_blocks(recipient_model, spec)
-        recipient_targets = _resolve_patch_targets(recipient_blocks, plan.interface)
-        residual_targets = _resolve_patch_targets(
-            recipient_blocks,
-            PatchingInterface.RESID_POST,
-        )
-        serialized: list[dict[str, object]] = []
-        patch_direction: str | None = None
-        try:
-            for record in records:
-                counterfactual = _prompt_counterfactual_spec(record, plan.mode)
-                source_view, recipient_view = _prompt_counterfactual_views(
-                    processor,
-                    record,
-                    plan.mode,
-                    counterfactual,
-                )
-                source_candidate_ids, recipient_candidate_ids = _counterfactual_candidate_ids(
-                    processor, record, counterfactual
-                )
-                source_activations, source_probabilities = _capture(
-                    recipient_model,
-                    recipient_targets,
-                    source_view.input_ids,
-                    source_view.attention_mask,
-                    source_candidate_ids,
-                )
-                if plan.interface is PatchingInterface.RESID_POST:
-                    source_residual_activations = source_activations
-                else:
-                    source_residual_activations, _source_residual_probabilities = _capture(
-                        recipient_model,
-                        residual_targets,
-                        source_view.input_ids,
-                        source_view.attention_mask,
-                        source_candidate_ids,
-                    )
-                recipient_residual_activations, recipient_probabilities = _capture(
-                    recipient_model,
-                    residual_targets,
-                    recipient_view.input_ids,
-                    recipient_view.attention_mask,
-                    recipient_candidate_ids,
-                )
-                serialized.append(
-                    _patch_record(
-                        recipient_model,
-                        recipient_targets,
-                        processor,
-                        record,
-                        plan.mode,
-                        source_view,
-                        recipient_view,
-                        source_activations,
-                        source_probabilities,
-                        counterfactual=counterfactual,
-                        recipient_probabilities=recipient_probabilities,
-                        source_residual_activations=source_residual_activations,
-                        recipient_residual_activations=recipient_residual_activations,
-                    )
-                )
-                if patch_direction is None:
-                    patch_direction = counterfactual.patch_direction
-                elif patch_direction != counterfactual.patch_direction:
-                    raise AssertionError("prompt patch direction changed across records")
-        finally:
-            _release_model(recipient_model)
-        if patch_direction is None:
-            raise RuntimeError("prompt-counterfactual patching selected no records")
-        output = _patch_output_path(root, run, plan, donor_step)
-        write_json(
-            output,
-            {
-                "model": spec,
-                "run": run,
-                "plan": plan,
-                "donor_step": donor_step,
-                "patch_direction": patch_direction,
-                "records": serialized,
-            },
-        )
-        print(
-            f"[patch] {run.model}/{run.condition.value} {plan.interface.value}/"
-            f"{plan.mode.value} "
-            f"recipient={plan.recipient_step} donor={donor_step} -> {output}",
-            flush=True,
-        )
+        for donor_step in pending:
+            _run_prompt_counterfactual_pair(
+                root,
+                run,
+                spec,
+                processor,
+                records,
+                replace(plan, donor_steps=(donor_step,)),
+                donor_step,
+            )
         return
 
     for donor_step in pending:
@@ -2440,4 +2721,9 @@ def run_patching(
         gc.collect()
 
 
-__all__ = ["build_token_axis_metadata", "run_patching", "run_temporal_patching_matrix"]
+__all__ = [
+    "build_token_axis_metadata",
+    "run_patching",
+    "run_prompt_counterfactual_patching_matrix",
+    "run_temporal_patching_matrix",
+]

@@ -161,11 +161,13 @@ recipient LoRA projection contribution only at one selected token in one layer a
 the real token × layer axis. Both are checkpoint-transfer only; neither fabricates token values for
 the global result.
 
-A separately dated answer-label readout experiment stays activation-only and same-checkpoint. It
-patches the final shared suffix from shifted-choice, randomly deranged-choice, and unrelated
-non-coding MCQ sources into clean function probes. The source-correct letter is always different
-from the clean letter. Both labels' causal probabilities and a five-way residual logit lens are
-stored so label transfer can be separated from generic disruption.
+A separately dated answer-label readout experiment stays activation-only. Its first smoke cells
+were same-checkpoint; the 2026-07-22 extension independently varies the counterfactual source and
+clean recipient checkpoints. It patches the final shared suffix from shifted-choice, randomly
+deranged-choice, and unrelated non-coding MCQ sources into clean function probes. The source-
+correct letter is always different from the clean letter. Both labels' causal probabilities and
+a five-way residual logit lens are stored so label transfer can be separated from generic
+disruption. Each side's lens uses that side's own checkpoint readout.
 
 ## What is and is not controlled
 

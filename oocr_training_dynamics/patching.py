@@ -249,14 +249,18 @@ class PatchingPlan:
             step <= self.recipient_step for step in self.donor_steps
         ):
             raise ValueError("later-checkpoint donors must follow the recipient checkpoint")
-        if self.mode.uses_prompt_counterfactual and self.donor_steps != (self.recipient_step,):
+        if (
+            self.mode.uses_prompt_counterfactual
+            and not self.mode.supports_independent_checkpoint_donor
+            and self.donor_steps != (self.recipient_step,)
+        ):
             raise ValueError(
-                "prompt-counterfactual patching uses the recipient checkpoint as donor"
+                "this prompt-counterfactual mode uses the recipient checkpoint as donor"
             )
         if self.interface.patches_weights and self.mode.uses_prompt_counterfactual:
             raise ValueError(
-                "decoder-block weight patching requires two distinct checkpoints; "
-                "prompt counterfactuals at one checkpoint share the same weights"
+                "combined prompt-counterfactual and checkpoint transfer is activation-only; "
+                "select a checkpoint-transfer mode for weight patching"
             )
         expected_scope = (
             WEIGHT_PATCH_SCOPE if self.interface.patches_all_token_weights else PATCH_POSITION

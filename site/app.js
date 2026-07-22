@@ -1,7 +1,7 @@
 "use strict";
 
-const DATA_URL = "data/experiment.json?v=20260721b";
-const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260721b";
+const DATA_URL = "data/experiment.json?v=20260722a";
+const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260722a";
 const CONDITION_LABELS = {
   correct: "Correct I/O",
   wrong_alias: "Wrong alias",
@@ -43,6 +43,11 @@ const PROMPT_SOURCE_LABELS = {
   deranged_choices: "Random choice derangement",
   unrelated_question: "Unrelated non-coding MCQ",
 };
+const INDEPENDENT_PROMPT_CHECKPOINT_MODES = new Set([
+  "cyclic_choices",
+  "deranged_choices",
+  "unrelated_question",
+]);
 const SLIDER_UNITS = 10000;
 const ALL_FUNCTIONS_ID = "__all__";
 const PATCH_PRELOAD_CONCURRENCY = 4;
@@ -496,7 +501,8 @@ function curveAt(index) {
 }
 
 function usesCheckpointDonor() {
-  return state.patchMode === "checkpoint";
+  return state.patchMode === "checkpoint"
+    || (!weightPatchSelected() && INDEPENDENT_PROMPT_CHECKPOINT_MODES.has(state.patchMode));
 }
 
 function weightPatchSelected() {
@@ -512,11 +518,11 @@ function allTokenWeightPatchSelected() {
 }
 
 function patchSelectionApplicable() {
-  return !weightPatchSelected() || usesCheckpointDonor();
+  return !weightPatchSelected() || state.patchMode === "checkpoint";
 }
 
 function resolvedArtifactMode() {
-  if (!usesCheckpointDonor()) return state.patchMode;
+  if (state.patchMode !== "checkpoint") return state.patchMode;
   if (state.donorIndex < state.recipientIndex) return "across_time";
   if (state.donorIndex > state.recipientIndex) return "later_checkpoint";
   return null;
@@ -548,10 +554,10 @@ function currentPatchReferences() {
   const currentRecipient = state.data.checkpoints[state.recipientIndex];
   const currentDonor = state.data.checkpoints[state.donorIndex];
   const references = [];
-  if (!usesCheckpointDonor()) {
+  if (state.patchMode !== "checkpoint") {
     Object.entries(interfaceManifest[resolvedArtifactMode()] ?? {}).forEach(([recipient, donors]) => {
-      Object.values(donors).forEach((reference) => {
-        references.push({ recipient: Number(recipient), donor: Number(recipient), reference });
+      Object.entries(donors).forEach(([donor, reference]) => {
+        references.push({ recipient: Number(recipient), donor: Number(donor), reference });
       });
     });
   } else {
@@ -856,7 +862,7 @@ async function refreshPatchManifest() {
 }
 
 function tokenAxisMode() {
-  return usesCheckpointDonor() ? "across_time" : state.patchMode;
+  return state.patchMode === "checkpoint" ? "across_time" : state.patchMode;
 }
 
 function normalizePatchCheckpointIndices() {
@@ -1273,7 +1279,9 @@ function renderPatching() {
         && position.sourceIndex === position.recipientIndex
         && position.sourceTokenId === position.recipientTokenId);
     const sourcePrefix = promptSourcePrefix();
-    const recipientPrefix = usesCheckpointDonor() ? "recipient " : "clean/recipient ";
+    const recipientPrefix = state.patchMode === "checkpoint"
+      ? "recipient "
+      : "clean/recipient ";
     const sourceCoordinate = layerOnly
       ? "donor checkpoint · complete learned block update"
       : position.aggregate
@@ -1303,7 +1311,7 @@ function renderPatching() {
       if (!patch.processed) {
         cell.classList.add("unprocessed");
         const unavailableReason = !patch.applicable
-          ? "Prompt variants use the same checkpoint weights, so there is no distinct donor weight state to patch. Select Checkpoint transfer."
+          ? "The combined prompt-counterfactual × checkpoint experiment is activation-only. Select an activation boundary, or select Checkpoint transfer for a weight-only intervention."
           : patchLoadError
           ? "A measured file exists, but it could not be loaded. No fallback value is displayed."
           : patchLoading
@@ -1387,7 +1395,7 @@ function renderPatching() {
     legend.append(el("span", {}, "higher P(correct)"));
   } else if (!patch.applicable) {
     legend.append(el("i", { class: "unprocessed" }));
-    legend.append(el("span", {}, "not applicable · prompt variants share checkpoint weights"));
+    legend.append(el("span", {}, "not applicable · combined prompt × weight intervention undefined"));
   } else if (patchLoading) {
     legend.append(el("i", { class: "unprocessed" }));
     legend.append(el("span", {}, "loading measured values · no value shown yet"));
@@ -1456,9 +1464,9 @@ function renderPatching() {
     let explanation;
     if (weightPatchSelected()) {
       sourceQuestion = patch.aggregate
-        ? `Same checkpoint weights across all ${patch.functionCount} prompt pairs`
-        : "Same checkpoint weights for source and clean prompts";
-      explanation = "Prompt counterfactuals change activations, but they do not create a second set of checkpoint weights. Weight patching is therefore undefined for this source mode; select Checkpoint transfer to choose distinct donor and recipient weights.";
+        ? `Combined prompt and weight intervention undefined across ${patch.functionCount} pairs`
+        : "Combined prompt and weight intervention undefined";
+      explanation = "These modes transplant a counterfactual prompt activation, optionally across checkpoints. A weight-only patch cannot encode that changed prompt state, so the combined intervention is intentionally undefined. Select an activation boundary, or select Checkpoint transfer for a clean-prompt weight intervention.";
     } else if (state.patchMode === "across_sample") {
       sourceQuestion = patch.aggregate
         ? `Mean over all ${patch.functionCount} fixed-derangement dirty-name questions`
@@ -1480,17 +1488,23 @@ function renderPatching() {
         : `${patch.sourceQuestion} · correct ${sourceLetter}, clean probe correct ${cleanLetter}`;
       explanation = "The donor is an unrelated non-coding MCQ in the same five-choice format, with a correct letter guaranteed to differ from the paired clean probe. Transfer of that donor label at the final token would support a generic answer-label readout rather than function-specific content. Cell color remains clean P(correct); hover shows the donor-label effect and A-E logit lens.";
     }
+    if (usesCheckpointDonor()) {
+      const sourceCheckpoint = donor === 0 ? "frozen base" : `step ${donor}`;
+      const recipientCheckpoint = recipient === 0 ? "frozen base" : `step ${recipient}`;
+      sourceQuestion += ` · ${sourceCheckpoint} source → ${recipientCheckpoint} clean recipient`;
+      explanation += ` The counterfactual representation and source-side logit lens come from ${sourceCheckpoint}; the clean baseline, clean-side lens, and every computation after the patched cell use ${recipientCheckpoint}.`;
+    }
     document.getElementById("source-question").textContent = sourceQuestion;
     document.getElementById("patch-explanation").textContent = explanation;
   }
   if (!patch.applicable) {
-    document.getElementById("patch-explanation").textContent = `Prompt counterfactuals share one checkpoint and therefore have no distinct donor weight state. Select Checkpoint transfer for weight patching. The purple ${allTokenWeightPatchSelected() ? "row" : "squares"} encode no result.`;
+    document.getElementById("patch-explanation").textContent = `The combined prompt-counterfactual × checkpoint experiment is activation-only. Select an activation boundary, or select Checkpoint transfer for weight patching. The purple ${allTokenWeightPatchSelected() ? "row" : "squares"} encode no result.`;
   } else if (patchLoadError) {
     document.getElementById("patch-explanation").textContent = `A measured artifact exists for this selection, but its data file could not be loaded (${patchLoadError}). No fallback value is shown.`;
   } else if (patchLoading) {
     document.getElementById("patch-explanation").textContent = "A measured artifact exists for this selection and is loading. The temporary purple hatch encodes no probability or delta.";
   } else if (!patch.processed) {
-    document.getElementById("patch-explanation").textContent = usesCheckpointDonor() && donor === recipient
+    document.getElementById("patch-explanation").textContent = state.patchMode === "checkpoint" && donor === recipient
       ? weightPatchSelected()
         ? `Recipient and donor are the same checkpoint. This exact identity intervention is not run or assigned a value. The purple ${allTokenWeightPatchSelected() ? "row" : "squares"} encode no result.`
         : "Recipient and donor are the same checkpoint. This exact identity intervention is not run or assigned a value. The purple squares encode no result."

@@ -102,6 +102,8 @@ cells instead. Missing behavioral curves remain explicitly synthetic.
 Final-suffix answer-label artifacts preserve a second typed matrix for the source-correct label and
 two compact A–E logit-lens tensors (source and recipient). They also preserve the deterministic
 choice permutation or unrelated-question identity needed to audit what the source label means.
+For mixed-checkpoint cells, the source lens is computed with the donor checkpoint's final norm and
+unembedding while the recipient lens and patched downstream forward use the recipient checkpoint.
 
 Measured evaluation exports also include one acquisition curve per registered function alongside
 the all-function aggregate. The aggregate is checked against the arithmetic mean of the 19

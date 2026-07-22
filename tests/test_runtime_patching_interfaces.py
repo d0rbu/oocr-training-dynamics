@@ -15,6 +15,7 @@ from oocr_training_dynamics.contracts import (
     TokenWeightRuntime,
     TrainingCondition,
 )
+from oocr_training_dynamics.models import ModelSpec
 from oocr_training_dynamics.patching import PatchingPlan, TokenPositionPair
 from oocr_training_dynamics.runtime_patching import (
     _answer_label_logit_lens,
@@ -32,6 +33,7 @@ from oocr_training_dynamics.runtime_patching import (
     _skip_unchanged_decoder_prefix,
     _token_lora_projections,
     _token_weight_probability_forward,
+    run_prompt_counterfactual_patching_matrix,
     run_temporal_patching_matrix,
 )
 
@@ -547,6 +549,236 @@ def test_temporal_matrix_reuses_each_missing_source_and_recipient_load(
         (1, 2, PatchingMode.LATER_CHECKPOINT),
     ]
     assert written == patched
+
+
+def test_prompt_checkpoint_matrix_includes_diagonals_and_skips_existing_cells(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run = RunKey("olmo3-7b", TrainingCondition.CORRECT)
+    modes = (PatchingMode.CYCLIC_CHOICES, PatchingMode.UNRELATED_QUESTION)
+    dispatched: list[tuple[int, int, PatchingMode]] = []
+
+    def output_path(
+        _root: Path,
+        _run: RunKey,
+        plan: PatchingPlan,
+        donor_step: int,
+    ) -> Path:
+        return tmp_path / f"{plan.mode.value}-{plan.recipient_step}-{donor_step}.json"
+
+    existing = output_path(
+        tmp_path,
+        run,
+        PatchingPlan(PatchingMode.CYCLIC_CHOICES, 1_500, (1_500,)),
+        1_500,
+    )
+    existing.write_text("already measured")
+    monkeypatch.setattr(runtime_patching, "CHECKPOINT_STEPS", (0, 1_500))
+    monkeypatch.setattr(runtime_patching.t.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(runtime_patching, "_patch_output_path", output_path)
+    monkeypatch.setattr(runtime_patching, "get_model_spec", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(runtime_patching, "load_processor", lambda _spec: object())
+    monkeypatch.setattr(runtime_patching, "_selected_records", lambda _seed: ())
+
+    def run_pair(
+        _root: Path,
+        _run: RunKey,
+        _spec: object,
+        _processor: object,
+        _records: object,
+        plan: PatchingPlan,
+        donor_step: int,
+    ) -> None:
+        dispatched.append((plan.recipient_step, donor_step, plan.mode))
+
+    monkeypatch.setattr(runtime_patching, "_run_prompt_counterfactual_pair", run_pair)
+    run_prompt_counterfactual_patching_matrix(
+        tmp_path,
+        run,
+        (0, 1_500),
+        (0, 1_500),
+        modes,
+        PatchingInterface.RESID_POST,
+    )
+
+    expected = [
+        (recipient, donor, mode)
+        for recipient in (0, 1_500)
+        for donor in (0, 1_500)
+        for mode in modes
+        if not (recipient == 1_500 and donor == 1_500 and mode is PatchingMode.CYCLIC_CHOICES)
+    ]
+    assert dispatched == expected
+    assert (0, 0, PatchingMode.CYCLIC_CHOICES) in dispatched
+    assert (1_500, 1_500, PatchingMode.UNRELATED_QUESTION) in dispatched
+
+
+def test_prompt_checkpoint_pair_uses_donor_capture_and_recipient_readout_models(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run = RunKey("olmo3-7b", TrainingCondition.CORRECT)
+    plan = PatchingPlan(PatchingMode.DERANGED_CHOICES, 64, (0,))
+    loaded: list[int] = []
+    released: list[int] = []
+    captured_with: list[int] = []
+    patched_with: list[tuple[int, int, int]] = []
+    payloads: list[dict[str, object]] = []
+
+    def load_model(_root: Path, _run: RunKey, _spec: object, step: int) -> int:
+        loaded.append(step)
+        return step
+
+    monkeypatch.setattr(runtime_patching, "_load_checkpoint_model", load_model)
+    monkeypatch.setattr(runtime_patching, "resolve_decoder_blocks", lambda *_args: ())
+    monkeypatch.setattr(runtime_patching, "_resolve_patch_targets", lambda *_args: ())
+    monkeypatch.setattr(runtime_patching, "_release_model", released.append)
+
+    def capture_source(model: int, *_args: object) -> dict[str, object]:
+        captured_with.append(model)
+        return {"source": object()}
+
+    monkeypatch.setattr(
+        runtime_patching,
+        "_capture_prompt_counterfactual_source_bank",
+        capture_source,
+    )
+
+    def patch_source(
+        model: int,
+        _targets: object,
+        _residual_targets: object,
+        _processor: object,
+        _records: object,
+        _mode: PatchingMode,
+        _source: object,
+        *,
+        source_step: int,
+        recipient_step: int,
+    ) -> tuple[list[dict[str, object]], str]:
+        patched_with.append((model, source_step, recipient_step))
+        return [], "deranged_choice_source_into_clean_recipient"
+
+    monkeypatch.setattr(
+        runtime_patching,
+        "_patch_prompt_counterfactual_source_bank",
+        patch_source,
+    )
+    monkeypatch.setattr(runtime_patching, "_patch_output_path", lambda *_args: tmp_path / "out")
+    monkeypatch.setattr(
+        runtime_patching,
+        "write_json",
+        lambda _path, payload: payloads.append(payload),
+    )
+
+    runtime_patching._run_prompt_counterfactual_pair(
+        tmp_path,
+        run,
+        cast(ModelSpec, object()),
+        object(),
+        (),
+        plan,
+        0,
+    )
+
+    assert loaded == [0, 64]
+    assert released == [0, 64]
+    assert captured_with == [0]
+    assert patched_with == [(64, 0, 64)]
+    assert payloads[0]["checkpoint_relation"] == "cross_checkpoint"
+    assert payloads[0]["donor_step"] == 0
+
+
+def test_prompt_checkpoint_lenses_use_each_side_own_readout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = SimpleNamespace(record_id="probe")
+    spec = runtime_patching.PromptCounterfactualSpec(
+        source_messages=(),
+        source_function_id="source",
+        source_correct_choice_index=1,
+        source_choice_function_ids=None,
+        source_choice_texts=None,
+        source_question_id=None,
+        source_question=None,
+        patch_direction="source_into_recipient",
+        stops_at_first_difference=True,
+    )
+    view = runtime_patching.PromptPatchView(
+        input_ids=t.tensor([[1, 2]]),
+        attention_mask=t.ones((1, 2), dtype=t.int64),
+        anchor_index=1,
+        stop_index=1,
+        rendered_prompt="prompt",
+        token_ids=(1, 2),
+        token_labels=("one", "two"),
+    )
+    activations = (t.zeros((2, 3)),)
+    donor_lens = (((0.1, 0.2, 0.3, 0.2, 0.2),),)
+    recipient_lens = (((0.2, 0.1, 0.2, 0.3, 0.2),),)
+    lens_models: list[object] = []
+
+    monkeypatch.setattr(runtime_patching, "_prompt_counterfactual_spec", lambda *_args: spec)
+    monkeypatch.setattr(
+        runtime_patching,
+        "_prompt_counterfactual_views",
+        lambda *_args: (view, view),
+    )
+    monkeypatch.setattr(
+        runtime_patching,
+        "_counterfactual_candidate_ids",
+        lambda *_args: (t.arange(5), t.arange(5)),
+    )
+    monkeypatch.setattr(
+        runtime_patching,
+        "_capture",
+        lambda *_args: (activations, t.full((5,), 0.2)),
+    )
+
+    donor_model = object()
+    recipient_model = object()
+
+    def lens(model: object, *_args: object) -> object:
+        lens_models.append(model)
+        return donor_lens if model is donor_model else recipient_lens
+
+    monkeypatch.setattr(runtime_patching, "_answer_label_logit_lens", lens)
+    source_bank = runtime_patching._capture_prompt_counterfactual_source_bank(
+        cast(t.nn.Module, donor_model),
+        (),
+        (),
+        object(),
+        cast(tuple[runtime_patching.ReflectionRecord, ...], (record,)),
+        PatchingMode.CYCLIC_CHOICES,
+        PatchingInterface.RESID_POST,
+    )
+    precomputed: list[dict[str, object]] = []
+
+    def patch_record(*_args: object, **kwargs: object) -> dict[str, object]:
+        precomputed.append(cast(dict[str, object], kwargs["precomputed_answer_logit_lens"]))
+        return {"ok": True}
+
+    monkeypatch.setattr(runtime_patching, "_patch_record", patch_record)
+    serialized, direction = runtime_patching._patch_prompt_counterfactual_source_bank(
+        cast(t.nn.Module, recipient_model),
+        (),
+        (),
+        object(),
+        cast(tuple[runtime_patching.ReflectionRecord, ...], (record,)),
+        PatchingMode.CYCLIC_CHOICES,
+        source_bank,
+        source_step=0,
+        recipient_step=64,
+    )
+
+    assert lens_models == [donor_model, recipient_model]
+    assert precomputed[0]["source_probabilities"] == donor_lens
+    assert precomputed[0]["recipient_probabilities"] == recipient_lens
+    assert precomputed[0]["source_checkpoint_step"] == 0
+    assert precomputed[0]["recipient_checkpoint_step"] == 64
+    assert serialized == [{"ok": True}]
+    assert direction == "source_into_recipient"
 
 
 def test_temporal_matrix_dispatches_block_weights_without_activation_capture(

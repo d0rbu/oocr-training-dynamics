@@ -112,8 +112,8 @@ uv run python scripts/run_patching.py \
   --confirm-gpu-run
 ```
 
-The post-hoc answer-label readout controls are separate same-checkpoint modes. After a fresh GPU
-release, run the OLMo step-1500 residual smoke cells one mode at a time:
+The post-hoc answer-label readout controls began as separate same-checkpoint modes. After a fresh
+GPU release, run the OLMo step-1500 residual smoke cells one mode at a time:
 
 ```bash
 uv run python scripts/run_patching.py \
@@ -137,6 +137,23 @@ all 19 functions, both clean- and source-label probability matrices, and source/
 logit-lens distributions. For `unrelated_question`, fail if any source correct letter equals its
 paired clean letter. Do not launch these commands from documentation changes alone: the sentinel,
 capacity checks, and a new explicit GPU release remain mandatory.
+
+After those smoke artifacts pass, the 2026-07-22 prompt x checkpoint extension fills independent
+source and recipient checkpoint sliders for all three modes:
+
+```bash
+uv run python scripts/run_patching_matrix.py \
+  --model olmo3-7b --condition correct --interface resid_post \
+  --mode cyclic_choices --mode deranged_choices --mode unrelated_question \
+  --shuffle-seed 20260715 --confirm-gpu-run
+```
+
+This is a 972-cell atlas: 18 recipient checkpoints × 18 donor checkpoints × three source modes.
+Same-checkpoint diagonals are measured because the prompts differ. For off-diagonal cells, the
+source probabilities and source logit lens must come from the donor model's readout; the clean
+baseline, clean lens, and downstream patched computation must come from the recipient. Existing
+complete JSON files are skipped after constructing the full deterministic priority order. Use
+repeated `--recipient-step` and `--donor-step` flags for a predetermined smoke subset only.
 
 Across-time example with multiple earlier donors:
 
@@ -211,9 +228,10 @@ uv run python scripts/run_patching.py \
 ```
 
 Use `later_checkpoint` when the donor follows the recipient. `block_weights` rejects every
-prompt-counterfactual mode: source and clean prompts at one checkpoint share the same weights. The full
-temporal matrix is selectable through `run_patching_matrix.py --interface block_weights`; missing
-cells remain unprocessed until a separately authorized GPU run computes them.
+combined prompt-counterfactual mode: a weight-only intervention does not encode the simultaneously
+changed prompt state, even when checkpoints differ. The full clean-prompt temporal matrix is
+selectable through `run_patching_matrix.py --interface block_weights`; missing cells remain
+unprocessed until a separately authorized GPU run computes them.
 
 The distinct `token_weights` interface applies the donor LoRA contribution at one selected prompt
 token and layer at a time. It is much more expensive because one checkpoint pair contains a full
@@ -231,9 +249,9 @@ Validate that the artifact under `patching/sequence_end/token_weights/` contains
 the exact reverse-token axis, every registered layer, finite probabilities in `[0, 1]`, and the
 `selected_token_decoder_block` scope. Check measured wall time and disk/RAM/VRAM before deciding
 whether to schedule the full 306-cell temporal atlas. Never resume the earlier global
-`block_weights` command as a substitute for this token-local run. Both interfaces reject
-prompt-counterfactual modes because source and clean prompts within one checkpoint have identical
-weights.
+`block_weights` command as a substitute for this token-local run. Both interfaces reject combined
+prompt-counterfactual modes because that would mix a parameter intervention with the separately
+defined prompt-state intervention.
 
 ## 6a. Run the effective-batch ablation only after a new GPU release
 

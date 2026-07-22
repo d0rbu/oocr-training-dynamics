@@ -258,8 +258,9 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert "function buildCurveBatchSlider()" in javascript
     assert "function availableBatchSizes()" in javascript
     assert 'href="styles.css?v=20260721b"' in html
-    assert 'src="app.js?v=20260721b"' in html
-    assert 'const DATA_URL = "data/experiment.json?v=20260721b"' in javascript
+    assert 'src="app.js?v=20260722a"' in html
+    assert '"cyclic_choices",\n  "deranged_choices",\n  "unrelated_question"' in javascript
+    assert 'const DATA_URL = "data/experiment.json?v=20260722a"' in javascript
     assert "function buildCurveRankSelect()" in javascript
     assert "function normalizeCurveAxisSelections()" in javascript
     assert "function scaledExamplesFraction(" in javascript

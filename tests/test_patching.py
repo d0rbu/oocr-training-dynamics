@@ -123,12 +123,22 @@ def test_later_checkpoint_plan_requires_later_donors_and_allows_base_recipient()
         )
 
 
-def test_sample_plan_uses_the_same_checkpoint() -> None:
-    prompt_modes = tuple(mode for mode in PatchingMode if mode.uses_prompt_counterfactual)
-    for mode in prompt_modes:
-        PatchingPlan(mode, recipient_step=64, donor_steps=(64,))
-        with pytest.raises(ValueError, match="recipient checkpoint"):
-            PatchingPlan(mode, recipient_step=64, donor_steps=(32,))
+def test_different_name_plan_uses_the_same_checkpoint() -> None:
+    PatchingPlan(PatchingMode.ACROSS_SAMPLE, recipient_step=64, donor_steps=(64,))
+    with pytest.raises(ValueError, match="recipient checkpoint"):
+        PatchingPlan(PatchingMode.ACROSS_SAMPLE, recipient_step=64, donor_steps=(32,))
+
+
+def test_answer_label_prompt_plans_allow_independent_checkpoint_donors() -> None:
+    modes = tuple(mode for mode in PatchingMode if mode.supports_independent_checkpoint_donor)
+    assert modes == (
+        PatchingMode.CYCLIC_CHOICES,
+        PatchingMode.DERANGED_CHOICES,
+        PatchingMode.UNRELATED_QUESTION,
+    )
+    for mode in modes:
+        plan = PatchingPlan(mode, recipient_step=64, donor_steps=(0, 32, 64, 128))
+        assert plan.donor_steps == (0, 32, 64, 128)
 
 
 def test_block_weight_plan_is_layer_only_and_requires_checkpoint_transfer() -> None:
@@ -141,7 +151,7 @@ def test_block_weight_plan_is_layer_only_and_requires_checkpoint_transfer() -> N
     assert plan.patch_position == WEIGHT_PATCH_SCOPE
     for mode in PatchingMode:
         if mode.uses_prompt_counterfactual:
-            with pytest.raises(ValueError, match="distinct checkpoints"):
+            with pytest.raises(ValueError, match="activation-only"):
                 PatchingPlan(
                     mode,
                     recipient_step=64,
@@ -158,7 +168,7 @@ def test_token_weight_plan_uses_token_axis_and_requires_checkpoint_transfer() ->
         interface=PatchingInterface.TOKEN_WEIGHTS,
     )
     assert plan.patch_position == PATCH_POSITION
-    with pytest.raises(ValueError, match="distinct checkpoints"):
+    with pytest.raises(ValueError, match="activation-only"):
         PatchingPlan(
             PatchingMode.ACROSS_SAMPLE,
             recipient_step=64,

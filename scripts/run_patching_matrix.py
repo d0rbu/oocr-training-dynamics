@@ -17,7 +17,11 @@ from oocr_training_dynamics.contracts import (
 from oocr_training_dynamics.gpu_guard import require_gpu_authorization
 from oocr_training_dynamics.models import ModelKey
 from oocr_training_dynamics.patching import PatchingPlan
-from oocr_training_dynamics.runtime_patching import run_patching, run_temporal_patching_matrix
+from oocr_training_dynamics.runtime_patching import (
+    run_patching,
+    run_prompt_counterfactual_patching_matrix,
+    run_temporal_patching_matrix,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -48,6 +52,15 @@ def parse_args() -> argparse.Namespace:
         action="append",
         type=int,
         help="repeat to stage selected recipients; defaults to every trained checkpoint",
+    )
+    parser.add_argument(
+        "--donor-step",
+        action="append",
+        type=int,
+        help=(
+            "repeat to stage selected donors for answer-label prompt x checkpoint modes; "
+            "defaults to every registered checkpoint"
+        ),
     )
     parser.add_argument("--allow-provisional-gemma", action="store_true")
     parser.add_argument(
@@ -85,7 +98,8 @@ def main() -> None:
         tuple(args.recipient_step)
         if args.recipient_step
         else CHECKPOINT_STEPS
-        if PatchingMode.ACROSS_TIME in modes and PatchingMode.LATER_CHECKPOINT in modes
+        if (PatchingMode.ACROSS_TIME in modes and PatchingMode.LATER_CHECKPOINT in modes)
+        or any(mode.supports_independent_checkpoint_donor for mode in modes)
         else (0,)
         if modes == (PatchingMode.LATER_CHECKPOINT,)
         else CHECKPOINT_STEPS[1:]
@@ -94,16 +108,27 @@ def main() -> None:
         step not in CHECKPOINT_STEPS for step in recipients
     ):
         raise ValueError("recipient steps must be unique, increasing, registered checkpoints")
+    donors = tuple(args.donor_step) if args.donor_step else CHECKPOINT_STEPS
+    if tuple(sorted(set(donors))) != donors or any(step not in CHECKPOINT_STEPS for step in donors):
+        raise ValueError("donor steps must be unique, increasing, registered checkpoints")
+    independent_prompt_modes = tuple(
+        mode for mode in modes if mode.supports_independent_checkpoint_donor
+    )
+    if args.donor_step and not independent_prompt_modes:
+        raise ValueError("--donor-step is only defined for answer-label prompt x checkpoint modes")
     run = RunKey(args.model, TrainingCondition(args.condition))
     for interface in interfaces:
         prompt_modes = tuple(mode for mode in modes if mode.uses_prompt_counterfactual)
         if interface.patches_weights and args.mode and prompt_modes:
             raise ValueError(
-                f"{interface.value} cannot use prompt-counterfactual modes because prompt "
-                "variants at one checkpoint have identical weights"
+                f"{interface.value} cannot combine prompt counterfactuals with checkpoint "
+                "transfer; this matrix is activation-only"
             )
         if not interface.patches_weights:
-            for prompt_mode in prompt_modes:
+            same_checkpoint_prompt_modes = tuple(
+                mode for mode in prompt_modes if not mode.supports_independent_checkpoint_donor
+            )
+            for prompt_mode in same_checkpoint_prompt_modes:
                 for recipient in recipients:
                     run_patching(
                         root,
@@ -118,6 +143,17 @@ def main() -> None:
                         token_weight_runtime=TokenWeightRuntime(args.token_weight_runtime),
                         token_weight_patch_batch_size=args.token_weight_patch_batch_size,
                     )
+            if independent_prompt_modes:
+                run_prompt_counterfactual_patching_matrix(
+                    root,
+                    run,
+                    recipients,
+                    donors,
+                    independent_prompt_modes,
+                    interface,
+                    shuffle_seed=args.shuffle_seed,
+                    allow_provisional_model=args.allow_provisional_gemma,
+                )
         temporal_modes = tuple(mode for mode in modes if not mode.uses_prompt_counterfactual)
         if temporal_modes:
             run_temporal_patching_matrix(
