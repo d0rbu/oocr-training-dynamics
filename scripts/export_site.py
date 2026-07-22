@@ -289,6 +289,12 @@ def _compact_patch_record(record: PatchRecord, *, context: str) -> PatchRecord:
         + 1
     )
     probabilities: list[list[float | None]] = [[None] * layer_count for _ in range(token_count)]
+    source_target_flags = ["source_target_probability" in cell for cell in mapped_cells]
+    if any(source_target_flags) and not all(source_target_flags):
+        raise ValueError(f"{context} contains a partial source-target probability grid")
+    source_target_probabilities: list[list[float | None]] | None = (
+        [[None] * layer_count for _ in range(token_count)] if all(source_target_flags) else None
+    )
     token_positions: list[PatchRecord | None] = [None] * token_count
     for cell in mapped_cells:
         layer = int(_number(cell, "layer", context=f"{context}.cells[]"))
@@ -299,6 +305,15 @@ def _compact_patch_record(record: PatchRecord, *, context: str) -> PatchRecord:
         if probabilities[token][layer] is not None:
             raise ValueError(f"{context} contains a duplicate layer/token cell")
         probabilities[token][layer] = probability
+        if source_target_probabilities is not None:
+            source_target_probability = _number(
+                cell,
+                "source_target_probability",
+                context=f"{context}.cells[]",
+            )
+            if not 0.0 <= source_target_probability <= 1.0:
+                raise ValueError(f"{context} contains an out-of-range source-target probability")
+            source_target_probabilities[token][layer] = source_target_probability
         position = {
             "reverse_index": token,
             "source_index": int(_number(cell, "source_token_index", context=f"{context}.cells[]")),
@@ -322,6 +337,10 @@ def _compact_patch_record(record: PatchRecord, *, context: str) -> PatchRecord:
             raise ValueError(f"{context} repeats inconsistent token metadata")
     if any(value is None for row in probabilities for value in row):
         raise ValueError(f"{context} contains an incomplete probability grid")
+    if source_target_probabilities is not None and any(
+        value is None for row in source_target_probabilities for value in row
+    ):
+        raise ValueError(f"{context} contains an incomplete source-target probability grid")
     if any(position is None for position in token_positions):
         raise ValueError(f"{context} contains an incomplete token axis")
     if "token_axis" not in record:
@@ -332,6 +351,55 @@ def _compact_patch_record(record: PatchRecord, *, context: str) -> PatchRecord:
         "token_positions": token_positions,
         "probabilities": probabilities,
     }
+    if source_target_probabilities is not None:
+        compact["source_target_probabilities"] = source_target_probabilities
+    optional_metadata = (
+        "source_correct_choice_index",
+        "recipient_correct_choice_index",
+        "source_choice_function_ids",
+        "source_choice_texts",
+        "source_question_id",
+        "source_question",
+    )
+    for key in optional_metadata:
+        if key in record:
+            compact[key] = record[key]
+    if "answer_logit_lens" in record:
+        lens = _mapping(record["answer_logit_lens"], context=f"{context}.answer_logit_lens")
+        if lens.get("kind") != "five_way_answer_label" or lens.get("labels") != [
+            "A",
+            "B",
+            "C",
+            "D",
+            "E",
+        ]:
+            raise ValueError(f"{context} has unsupported answer-logit-lens semantics")
+        top_p = _number(lens, "display_top_p", context=f"{context}.answer_logit_lens")
+        if not 0.0 < top_p <= 1.0:
+            raise ValueError(f"{context} answer-logit-lens top-p must lie in (0, 1]")
+        for side in ("source_probabilities", "recipient_probabilities"):
+            values = lens.get(side)
+            if not isinstance(values, list) or len(values) != token_count:
+                raise ValueError(f"{context} answer logit lens has the wrong token count")
+            for token_rows in values:
+                if not isinstance(token_rows, list) or len(token_rows) != layer_count:
+                    raise ValueError(f"{context} answer logit lens has the wrong layer count")
+                for distribution in token_rows:
+                    if (
+                        not isinstance(distribution, list)
+                        or len(distribution) != 5
+                        or any(
+                            not isinstance(value, int | float)
+                            or not math.isfinite(value)
+                            or not 0.0 <= value <= 1.0
+                            for value in distribution
+                        )
+                        or not math.isclose(sum(distribution), 1.0, abs_tol=1e-5)
+                    ):
+                        raise ValueError(
+                            f"{context} answer logit lens contains an invalid A-E distribution"
+                        )
+        compact["answer_logit_lens"] = lens
     if "weight_scope" in record:
         _mapping(record["weight_scope"], context=f"{context}.weight_scope")
         compact["axis_kind"] = "token_layer"

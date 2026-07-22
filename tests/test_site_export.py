@@ -175,14 +175,24 @@ def test_site_token_axes_are_exact_model_tokenizer_coordinates() -> None:
         for mode, functions in model_axes.items():
             assert set(functions) == function_ids
             for axis in functions.values():
-                assert "from functions import" in axis["source_rendered_prompt"]
                 assert "from functions import" in axis["recipient_rendered_prompt"]
-                if mode != PatchingMode.ACROSS_SAMPLE.value:
+                if mode == PatchingMode.UNRELATED_QUESTION.value:
+                    assert "from functions import" not in axis["source_rendered_prompt"]
+                    assert axis["source_question"] in axis["source_rendered_prompt"]
+                else:
+                    assert "from functions import" in axis["source_rendered_prompt"]
+                if mode in {
+                    PatchingMode.ACROSS_TIME.value,
+                    PatchingMode.LATER_CHECKPOINT.value,
+                }:
                     assert axis["source_rendered_prompt"] == axis["recipient_rendered_prompt"]
                     assert axis["source_function_id"] == axis["recipient_function_id"]
                 else:
                     assert axis["source_rendered_prompt"] != axis["recipient_rendered_prompt"]
-                    assert axis["source_function_id"] != axis["recipient_function_id"]
+                    if mode == PatchingMode.ACROSS_SAMPLE.value:
+                        assert axis["source_function_id"] != axis["recipient_function_id"]
+                    elif mode != PatchingMode.UNRELATED_QUESTION.value:
+                        assert axis["source_function_id"] == axis["recipient_function_id"]
                 positions = axis["positions"]
                 assert [row["reverse_index"] for row in positions] == list(range(len(positions)))
                 source_indices = [row["source_index"] for row in positions]
@@ -193,9 +203,22 @@ def test_site_token_axes_are_exact_model_tokenizer_coordinates() -> None:
                 assert recipient_indices == list(
                     range(recipient_indices[0], recipient_indices[-1] - 1, -1)
                 )
-                if mode != PatchingMode.ACROSS_SAMPLE.value:
+                if mode in {
+                    PatchingMode.ACROSS_TIME.value,
+                    PatchingMode.LATER_CHECKPOINT.value,
+                }:
                     assert positions[-1]["source_index"] == 0
                     assert positions[-1]["recipient_index"] == 0
+                elif mode != PatchingMode.ACROSS_SAMPLE.value:
+                    assert all(
+                        row["source_token_id"] == row["recipient_token_id"]
+                        for row in positions[:-1]
+                    )
+                    assert positions[-1]["source_token_id"] != positions[-1]["recipient_token_id"]
+                    assert (
+                        axis["source_correct_choice_index"]
+                        != axis["recipient_correct_choice_index"]
+                    )
                 for row in positions:
                     assert isinstance(row["source_index"], int)
                     assert isinstance(row["recipient_index"], int)
@@ -220,6 +243,9 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
         assert f'<option value="{interface.value}">' in html
     assert 'data-patch-mode="checkpoint"' in html
     assert 'data-patch-mode="across_sample"' in html
+    assert 'data-patch-mode="cyclic_choices"' in html
+    assert 'data-patch-mode="deranged_choices"' in html
+    assert 'data-patch-mode="unrelated_question"' in html
     assert 'data-patch-mode="later_checkpoint"' not in html
     assert 'data-patch-mode="across_time"' not in html
     assert 'const ALL_FUNCTIONS_ID = "__all__"' in javascript
@@ -231,9 +257,9 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert 'id="curve-rank-select"' in html
     assert "function buildCurveBatchSlider()" in javascript
     assert "function availableBatchSizes()" in javascript
-    assert 'href="styles.css?v=20260721a"' in html
-    assert 'src="app.js?v=20260721a"' in html
-    assert 'const DATA_URL = "data/experiment.json?v=20260721a"' in javascript
+    assert 'href="styles.css?v=20260721b"' in html
+    assert 'src="app.js?v=20260721b"' in html
+    assert 'const DATA_URL = "data/experiment.json?v=20260721b"' in javascript
     assert "function buildCurveRankSelect()" in javascript
     assert "function normalizeCurveAxisSelections()" in javascript
     assert "function scaledExamplesFraction(" in javascript
@@ -255,6 +281,8 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert "new Float64Array(" in javascript
     assert "unpatched recipient baseline" in javascript
     assert "unpatched donor/source baseline" in javascript
+    assert "answer-label logit lens" in javascript
+    assert "source-correct label" in javascript
     assert "averages 16 code-choice and 16 language-choice variants" in javascript
     assert 'id="patch-prefetch-status"' in html
     assert 'id="patch-legend"' in html
@@ -384,3 +412,63 @@ def test_token_weight_compaction_preserves_token_axis_and_weight_scope() -> None
     assert len(cast(list[object], compact["token_positions"])) == 1
     weight_scope = cast(dict[str, object], compact["weight_scope"])
     assert weight_scope["scope"] == "selected_token_decoder_block"
+
+
+def test_prompt_patch_compaction_preserves_source_target_and_answer_logit_lens() -> None:
+    distributions = [
+        [[0.5, 0.2, 0.1, 0.1, 0.1], [0.1, 0.2, 0.3, 0.2, 0.2]],
+    ]
+    record: dict[str, object] = {
+        "function_id": "identity",
+        "source_function_id": "identity",
+        "recipient_function_id": "identity",
+        "choice_function_ids": ["identity", "add", "sub", "mul", "mod"],
+        "correct_choice_index": 0,
+        "source_correct_choice_index": 1,
+        "recipient_correct_choice_index": 0,
+        "source_choice_function_ids": ["mod", "identity", "add", "sub", "mul"],
+        "source_probabilities": [0.1, 0.7, 0.1, 0.05, 0.05],
+        "recipient_probabilities": [0.8, 0.05, 0.05, 0.05, 0.05],
+        "site_probability": "correct",
+        "token_axis": {"positions": 1},
+        "answer_logit_lens": {
+            "kind": "five_way_answer_label",
+            "labels": ["A", "B", "C", "D", "E"],
+            "normalization": "softmax over A-E",
+            "display_top_p": 0.9,
+            "residual_boundary": "decoder block output",
+            "source_probabilities": distributions,
+            "recipient_probabilities": distributions,
+        },
+        "cells": [
+            {
+                "layer": layer,
+                "token_reverse_index": 0,
+                "source_token_index": 9,
+                "recipient_token_index": 11,
+                "source_token_id": 17,
+                "recipient_token_id": 17,
+                "source_token": "token",
+                "recipient_token": "token",
+                "probability": probability,
+                "delta_from_recipient": probability - 0.8,
+                "source_target_probability": source_probability,
+                "delta_source_target_from_recipient": source_probability - 0.05,
+            }
+            for layer, (probability, source_probability) in enumerate(((0.75, 0.1), (0.6, 0.3)))
+        ],
+    }
+
+    compact = _compact_patch_record(record, context="prompt fixture")
+
+    assert compact["probabilities"] == [[0.75, 0.6]]
+    assert compact["source_target_probabilities"] == [[0.1, 0.3]]
+    assert compact["source_correct_choice_index"] == 1
+    assert compact["source_choice_function_ids"] == [
+        "mod",
+        "identity",
+        "add",
+        "sub",
+        "mul",
+    ]
+    assert compact["answer_logit_lens"] == record["answer_logit_lens"]

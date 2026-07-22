@@ -161,6 +161,12 @@ recipient LoRA projection contribution only at one selected token in one layer a
 the real token × layer axis. Both are checkpoint-transfer only; neither fabricates token values for
 the global result.
 
+A separately dated answer-label readout experiment stays activation-only and same-checkpoint. It
+patches the final shared suffix from shifted-choice, randomly deranged-choice, and unrelated
+non-coding MCQ sources into clean function probes. The source-correct letter is always different
+from the clean letter. Both labels' causal probabilities and a five-way residual logit lens are
+stored so label transfer can be separated from generic disruption.
+
 ## What is and is not controlled
 
 The three corpora are exactly matched under one seed, enabling paired trajectory comparisons.

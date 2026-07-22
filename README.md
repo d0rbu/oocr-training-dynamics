@@ -74,6 +74,9 @@ The primary activation intervention patches `resid_post` one layer and tokenizer
 time. Reverse token position zero is the final token in the model-rendered generation prompt:
 
 - **across sample:** insert the different-name dirty activation into the clean recipient prompt;
+- **answer-label controls:** at the same checkpoint, patch the reverse-aligned final suffix from
+  the same question with choices shifted +1, the same question with a deterministic random
+  derangement, or an unrelated non-coding MCQ whose correct letter differs from the clean probe;
 - **checkpoint transfer:** set recipient and donor steps independently while keeping the clean
   prompt fixed. An earlier donor into a later recipient tests necessity; reversing that ordering
   tests whether a later learned state is sufficient in an earlier model.
@@ -93,7 +96,8 @@ Raw activations are patched only within one pinned model family. Cross-family hi
 not assumed to be aligned. The site renders layer by reverse-token-position heatmaps and lets the
 recipient step, donor step, patch boundary, and function probe move wherever measured artifacts
 exist. The function selector also exposes a cellwise mean over all 19 functions on their shared
-reverse-token support.
+reverse-token support. New answer-label-control hover cards show both clean- and donor-label
+causal probabilities plus an unpatched five-way top-p residual logit lens for source and recipient.
 
 ## CPU-only quickstart
 

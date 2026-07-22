@@ -15,13 +15,15 @@ from oocr_training_dynamics.contracts import (
     TokenWeightRuntime,
     TrainingCondition,
 )
-from oocr_training_dynamics.patching import PatchingPlan
+from oocr_training_dynamics.patching import PatchingPlan, TokenPositionPair
 from oocr_training_dynamics.runtime_patching import (
+    _answer_label_logit_lens,
     _capture_decoder_inputs,
     _capture_lora_layer_state,
     _copy_lora_layer_state,
     _forward_probabilities,
     _forward_probabilities_last_token,
+    _patch_grid,
     _patch_output_path,
     _replace_hidden_input,
     _replace_hidden_positions,
@@ -32,6 +34,49 @@ from oocr_training_dynamics.runtime_patching import (
     _token_weight_probability_forward,
     run_temporal_patching_matrix,
 )
+
+
+class _LensDecoder(t.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.norm = t.nn.LayerNorm(3)
+
+
+class _LensModel(t.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.model = _LensDecoder()
+        self.lm_head = t.nn.Linear(3, 7, bias=True)
+
+    def get_output_embeddings(self) -> t.nn.Module:
+        return self.lm_head
+
+
+def test_answer_label_logit_lens_matches_selected_unembedding_rows() -> None:
+    model = _LensModel()
+    with t.no_grad():
+        model.lm_head.weight.copy_(t.arange(21, dtype=t.float32).reshape(7, 3) / 10)
+        model.lm_head.bias.copy_(t.arange(7, dtype=t.float32) / 20)
+    activations = (
+        t.tensor([[1.0, 2.0, 4.0], [3.0, -2.0, 0.5]]),
+        t.tensor([[2.0, 0.0, -1.0], [4.0, 1.0, 3.0]]),
+    )
+    candidate_ids = t.tensor([0, 2, 3, 5, 6])
+
+    actual = _answer_label_logit_lens(model, activations, (1,), candidate_ids)
+    stacked = t.stack((activations[0][1], activations[1][1]))
+    normalized = model.model.norm(stacked)
+    expected = t.softmax(
+        t.nn.functional.linear(
+            normalized,
+            model.lm_head.weight.index_select(0, candidate_ids),
+            model.lm_head.bias.index_select(0, candidate_ids),
+        ),
+        dim=-1,
+    )
+
+    assert t.allclose(t.tensor(actual[0]), expected)
+    assert all(sum(distribution) == pytest.approx(1.0) for distribution in actual[0])
 
 
 class _FakeBlock(t.nn.Module):
@@ -172,6 +217,33 @@ def test_decoder_prefix_forwards_are_restored_after_an_error() -> None:
 
     assert all("forward" not in block.__dict__ for block in blocks)
     assert t.equal(blocks[0](hidden_states=hidden), hidden + 1.0)
+
+
+def test_patch_grid_tracks_clean_and_source_answer_labels_from_one_forward() -> None:
+    block = _CountingDecoderBlock(1.0)
+    model = _FakeDecoderLM((block,))
+    targets = _resolve_patch_targets((block,), PatchingInterface.RESID_POST)
+    input_ids = t.tensor([[1, 3]])
+    attention_mask = t.ones_like(input_ids)
+    candidate_ids = t.tensor([0, 1, 2, 3, 4])
+    source_activations = (t.tensor([[2.0, 1.0, 0.0], [6.0, 3.0, -2.0]]),)
+
+    clean_grid, source_grid = _patch_grid(
+        model,
+        targets,
+        input_ids,
+        attention_mask,
+        candidate_ids,
+        source_activations,
+        (TokenPositionPair(0, 1, 1),),
+        correct_choice_index=0,
+        source_correct_choice_index=1,
+    )
+
+    assert source_grid is not None
+    assert clean_grid[0][0] != source_grid[0][0]
+    assert 0.0 <= clean_grid[0][0] <= 1.0
+    assert 0.0 <= source_grid[0][0] <= 1.0
 
 
 def test_every_interface_resolves_one_concrete_target_per_layer() -> None:
@@ -591,12 +663,12 @@ def test_seeded_temporal_order_prioritizes_requested_steps_and_resumes_stably() 
     assert ordered == repeated
     assert set(ordered) == set(scheduled)
     assert tier_counts == [2, 4, 12, 6, 6]
+    assert {(recipient, donor) for recipient, donor, _mode in ordered[: boundaries[1]]} == {
+        (0, 1_500),
+        (1_500, 0),
+    }
     assert {
-        (recipient, donor) for recipient, donor, _mode in ordered[: boundaries[1]]
-    } == {(0, 1_500), (1_500, 0)}
-    assert {
-        (recipient, donor)
-        for recipient, donor, _mode in ordered[boundaries[1] : boundaries[2]]
+        (recipient, donor) for recipient, donor, _mode in ordered[boundaries[1] : boundaries[2]]
     } == {(0, 96), (96, 0), (96, 1_500), (1_500, 96)}
     for tier, (start, stop) in enumerate(zip(boundaries[:-1], boundaries[1:], strict=True)):
         assert all(

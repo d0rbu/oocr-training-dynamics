@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="Interactive results explorer for OOCR training dynamics, activation patching, and decoder-block weight patching." />
     <title>OOCR Atlas · training dynamics</title>
-    <link rel="stylesheet" href="styles.css?v=20260721a" />
-    <script src="app.js?v=20260721a" defer></script>
+    <link rel="stylesheet" href="styles.css?v=20260721b" />
+    <script src="app.js?v=20260721b" defer></script>
   </head>
   <body>
     <div class="grain" aria-hidden="true"></div>
@@ -185,6 +185,9 @@
               <div id="patch-mode-controls" class="segmented dark">
                 <button data-patch-mode="checkpoint">Checkpoint transfer</button>
                 <button class="active" data-patch-mode="across_sample">Different function name</button>
+                <button data-patch-mode="cyclic_choices">Shift choices +1</button>
+                <button data-patch-mode="deranged_choices">Derange choices</button>
+                <button data-patch-mode="unrelated_question">Unrelated MCQ</button>
               </div>
             </div>
             <label>

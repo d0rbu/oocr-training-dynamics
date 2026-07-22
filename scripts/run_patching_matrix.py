@@ -96,27 +96,29 @@ def main() -> None:
         raise ValueError("recipient steps must be unique, increasing, registered checkpoints")
     run = RunKey(args.model, TrainingCondition(args.condition))
     for interface in interfaces:
-        if interface.patches_weights and args.mode and PatchingMode.ACROSS_SAMPLE in modes:
+        prompt_modes = tuple(mode for mode in modes if mode.uses_prompt_counterfactual)
+        if interface.patches_weights and args.mode and prompt_modes:
             raise ValueError(
-                f"{interface.value} cannot use across_sample because prompt variants at one "
-                "checkpoint have identical weights"
+                f"{interface.value} cannot use prompt-counterfactual modes because prompt "
+                "variants at one checkpoint have identical weights"
             )
-        if PatchingMode.ACROSS_SAMPLE in modes and not interface.patches_weights:
-            for recipient in recipients:
-                run_patching(
-                    root,
-                    run,
-                    PatchingPlan(
-                        mode=PatchingMode.ACROSS_SAMPLE,
-                        recipient_step=recipient,
-                        donor_steps=(recipient,),
-                        interface=interface,
-                    ),
-                    allow_provisional_model=args.allow_provisional_gemma,
-                    token_weight_runtime=TokenWeightRuntime(args.token_weight_runtime),
-                    token_weight_patch_batch_size=args.token_weight_patch_batch_size,
-                )
-        temporal_modes = tuple(mode for mode in modes if mode is not PatchingMode.ACROSS_SAMPLE)
+        if not interface.patches_weights:
+            for prompt_mode in prompt_modes:
+                for recipient in recipients:
+                    run_patching(
+                        root,
+                        run,
+                        PatchingPlan(
+                            mode=prompt_mode,
+                            recipient_step=recipient,
+                            donor_steps=(recipient,),
+                            interface=interface,
+                        ),
+                        allow_provisional_model=args.allow_provisional_gemma,
+                        token_weight_runtime=TokenWeightRuntime(args.token_weight_runtime),
+                        token_weight_patch_batch_size=args.token_weight_patch_batch_size,
+                    )
+        temporal_modes = tuple(mode for mode in modes if not mode.uses_prompt_counterfactual)
         if temporal_modes:
             run_temporal_patching_matrix(
                 root,

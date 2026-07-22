@@ -63,8 +63,22 @@ class PatchingMode(StrEnum):
     """Source of activations patched into a recipient forward pass."""
 
     ACROSS_SAMPLE = "across_sample"
+    CYCLIC_CHOICES = "cyclic_choices"
+    DERANGED_CHOICES = "deranged_choices"
+    UNRELATED_QUESTION = "unrelated_question"
     ACROSS_TIME = "across_time"
     LATER_CHECKPOINT = "later_checkpoint"
+
+    @property
+    def uses_prompt_counterfactual(self) -> bool:
+        """Whether source and recipient are prompts run at the same checkpoint."""
+
+        return self in {
+            PatchingMode.ACROSS_SAMPLE,
+            PatchingMode.CYCLIC_CHOICES,
+            PatchingMode.DERANGED_CHOICES,
+            PatchingMode.UNRELATED_QUESTION,
+        }
 
 
 class PatchingInterface(StrEnum):

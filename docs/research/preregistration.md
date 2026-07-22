@@ -352,6 +352,67 @@ analytic and unstored. Existing artifacts are skipped after the full determinist
 This operational change does not alter the intervention, function set, token or layer axes, or
 reported metric.
 
+## Answer-label readout amendment — 2026-07-21, before any readout-control GPU run
+
+After inspecting the existing activation-patching design, the user proposed that the late-layer,
+final-token residual signal may be a generic answer-label readout—roughly “emit A” or “emit B”—
+rather than function-specific content. This is a new post-hoc exploratory experiment, not a
+retroactive confirmation of H1–H4. No cyclic-choice, randomly deranged-choice, unrelated-question,
+or logit-lens GPU artifact existed when this amendment was written.
+
+The first run is fixed to the correct-condition OLMo 3 7B checkpoint at step 1500, all 19 held-out
+single code-choice probes, and `resid_post`. Donor and recipient use the same checkpoint. If that
+smoke run is complete and valid, the same modes may be repeated at other already registered
+checkpoints and interfaces, with OLMo reported before any cross-family validation.
+
+Three prompt-only sources are added:
+
+1. `cyclic_choices` asks the same function question with the same five implementation contents,
+   moving content A to B, B to C, C to D, D to E, and E to A.
+2. `deranged_choices` asks the same question but selects one of the 44 five-way derangements using
+   `sha256("20260721:<record_id>") mod 44`. Every option changes position; therefore the correct
+   implementation's source letter always differs from its clean letter. The exact permutation is
+   serialized per record.
+3. `unrelated_question` replaces the coding prompt with a five-choice, non-coding question. The 19
+   fixed topics, paired in registered function order, are: capital of France, largest planet,
+   water's freezing point, identifying a mammal, dominant atmospheric gas, author of *Pride and
+   Prejudice*, a three-sided polygon, largest ocean, gold's chemical symbol, a keyboard-and-pedal
+   instrument, the Red Planet, Egypt's continent, photosynthesis, minutes in an hour, Brazil's
+   official language, hardest natural material, largest land animal, identifying a prime number,
+   and the planet with prominent rings. Each source option order is selected deterministically
+   from seed `20260721`; a hard invariant excludes the paired clean probe's correct letter. The
+   exact question, five options, source letter, and rendered prompt are serialized.
+
+All three new modes use a deliberately narrow token axis. Position zero is the final token of each
+model-rendered generation prefix. Source and recipient are aligned backward; the axis continues
+through the identical suffix and includes the first unequal token pair, then stops. No earlier
+prompt position is patched. Thus every reported row is either a shared final-suffix token or the
+single boundary token proving where the source first differs.
+
+Every cell stores two causal outcomes under the recipient's normal A–E readout:
+
+- probability of the clean recipient's correct label, which remains the site's color scale for
+  compatibility with existing grids;
+- probability of the source prompt's correct label, plus its change from the unpatched clean
+  recipient. This source label is guaranteed to differ from the clean label in all three modes.
+
+The same unpatched source and recipient residual vectors also receive an answer-label logit lens:
+the model's final normalization and the five A–E unembedding rows are applied at each displayed
+token/layer coordinate, followed by a softmax over A–E only. The site hover shows the smallest
+descending label set reaching cumulative `p = 0.9` for each side. This is explicitly a five-way
+answer-label lens, not a full-vocabulary nucleus distribution, and it is not itself a patched
+forward pass.
+
+The directional prediction is strongest at reverse position zero in the final quarter of layers:
+patching the source state should decrease the clean-correct label and increase the particular
+source-correct label, while the source logit lens should already favor that source label relative
+to the clean lens. A random derangement should track its record-specific new label rather than a
+fixed +1 offset. An unrelated question should transfer its independently chosen correct letter if
+the state is a generic answer-label readout. Generic entropy increases, simultaneous suppression
+of all labels, effects that do not track the source's actual letter, or isolated sign-unstable
+cells would weaken this interpretation. All layers, functions, and the complete preregistered
+suffix axis will be shown; no late-layer band will be selected after viewing results.
+
 ## Prior information used for predictions
 
 The earlier repository replicated OLMo-2 7B rule recovery and observed OLMo-3 recovery after 4,096

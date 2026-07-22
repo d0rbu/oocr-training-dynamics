@@ -30,7 +30,7 @@ contracts + model registry + deterministic corpus
 | `semantics.py` | Restricted semantic scoring for generated lambda expressions |
 | `tokenization.py` | Chat-template prefix proof, assistant-only labels, collation |
 | `metrics.py` | Stable softmax, curve AUC, chance adjustment, normalized patch effect |
-| `patching.py` | Prompt corruption and validated patch plans/cells |
+| `patching.py` | Prompt corruption, fixed answer-label controls, and validated patch plans/cells |
 | `artifacts.py` | Atomic JSON, adapter paths/digests, checkpoint-index invariants |
 | `planning.py` | Baseline/ablation matrices, capacity bounds, and storage estimates |
 | `gpu_guard.py` | Two-part authorization gate |
@@ -42,7 +42,7 @@ contracts + model registry + deterministic corpus
 | `runtime_models.py` | Processor/model loading, revision check, LoRA attachment, block discovery |
 | `runtime_training.py` | Exact batch aggregation, clipping, dense adapters, rolling resume |
 | `runtime_evaluation.py` | Intended/planted choice metrics and semantic free-form generation |
-| `runtime_patching.py` | Activation-boundary and decoder-block LoRA-weight replacement across sample or checkpoint time |
+| `runtime_patching.py` | Activation/LoRA interventions, dual-label outcomes, and answer-label logit lenses across prompts or checkpoint time |
 
 Importing these modules does not launch CUDA. Their script entry points call `gpu_guard` before
 invoking live runtime functions.
@@ -98,6 +98,10 @@ polls the separately exported `site/data/patch-manifest.json`; newly generated a
 to the same eager preload while an existing tab remains open. Missing patch views retain exact
 token-axis metadata but contain no probabilities or deltas; the site renders reserved unprocessed
 cells instead. Missing behavioral curves remain explicitly synthetic.
+
+Final-suffix answer-label artifacts preserve a second typed matrix for the source-correct label and
+two compact A–E logit-lens tensors (source and recipient). They also preserve the deterministic
+choice permutation or unrelated-question identity needed to audit what the source label means.
 
 Measured evaluation exports also include one acquisition curve per registered function alongside
 the all-function aggregate. The aggregate is checked against the arithmetic mean of the 19

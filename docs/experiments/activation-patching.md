@@ -104,6 +104,31 @@ it into an untracked answer.
 
 This corruption changes function identity, not implementation text or answer labels.
 
+## Final-suffix answer-label controls
+
+Three post-hoc prompt sources isolate the hypothesis that the final-token late-layer state is a
+generic A–E readout. `cyclic_choices` moves every implementation content forward one label;
+`deranged_choices` uses a deterministic random option permutation with no fixed positions; and
+`unrelated_question` uses a paired non-coding five-choice question whose correct letter is forced
+to differ from the clean probe's correct letter. The first two preserve the exact function
+question and option contents. The third preserves only the five-choice response format and final
+answer instruction.
+
+These modes intentionally do not patch the whole prompt. Their source and clean recipient token
+sequences are aligned from the final generation-prefix token backward. The grid includes every
+identical suffix token and the first unequal token pair, then stops. This makes the final token the
+first and central intervention while retaining enough preceding positions to see where the two
+prompts first become distinguishable. Sequence-length differences before that boundary are
+irrelevant to the axis.
+
+The colored value remains clean-label probability. Each artifact additionally records the
+source-correct-label probability for every cell and its clean-recipient baseline, so hover details
+can distinguish transfer of the donor's particular answer letter from nonspecific corruption.
+The source/recipient residual states also carry a five-way answer-label logit lens: final norm,
+selected A–E unembedding rows, and a softmax over A–E. Hover text displays each side's top-p=0.9
+label set. The lens is observational and unpatched; the cell probability still comes from the full
+causal recipient forward pass.
+
 ## Across-time intervention
 
 The clean prompt and answer choices are identical in source and recipient passes. The recipient is
@@ -134,8 +159,9 @@ The exported site presents the two temporal artifact directions through one **Ch
 transfer** mode. Recipient and donor steps are independent: donor-before-recipient resolves to the
 registered across-time artifact, while donor-after-recipient resolves to the registered
 later-into-earlier artifact. Equal steps are shown as unprocessed identity cells because no
-same-checkpoint grid is stored. The separate **Different function name** mode
-keeps source and recipient at one recipient checkpoint and disables the donor-step control.
+same-checkpoint grid is stored. The separate prompt-source modes—**Different function name**,
+**Shift choices +1**, **Derange choices**, and **Unrelated MCQ**—keep source and recipient at one
+recipient checkpoint and disable the donor-step control.
 
 The function probe includes an **Average over all 19 functions** option. A measured mean is shown
 only when the exact selection has a measured grid for every registered function. Cells are
@@ -169,6 +195,10 @@ Each artifact identifies model/run/interface/plan/donor step and stores, per fun
 - the source/recipient token index and decoded token label for every reverse position;
 - the correct-option probability for every `(reverse token, layer)` cell;
 - raw delta from recipient.
+
+The three final-suffix answer-label controls also store the source prompt's correct label, its
+per-cell probability and clean-recipient delta, the exact source option/question metadata, and the
+source/recipient five-way residual logit-lens distributions.
 
 Global `block_weights` artifacts instead store one probability per decoder layer, the clean source
 and recipient baselines, the exact rendered prompt, and an explicit `layer_only` axis marker. They

@@ -112,6 +112,32 @@ uv run python scripts/run_patching.py \
   --confirm-gpu-run
 ```
 
+The post-hoc answer-label readout controls are separate same-checkpoint modes. After a fresh GPU
+release, run the OLMo step-1500 residual smoke cells one mode at a time:
+
+```bash
+uv run python scripts/run_patching.py \
+  --model olmo3-7b --condition correct --interface resid_post \
+  --mode cyclic_choices --recipient-step 1500 --donor-step 1500 \
+  --confirm-gpu-run
+
+uv run python scripts/run_patching.py \
+  --model olmo3-7b --condition correct --interface resid_post \
+  --mode deranged_choices --recipient-step 1500 --donor-step 1500 \
+  --confirm-gpu-run
+
+uv run python scripts/run_patching.py \
+  --model olmo3-7b --condition correct --interface resid_post \
+  --mode unrelated_question --recipient-step 1500 --donor-step 1500 \
+  --confirm-gpu-run
+```
+
+Each grid must contain exactly the reverse-aligned final suffix through the first differing token,
+all 19 functions, both clean- and source-label probability matrices, and source/recipient A–E
+logit-lens distributions. For `unrelated_question`, fail if any source correct letter equals its
+paired clean letter. Do not launch these commands from documentation changes alone: the sentinel,
+capacity checks, and a new explicit GPU release remain mandatory.
+
 Across-time example with multiple earlier donors:
 
 ```bash
@@ -184,8 +210,8 @@ uv run python scripts/run_patching.py \
   --confirm-gpu-run
 ```
 
-Use `later_checkpoint` when the donor follows the recipient. `block_weights` rejects
-`across_sample`: dirty and clean prompts at one checkpoint share the same weights. The full
+Use `later_checkpoint` when the donor follows the recipient. `block_weights` rejects every
+prompt-counterfactual mode: source and clean prompts at one checkpoint share the same weights. The full
 temporal matrix is selectable through `run_patching_matrix.py --interface block_weights`; missing
 cells remain unprocessed until a separately authorized GPU run computes them.
 
@@ -206,7 +232,8 @@ the exact reverse-token axis, every registered layer, finite probabilities in `[
 `selected_token_decoder_block` scope. Check measured wall time and disk/RAM/VRAM before deciding
 whether to schedule the full 306-cell temporal atlas. Never resume the earlier global
 `block_weights` command as a substitute for this token-local run. Both interfaces reject
-`across_sample` because dirty and clean prompts within one checkpoint have identical weights.
+prompt-counterfactual modes because source and clean prompts within one checkpoint have identical
+weights.
 
 ## 6a. Run the effective-batch ablation only after a new GPU release
 

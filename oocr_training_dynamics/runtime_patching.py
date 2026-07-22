@@ -8,11 +8,12 @@ import random
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
 import torch as t
+import torch.nn.functional as functional
 
 from oocr_training_dynamics.artifacts import adapter_dir, run_dir, write_json
 from oocr_training_dynamics.contracts import (
@@ -37,7 +38,11 @@ from oocr_training_dynamics.patching import (
     PatchingPlan,
     TokenPositionPair,
     build_across_sample_pair,
+    build_cyclic_choice_pair,
+    build_deranged_choice_pair,
+    build_unrelated_question_pair,
     reverse_token_position_pairs,
+    reverse_token_position_pairs_through_first_difference,
     token_index_covering_character,
 )
 from oocr_training_dynamics.runtime_models import (
@@ -81,6 +86,8 @@ LoraLayerState = dict[str, t.Tensor]
 WeightSourceRecord = tuple[PromptPatchView, t.Tensor]
 WeightSourceBank = dict[str, WeightSourceRecord]
 ProbabilityForward = Callable[[t.nn.Module, t.Tensor, t.Tensor, t.Tensor], t.Tensor]
+ProbabilityGrid = tuple[tuple[float, ...], ...]
+ANSWER_LOGIT_LENS_TOP_P = 0.9
 
 
 @dataclass(frozen=True)
@@ -89,6 +96,21 @@ class WeightSourceBundle:
 
     layer_states: tuple[LoraLayerState, ...]
     records: WeightSourceBank
+
+
+@dataclass(frozen=True)
+class PromptCounterfactualSpec:
+    """One prompt-only activation source and its auditable answer-label semantics."""
+
+    source_messages: tuple[ChatMessage, ...]
+    source_function_id: str
+    source_correct_choice_index: int
+    source_choice_function_ids: tuple[str, ...] | None
+    source_choice_texts: tuple[str, ...] | None
+    source_question_id: str | None
+    source_question: str | None
+    patch_direction: str
+    stops_at_first_difference: bool
 
 
 @dataclass(frozen=True)
@@ -103,15 +125,82 @@ class TokenLoraProjection:
     scaling: float
 
 
-def _candidate_ids(processor: Any, record: ReflectionRecord) -> t.Tensor:
+def _candidate_ids(
+    processor: Any,
+    record: ReflectionRecord,
+    messages: tuple[ChatMessage, ...] | None = None,
+    *,
+    device: str = "cuda",
+) -> t.Tensor:
     values: list[int] = []
+    candidate_messages = record.messages if messages is None else messages
     for letter in "ABCDE":
-        messages = (*record.messages[:-1], ChatMessage("assistant", letter))
-        example = tokenize_messages(processor, record.record_id, messages)
+        with_target = (*candidate_messages[:-1], ChatMessage("assistant", letter))
+        example = tokenize_messages(processor, record.record_id, with_target)
         values.append(int(example.input_ids[0, first_target_position(example)].item()))
     if len(set(values)) != 5:
         raise RuntimeError("A-E must have distinct first target tokens")
-    return t.tensor(values, dtype=t.int64, device="cuda")
+    return t.tensor(values, dtype=t.int64, device=device)
+
+
+def _prompt_counterfactual_spec(
+    record: ReflectionRecord,
+    mode: PatchingMode,
+) -> PromptCounterfactualSpec:
+    if mode is PatchingMode.ACROSS_SAMPLE:
+        pair = build_across_sample_pair(record)
+        source_correct = record.choice_function_ids.index(pair.dirty_function_id)
+        return PromptCounterfactualSpec(
+            source_messages=pair.dirty_messages,
+            source_function_id=pair.dirty_function_id,
+            source_correct_choice_index=source_correct,
+            source_choice_function_ids=record.choice_function_ids,
+            source_choice_texts=None,
+            source_question_id=None,
+            source_question=None,
+            patch_direction="dirty_source_into_clean_recipient",
+            stops_at_first_difference=False,
+        )
+    if mode is PatchingMode.CYCLIC_CHOICES:
+        pair = build_cyclic_choice_pair(record)
+        return PromptCounterfactualSpec(
+            source_messages=pair.source_messages,
+            source_function_id=record.function_id,
+            source_correct_choice_index=pair.source_correct_choice_index,
+            source_choice_function_ids=pair.source_choice_function_ids,
+            source_choice_texts=None,
+            source_question_id=None,
+            source_question=None,
+            patch_direction="cyclic_choice_source_into_clean_recipient",
+            stops_at_first_difference=True,
+        )
+    if mode is PatchingMode.DERANGED_CHOICES:
+        pair = build_deranged_choice_pair(record)
+        return PromptCounterfactualSpec(
+            source_messages=pair.source_messages,
+            source_function_id=record.function_id,
+            source_correct_choice_index=pair.source_correct_choice_index,
+            source_choice_function_ids=pair.source_choice_function_ids,
+            source_choice_texts=None,
+            source_question_id=None,
+            source_question=None,
+            patch_direction="deranged_choice_source_into_clean_recipient",
+            stops_at_first_difference=True,
+        )
+    if mode is PatchingMode.UNRELATED_QUESTION:
+        pair = build_unrelated_question_pair(record)
+        return PromptCounterfactualSpec(
+            source_messages=pair.source_messages,
+            source_function_id=f"unrelated:{pair.question_id}",
+            source_correct_choice_index=pair.source_correct_choice_index,
+            source_choice_function_ids=None,
+            source_choice_texts=pair.source_choices,
+            source_question_id=pair.question_id,
+            source_question=pair.question,
+            patch_direction="unrelated_question_source_into_clean_recipient",
+            stops_at_first_difference=True,
+        )
+    raise ValueError(f"{mode.value} is not a prompt-counterfactual patching mode")
 
 
 def _prefix(
@@ -215,6 +304,63 @@ def _prompt_patch_view(
         token_ids=tuple(token_ids),
         token_labels=tuple(_token_label(tokenizer, token_id) for token_id in token_ids),
     )
+
+
+def _prompt_counterfactual_views(
+    processor: Any,
+    record: ReflectionRecord,
+    mode: PatchingMode,
+    spec: PromptCounterfactualSpec,
+    *,
+    device: str = "cuda",
+) -> tuple[PromptPatchView, PromptPatchView]:
+    """Tokenize a prompt pair and apply its exact preregistered reverse-axis stop."""
+
+    source_alias = (
+        FUNCTION_BY_ID[spec.source_function_id].alias
+        if mode is PatchingMode.ACROSS_SAMPLE
+        else FUNCTION_BY_ID[record.function_id].alias
+    )
+    source_view = _prompt_patch_view(
+        processor,
+        record,
+        spec.source_messages,
+        source_alias,
+        stop_at_sequence_start=spec.stops_at_first_difference,
+        device=device,
+    )
+    recipient_view = _prompt_patch_view(
+        processor,
+        record,
+        record.messages,
+        FUNCTION_BY_ID[record.function_id].alias,
+        stop_at_sequence_start=spec.stops_at_first_difference,
+        device=device,
+    )
+    if spec.stops_at_first_difference:
+        positions = reverse_token_position_pairs_through_first_difference(
+            source_view.token_ids,
+            recipient_view.token_ids,
+        )
+        source_view = replace(source_view, stop_index=positions[-1].source_index)
+        recipient_view = replace(recipient_view, stop_index=positions[-1].recipient_index)
+    return source_view, recipient_view
+
+
+def _counterfactual_candidate_ids(
+    processor: Any,
+    record: ReflectionRecord,
+    spec: PromptCounterfactualSpec,
+    *,
+    device: str = "cuda",
+) -> tuple[t.Tensor, t.Tensor]:
+    source = _candidate_ids(processor, record, spec.source_messages, device=device)
+    recipient = _candidate_ids(processor, record, device=device)
+    if not t.equal(source, recipient):
+        raise RuntimeError(
+            "source and recipient chat templates must encode the A-E answer labels identically"
+        )
+    return source, recipient
 
 
 def _resolve_patch_targets(
@@ -417,16 +563,24 @@ def _patch_grid(
     source_activations: tuple[t.Tensor, ...],
     positions: tuple[TokenPositionPair, ...],
     correct_choice_index: int,
+    source_correct_choice_index: int | None = None,
     *,
     patch_batch_size: int = 8,
-) -> tuple[tuple[float, ...], ...]:
+) -> tuple[ProbabilityGrid, ProbabilityGrid | None]:
     if len(source_activations) != len(targets):
         raise ValueError("source activation count must equal decoder layer count")
     if not positions or patch_batch_size <= 0:
         raise ValueError("token patching requires positions and a positive batch size")
     if not 0 <= correct_choice_index < 5:
         raise ValueError("correct choice index must be in the five-way candidate set")
+    if source_correct_choice_index is not None and not 0 <= source_correct_choice_index < 5:
+        raise ValueError("source correct choice index must be in the five-way candidate set")
     values = [[float("nan")] * len(targets) for _ in positions]
+    source_target_values = (
+        [[float("nan")] * len(targets) for _ in positions]
+        if source_correct_choice_index is not None
+        else None
+    )
     for layer, (target, source) in enumerate(zip(targets, source_activations, strict=True)):
         for start in range(0, len(positions), patch_batch_size):
             chunk = positions[start : start + patch_batch_size]
@@ -468,9 +622,94 @@ def _patch_grid(
                 handle.remove()
             for offset, probability in enumerate(probabilities[:, correct_choice_index].tolist()):
                 values[start + offset][layer] = float(probability)
+            if source_target_values is not None and source_correct_choice_index is not None:
+                for offset, probability in enumerate(
+                    probabilities[:, source_correct_choice_index].tolist()
+                ):
+                    source_target_values[start + offset][layer] = float(probability)
     if any(not math.isfinite(value) for row in values for value in row):
         raise RuntimeError("token patch grid contains an unfilled or non-finite cell")
-    return tuple(tuple(row) for row in values)
+    if source_target_values is not None and any(
+        not math.isfinite(value) for row in source_target_values for value in row
+    ):
+        raise RuntimeError("source-target patch grid contains an unfilled or non-finite cell")
+    return (
+        tuple(tuple(row) for row in values),
+        None if source_target_values is None else tuple(tuple(row) for row in source_target_values),
+    )
+
+
+def _final_norm(model: t.nn.Module) -> t.nn.Module:
+    """Resolve the decoder's final normalization through optional PEFT wrappers."""
+
+    current: t.nn.Module | None = model
+    visited: set[int] = set()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        norm = getattr(current, "norm", None)
+        if isinstance(norm, t.nn.Module):
+            return norm
+        nested = getattr(current, "model", None)
+        current = nested if isinstance(nested, t.nn.Module) else None
+    raise RuntimeError("logit lens requires a resolvable decoder final normalization")
+
+
+def _answer_label_logit_lens(
+    model: t.nn.Module,
+    residual_activations: tuple[t.Tensor, ...],
+    token_indices: tuple[int, ...],
+    candidate_ids: t.Tensor,
+) -> tuple[tuple[tuple[float, ...], ...], ...]:
+    """Apply final norm and selected A-E unembedding rows to residual states."""
+
+    if not residual_activations or not token_indices:
+        raise ValueError("answer-label logit lens requires layers and token positions")
+    sequence_lengths = {activation.shape[0] for activation in residual_activations}
+    hidden_sizes = {activation.shape[1] for activation in residual_activations}
+    if len(sequence_lengths) != 1 or len(hidden_sizes) != 1:
+        raise RuntimeError("residual logit-lens activations must share [sequence, hidden] shape")
+    sequence_length = next(iter(sequence_lengths))
+    if any(index < 0 or index >= sequence_length for index in token_indices):
+        raise ValueError("logit-lens token index lies outside a captured residual sequence")
+    flat = t.stack(
+        [
+            residual_activations[layer][token_index]
+            for token_index in token_indices
+            for layer in range(len(residual_activations))
+        ],
+        dim=0,
+    )
+    norm = _final_norm(model)
+    norm_parameter = next(norm.parameters(), None)
+    if norm_parameter is None:
+        raise RuntimeError("decoder final normalization must expose its dtype and device")
+    output_embedding_resolver = getattr(model, "get_output_embeddings", None)
+    if not callable(output_embedding_resolver):
+        raise RuntimeError("answer-label logit lens requires output embeddings")
+    output_embeddings = output_embedding_resolver()
+    weight = getattr(output_embeddings, "weight", None)
+    if not isinstance(weight, t.Tensor) or weight.ndim != 2:
+        raise RuntimeError("answer-label logit lens requires a matrix output embedding")
+    selected_ids = candidate_ids.to(device=weight.device)
+    selected_weight = weight.index_select(0, selected_ids)
+    bias = getattr(output_embeddings, "bias", None)
+    selected_bias = bias.index_select(0, selected_ids) if isinstance(bias, t.Tensor) else None
+    with t.inference_mode():
+        normalized = norm(flat.to(device=norm_parameter.device, dtype=norm_parameter.dtype))
+        logits = functional.linear(
+            normalized.to(device=selected_weight.device, dtype=selected_weight.dtype),
+            selected_weight,
+            selected_bias,
+        )
+        probabilities = t.softmax(logits.to(dtype=t.float32), dim=-1).cpu()
+    layer_count = len(residual_activations)
+    return tuple(
+        tuple(
+            tuple(float(value) for value in probabilities[token * layer_count + layer].tolist())
+            for layer in range(layer_count)
+        )
+        for token in range(len(token_indices))
+    )
 
 
 def _lora_parameters(block: t.nn.Module) -> dict[str, t.nn.Parameter]:
@@ -983,29 +1222,29 @@ def build_token_axis_metadata(
 ) -> dict[str, object]:
     """Build the exact CPU-tokenized source/recipient axis shown by the site."""
 
-    if mode is PatchingMode.ACROSS_SAMPLE:
-        pair = build_across_sample_pair(record)
-        source_function_id = pair.dirty_function_id
-        source_messages = pair.dirty_messages
-        source_alias = FUNCTION_BY_ID[pair.dirty_function_id].alias
-        source_view = _prompt_patch_view(
+    source_choice_function_ids: tuple[str, ...] | None = record.choice_function_ids
+    source_choice_texts: tuple[str, ...] | None = None
+    source_question_id: str | None = None
+    source_question: str | None = None
+    recipient_correct_choice_index = record.choice_function_ids.index(record.function_id)
+    if mode.uses_prompt_counterfactual:
+        spec = _prompt_counterfactual_spec(record, mode)
+        source_function_id = spec.source_function_id
+        source_correct_choice_index = spec.source_correct_choice_index
+        source_choice_function_ids = spec.source_choice_function_ids
+        source_choice_texts = spec.source_choice_texts
+        source_question_id = spec.source_question_id
+        source_question = spec.source_question
+        source_view, recipient_view = _prompt_counterfactual_views(
             processor,
             record,
-            source_messages,
-            source_alias,
-            stop_at_sequence_start=False,
-            device="cpu",
-        )
-        recipient_view = _prompt_patch_view(
-            processor,
-            record,
-            record.messages,
-            FUNCTION_BY_ID[record.function_id].alias,
-            stop_at_sequence_start=False,
+            mode,
+            spec,
             device="cpu",
         )
     else:
         source_function_id = record.function_id
+        source_correct_choice_index = recipient_correct_choice_index
         source_view = _prompt_patch_view(
             processor,
             record,
@@ -1021,9 +1260,12 @@ def build_token_axis_metadata(
         source_view.stop_index,
         recipient_view.stop_index,
     )
-    return {
+    metadata: dict[str, object] = {
         "source_function_id": source_function_id,
         "recipient_function_id": record.function_id,
+        "source_correct_choice_index": source_correct_choice_index,
+        "recipient_correct_choice_index": recipient_correct_choice_index,
+        "recipient_choice_function_ids": record.choice_function_ids,
         "source_rendered_prompt": source_view.rendered_prompt,
         "recipient_rendered_prompt": recipient_view.rendered_prompt,
         "source_token_count": len(source_view.token_ids),
@@ -1041,6 +1283,15 @@ def build_token_axis_metadata(
             for position in positions
         ),
     }
+    if source_choice_function_ids is not None:
+        metadata["source_choice_function_ids"] = source_choice_function_ids
+    if source_choice_texts is not None:
+        metadata["source_choice_texts"] = source_choice_texts
+    if source_question_id is not None:
+        metadata["source_question_id"] = source_question_id
+    if source_question is not None:
+        metadata["source_question"] = source_question
+    return metadata
 
 
 def _patch_output_path(root: Path, run: RunKey, plan: PatchingPlan, donor_step: int) -> Path:
@@ -1068,32 +1319,55 @@ def _serialize_grid(
     positions: tuple[TokenPositionPair, ...],
     source_view: PromptPatchView,
     recipient_view: PromptPatchView,
-    grid: tuple[tuple[float, ...], ...],
+    grid: ProbabilityGrid,
     mode: PatchingMode,
+    *,
+    source_target_grid: ProbabilityGrid | None = None,
+    counterfactual: PromptCounterfactualSpec | None = None,
+    answer_logit_lens: dict[str, object] | None = None,
 ) -> dict[str, object]:
     correct_choice = record.choice_function_ids.index(record.function_id)
     recipient_target = float(recipient[correct_choice].item())
     cells: list[dict[str, object]] = []
-    for position, row in zip(positions, grid, strict=True):
+    if source_target_grid is not None and counterfactual is None:
+        raise ValueError("source-target grid requires prompt-counterfactual metadata")
+    if source_target_grid is not None and len(source_target_grid) != len(grid):
+        raise ValueError("source-target and recipient-target grids must share token rows")
+    source_target_recipient = (
+        None
+        if counterfactual is None
+        else float(recipient[counterfactual.source_correct_choice_index].item())
+    )
+    for token_index, (position, row) in enumerate(zip(positions, grid, strict=True)):
+        source_target_row = None if source_target_grid is None else source_target_grid[token_index]
+        if source_target_row is not None and len(source_target_row) != len(row):
+            raise ValueError("source-target and recipient-target grids must share layers")
         for layer, probability in enumerate(row):
-            cells.append(
-                {
-                    "layer": layer,
-                    "token_reverse_index": position.reverse_index,
-                    "source_token_index": position.source_index,
-                    "recipient_token_index": position.recipient_index,
-                    "source_token_id": source_view.token_ids[position.source_index],
-                    "recipient_token_id": recipient_view.token_ids[position.recipient_index],
-                    "source_token": source_view.token_labels[position.source_index],
-                    "recipient_token": recipient_view.token_labels[position.recipient_index],
-                    "probability": probability,
-                    "delta_from_recipient": probability - recipient_target,
-                }
-            )
-    return {
+            cell: dict[str, object] = {
+                "layer": layer,
+                "token_reverse_index": position.reverse_index,
+                "source_token_index": position.source_index,
+                "recipient_token_index": position.recipient_index,
+                "source_token_id": source_view.token_ids[position.source_index],
+                "recipient_token_id": recipient_view.token_ids[position.recipient_index],
+                "source_token": source_view.token_labels[position.source_index],
+                "recipient_token": recipient_view.token_labels[position.recipient_index],
+                "probability": probability,
+                "delta_from_recipient": probability - recipient_target,
+            }
+            if source_target_row is not None and source_target_recipient is not None:
+                source_target_probability = source_target_row[layer]
+                cell["source_target_probability"] = source_target_probability
+                cell["delta_source_target_from_recipient"] = (
+                    source_target_probability - source_target_recipient
+                )
+            cells.append(cell)
+    serialized: dict[str, object] = {
         "function_id": record.function_id,
         "source_function_id": (
-            DERANGEMENT[record.function_id]
+            counterfactual.source_function_id
+            if counterfactual is not None
+            else DERANGEMENT[record.function_id]
             if mode is PatchingMode.ACROSS_SAMPLE
             else record.function_id
         ),
@@ -1108,7 +1382,9 @@ def _serialize_grid(
             "anchor": "final token in the rendered generation prompt",
             "stop": (
                 "last queried-function-name token"
-                if mode is PatchingMode.ACROSS_SAMPLE
+                if counterfactual is not None and not counterfactual.stops_at_first_difference
+                else "first differing token scanning backward from the sequence end"
+                if counterfactual is not None
                 else "sequence start"
             ),
             "positions": len(positions),
@@ -1119,6 +1395,20 @@ def _serialize_grid(
         },
         "cells": cells,
     }
+    if counterfactual is not None:
+        serialized["source_correct_choice_index"] = counterfactual.source_correct_choice_index
+        serialized["recipient_correct_choice_index"] = correct_choice
+        if counterfactual.source_choice_function_ids is not None:
+            serialized["source_choice_function_ids"] = counterfactual.source_choice_function_ids
+        if counterfactual.source_choice_texts is not None:
+            serialized["source_choice_texts"] = counterfactual.source_choice_texts
+        if counterfactual.source_question_id is not None:
+            serialized["source_question_id"] = counterfactual.source_question_id
+        if counterfactual.source_question is not None:
+            serialized["source_question"] = counterfactual.source_question
+    if answer_logit_lens is not None:
+        serialized["answer_logit_lens"] = answer_logit_lens
+    return serialized
 
 
 def _serialize_weight_grid(
@@ -1381,6 +1671,11 @@ def _patch_record(
     recipient_view: PromptPatchView,
     source_activations: tuple[t.Tensor, ...],
     source_probabilities: t.Tensor,
+    *,
+    counterfactual: PromptCounterfactualSpec | None = None,
+    recipient_probabilities: t.Tensor | None = None,
+    source_residual_activations: tuple[t.Tensor, ...] | None = None,
+    recipient_residual_activations: tuple[t.Tensor, ...] | None = None,
 ) -> dict[str, object]:
     positions = reverse_token_position_pairs(
         source_view.anchor_index,
@@ -1389,14 +1684,20 @@ def _patch_record(
         recipient_view.stop_index,
     )
     candidate_ids = _candidate_ids(processor, record)
-    recipient_probabilities = _forward_probabilities(
-        model,
-        recipient_view.input_ids,
-        recipient_view.attention_mask,
-        candidate_ids,
-    )[0]
+    if recipient_probabilities is None:
+        recipient_probabilities = _forward_probabilities(
+            model,
+            recipient_view.input_ids,
+            recipient_view.attention_mask,
+            candidate_ids,
+        )[0]
     correct_choice = record.choice_function_ids.index(record.function_id)
-    grid = _patch_grid(
+    source_target_index = (
+        counterfactual.source_correct_choice_index
+        if counterfactual is not None and mode is not PatchingMode.ACROSS_SAMPLE
+        else None
+    )
+    grid, source_target_grid = _patch_grid(
         model,
         targets,
         recipient_view.input_ids,
@@ -1405,7 +1706,33 @@ def _patch_record(
         source_activations,
         positions,
         correct_choice,
+        source_target_index,
     )
+    if (source_residual_activations is None) != (recipient_residual_activations is None):
+        raise ValueError("logit lens requires both source and recipient residual activations")
+    answer_logit_lens: dict[str, object] | None = None
+    if source_residual_activations is not None and recipient_residual_activations is not None:
+        source_lens = _answer_label_logit_lens(
+            model,
+            source_residual_activations,
+            tuple(position.source_index for position in positions),
+            candidate_ids,
+        )
+        recipient_lens = _answer_label_logit_lens(
+            model,
+            recipient_residual_activations,
+            tuple(position.recipient_index for position in positions),
+            candidate_ids,
+        )
+        answer_logit_lens = {
+            "kind": "five_way_answer_label",
+            "labels": tuple("ABCDE"),
+            "normalization": "softmax over A-E after final norm and selected unembedding rows",
+            "display_top_p": ANSWER_LOGIT_LENS_TOP_P,
+            "residual_boundary": "decoder block output before final model normalization",
+            "source_probabilities": source_lens,
+            "recipient_probabilities": recipient_lens,
+        }
     return _serialize_grid(
         record,
         source_probabilities,
@@ -1415,6 +1742,9 @@ def _patch_record(
         recipient_view,
         grid,
         mode,
+        source_target_grid=source_target_grid,
+        counterfactual=counterfactual,
+        answer_logit_lens=answer_logit_lens,
     )
 
 
@@ -1661,7 +1991,7 @@ def run_temporal_patching_matrix(
     if (
         not modes
         or len(set(modes)) != len(modes)
-        or any(mode is PatchingMode.ACROSS_SAMPLE for mode in modes)
+        or any(mode.uses_prompt_counterfactual for mode in modes)
     ):
         raise ValueError("temporal matrix modes must be unique checkpoint-transfer modes")
     if shuffle_seed is not None and shuffle_seed < 0:
@@ -1822,7 +2152,7 @@ def _run_weight_patching(
 ) -> None:
     """Run an explicitly selected set of checkpoint-to-checkpoint weight patches."""
 
-    if plan.mode is PatchingMode.ACROSS_SAMPLE:
+    if plan.mode.uses_prompt_counterfactual:
         raise ValueError("weight patching is defined only for checkpoint transfer")
     for donor_step in pending:
         donor_model = _load_weight_checkpoint_model(root, run, spec, donor_step)
@@ -1929,35 +2259,52 @@ def run_patching(
             token_weight_patch_batch_size,
         )
         return
-    if plan.mode is PatchingMode.ACROSS_SAMPLE:
+    if plan.mode.uses_prompt_counterfactual:
         donor_step = pending[0]
         recipient_model = _load_checkpoint_model(root, run, spec, plan.recipient_step)
         recipient_blocks = resolve_decoder_blocks(recipient_model, spec)
         recipient_targets = _resolve_patch_targets(recipient_blocks, plan.interface)
+        residual_targets = _resolve_patch_targets(
+            recipient_blocks,
+            PatchingInterface.RESID_POST,
+        )
         serialized: list[dict[str, object]] = []
+        patch_direction: str | None = None
         try:
             for record in records:
-                pair = build_across_sample_pair(record)
-                source_view = _prompt_patch_view(
+                counterfactual = _prompt_counterfactual_spec(record, plan.mode)
+                source_view, recipient_view = _prompt_counterfactual_views(
                     processor,
                     record,
-                    pair.dirty_messages,
-                    FUNCTION_BY_ID[pair.dirty_function_id].alias,
-                    stop_at_sequence_start=False,
+                    plan.mode,
+                    counterfactual,
                 )
-                recipient_view = _prompt_patch_view(
-                    processor,
-                    record,
-                    record.messages,
-                    FUNCTION_BY_ID[record.function_id].alias,
-                    stop_at_sequence_start=False,
+                source_candidate_ids, recipient_candidate_ids = _counterfactual_candidate_ids(
+                    processor, record, counterfactual
                 )
                 source_activations, source_probabilities = _capture(
                     recipient_model,
                     recipient_targets,
                     source_view.input_ids,
                     source_view.attention_mask,
-                    _candidate_ids(processor, record),
+                    source_candidate_ids,
+                )
+                if plan.interface is PatchingInterface.RESID_POST:
+                    source_residual_activations = source_activations
+                else:
+                    source_residual_activations, _source_residual_probabilities = _capture(
+                        recipient_model,
+                        residual_targets,
+                        source_view.input_ids,
+                        source_view.attention_mask,
+                        source_candidate_ids,
+                    )
+                recipient_residual_activations, recipient_probabilities = _capture(
+                    recipient_model,
+                    residual_targets,
+                    recipient_view.input_ids,
+                    recipient_view.attention_mask,
+                    recipient_candidate_ids,
                 )
                 serialized.append(
                     _patch_record(
@@ -1970,10 +2317,20 @@ def run_patching(
                         recipient_view,
                         source_activations,
                         source_probabilities,
+                        counterfactual=counterfactual,
+                        recipient_probabilities=recipient_probabilities,
+                        source_residual_activations=source_residual_activations,
+                        recipient_residual_activations=recipient_residual_activations,
                     )
                 )
+                if patch_direction is None:
+                    patch_direction = counterfactual.patch_direction
+                elif patch_direction != counterfactual.patch_direction:
+                    raise AssertionError("prompt patch direction changed across records")
         finally:
             _release_model(recipient_model)
+        if patch_direction is None:
+            raise RuntimeError("prompt-counterfactual patching selected no records")
         output = _patch_output_path(root, run, plan, donor_step)
         write_json(
             output,
@@ -1982,7 +2339,7 @@ def run_patching(
                 "run": run,
                 "plan": plan,
                 "donor_step": donor_step,
-                "patch_direction": "dirty_source_into_clean_recipient",
+                "patch_direction": patch_direction,
                 "records": serialized,
             },
         )

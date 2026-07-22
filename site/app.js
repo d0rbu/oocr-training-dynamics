@@ -1,7 +1,7 @@
 "use strict";
 
-const DATA_URL = "data/experiment.json?v=20260721a";
-const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260721a";
+const DATA_URL = "data/experiment.json?v=20260721b";
+const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260721b";
 const CONDITION_LABELS = {
   correct: "Correct I/O",
   wrong_alias: "Wrong alias",
@@ -36,6 +36,12 @@ const PATCH_INTERFACE_DESCRIPTIONS = {
   mlp_output: "MLP output after the down projection, before branch normalization or residual addition.",
   token_weights: "At each token × layer cell, the donor checkpoint’s learned LoRA contribution replaces the recipient contribution in Q/K/V/O and gate/up/down only at the selected token. Other tokens keep recipient contributions; donor K/V at the selected token can causally affect later tokens through attention.",
   block_weights: "All-token control: all learned LoRA A/B factors in one decoder block (Q/K/V/O and gate/up/down) are replaced at once, affecting every prompt position. This is the earlier global intervention, retained separately from selected-token weight patching.",
+};
+const PROMPT_SOURCE_LABELS = {
+  across_sample: "Different function name",
+  cyclic_choices: "Choices shifted +1",
+  deranged_choices: "Random choice derangement",
+  unrelated_question: "Unrelated non-coding MCQ",
 };
 const SLIDER_UNITS = 10000;
 const ALL_FUNCTIONS_ID = "__all__";
@@ -510,7 +516,7 @@ function patchSelectionApplicable() {
 }
 
 function resolvedArtifactMode() {
-  if (!usesCheckpointDonor()) return "across_sample";
+  if (!usesCheckpointDonor()) return state.patchMode;
   if (state.donorIndex < state.recipientIndex) return "across_time";
   if (state.donorIndex > state.recipientIndex) return "later_checkpoint";
   return null;
@@ -543,7 +549,7 @@ function currentPatchReferences() {
   const currentDonor = state.data.checkpoints[state.donorIndex];
   const references = [];
   if (!usesCheckpointDonor()) {
-    Object.entries(interfaceManifest.across_sample ?? {}).forEach(([recipient, donors]) => {
+    Object.entries(interfaceManifest[resolvedArtifactMode()] ?? {}).forEach(([recipient, donors]) => {
       Object.values(donors).forEach((reference) => {
         references.push({ recipient: Number(recipient), donor: Number(recipient), reference });
       });
@@ -655,19 +661,102 @@ function compactPatchChunk(records) {
         probabilities[tokenIndex * layerCount + layer] = probability;
       });
     });
+    const sourceTargetProbabilities = record.source_target_probabilities
+      ? new Float64Array(tokenCount * layerCount)
+      : null;
+    if (sourceTargetProbabilities) {
+      if (
+        !Array.isArray(record.source_target_probabilities)
+        || record.source_target_probabilities.length !== tokenCount
+      ) {
+        throw new Error(`patch record ${functionId} has an invalid source-target matrix`);
+      }
+      record.source_target_probabilities.forEach((row, tokenIndex) => {
+        if (!Array.isArray(row) || row.length !== layerCount) {
+          throw new Error(`patch record ${functionId} has an inconsistent source-target matrix`);
+        }
+        row.forEach((probability, layer) => {
+          if (!Number.isFinite(probability)) {
+            throw new Error(`patch record ${functionId} has a non-finite source-target value`);
+          }
+          sourceTargetProbabilities[tokenIndex * layerCount + layer] = probability;
+        });
+      });
+    }
+    let answerLogitLens = null;
+    if (record.answer_logit_lens) {
+      const lens = record.answer_logit_lens;
+      if (
+        lens.kind !== "five_way_answer_label"
+        || !Array.isArray(lens.labels)
+        || lens.labels.join("") !== "ABCDE"
+        || !Number.isFinite(lens.display_top_p)
+      ) {
+        throw new Error(`patch record ${functionId} has unsupported logit-lens metadata`);
+      }
+      const flattenLens = (values, side) => {
+        if (!Array.isArray(values) || values.length !== tokenCount) {
+          throw new Error(`patch record ${functionId} has an invalid ${side} lens token axis`);
+        }
+        const flat = new Float64Array(tokenCount * layerCount * 5);
+        values.forEach((tokenRows, tokenIndex) => {
+          if (!Array.isArray(tokenRows) || tokenRows.length !== layerCount) {
+            throw new Error(`patch record ${functionId} has an invalid ${side} lens layer axis`);
+          }
+          tokenRows.forEach((distribution, layer) => {
+            if (
+              !Array.isArray(distribution)
+              || distribution.length !== 5
+              || distribution.some((value) => !Number.isFinite(value))
+            ) {
+              throw new Error(`patch record ${functionId} has an invalid ${side} lens distribution`);
+            }
+            distribution.forEach((probability, choiceIndex) => {
+              flat[(tokenIndex * layerCount + layer) * 5 + choiceIndex] = probability;
+            });
+          });
+        });
+        return flat;
+      };
+      answerLogitLens = {
+        labels: lens.labels,
+        topP: lens.display_top_p,
+        normalization: lens.normalization,
+        residualBoundary: lens.residual_boundary,
+        source: flattenLens(lens.source_probabilities, "source"),
+        recipient: flattenLens(lens.recipient_probabilities, "recipient"),
+      };
+    }
     const correctIndex = record.correct_choice_index;
+    const sourceCorrectIndex = Number.isInteger(record.source_correct_choice_index)
+      ? record.source_correct_choice_index
+      : null;
     compact[functionId] = {
       axisKind: record.axis_kind ?? "token_layer",
       layerCount,
       tokenCount,
       probabilities,
+      sourceTargetProbabilities,
       recipient: record.recipient_probabilities[correctIndex],
       source: record.source_probabilities[correctIndex],
+      sourceTargetRecipient: sourceCorrectIndex === null
+        ? null
+        : record.recipient_probabilities[sourceCorrectIndex],
+      sourceTargetSource: sourceCorrectIndex === null
+        ? null
+        : record.source_probabilities[sourceCorrectIndex],
+      sourceCorrectIndex,
+      recipientCorrectIndex: correctIndex,
       target: record.choice_function_ids[correctIndex],
       sourceFunctionId: record.source_function_id ?? functionId,
       recipientFunctionId: record.recipient_function_id ?? functionId,
       sourceRenderedPrompt: record.source_rendered_prompt ?? null,
       recipientRenderedPrompt: record.recipient_rendered_prompt ?? null,
+      sourceChoiceFunctionIds: record.source_choice_function_ids ?? null,
+      sourceChoiceTexts: record.source_choice_texts ?? null,
+      sourceQuestionId: record.source_question_id ?? null,
+      sourceQuestion: record.source_question ?? null,
+      answerLogitLens,
       weightScope: record.weight_scope ?? null,
     };
   });
@@ -767,7 +856,7 @@ async function refreshPatchManifest() {
 }
 
 function tokenAxisMode() {
-  return state.patchMode === "across_sample" ? "across_sample" : "across_time";
+  return usesCheckpointDonor() ? "across_time" : state.patchMode;
 }
 
 function normalizePatchCheckpointIndices() {
@@ -843,7 +932,12 @@ function unprocessedPatchForFunction(functionId) {
     tokenPositions,
     recipient: null,
     source: null,
+    sourceTargetRecipient: null,
+    sourceTargetSource: null,
+    sourceCorrectIndex: exactAxis?.source_correct_choice_index ?? null,
+    recipientCorrectIndex: exactAxis?.recipient_correct_choice_index ?? null,
     matrix: tokenPositions.map(() => Array(layers).fill(null)),
+    sourceTargetMatrix: null,
     target: fn.definition,
     outcomeLabel: "correct-implementation probability",
     sourceFunctionId: exactAxis?.source_function_id ?? (
@@ -854,6 +948,11 @@ function unprocessedPatchForFunction(functionId) {
     recipientFunctionId: exactAxis?.recipient_function_id ?? fn.id,
     sourceRenderedPrompt: exactAxis?.source_rendered_prompt ?? "Exact tokenizer metadata is unavailable for this provisional model.",
     recipientRenderedPrompt: exactAxis?.recipient_rendered_prompt ?? "Exact tokenizer metadata is unavailable for this provisional model.",
+    sourceChoiceFunctionIds: exactAxis?.source_choice_function_ids ?? null,
+    sourceChoiceTexts: exactAxis?.source_choice_texts ?? null,
+    sourceQuestionId: exactAxis?.source_question_id ?? null,
+    sourceQuestion: exactAxis?.source_question ?? null,
+    answerLogitLens: null,
     measured: false,
     processed: false,
     applicable: patchSelectionApplicable(),
@@ -897,12 +996,25 @@ function measuredPatchForFunction(functionId) {
       (tokenIndex + 1) * record.layerCount,
     )
   ));
+  const sourceTargetMatrix = record.sourceTargetProbabilities
+    ? Array.from({ length: record.tokenCount }, (_, tokenIndex) => (
+      record.sourceTargetProbabilities.subarray(
+        tokenIndex * record.layerCount,
+        (tokenIndex + 1) * record.layerCount,
+      )
+    ))
+    : null;
   return {
     layers: record.layerCount,
     tokenPositions,
     recipient: record.recipient,
     source: record.source,
+    sourceTargetRecipient: record.sourceTargetRecipient,
+    sourceTargetSource: record.sourceTargetSource,
+    sourceCorrectIndex: record.sourceCorrectIndex,
+    recipientCorrectIndex: record.recipientCorrectIndex,
     matrix,
+    sourceTargetMatrix,
     target: record.target,
     outcomeLabel: "correct-implementation probability",
     sourceFunctionId: record.sourceFunctionId,
@@ -913,6 +1025,11 @@ function measuredPatchForFunction(functionId) {
     recipientRenderedPrompt: layerOnly
       ? record.recipientRenderedPrompt
       : exactAxis.recipient_rendered_prompt,
+    sourceChoiceFunctionIds: record.sourceChoiceFunctionIds ?? exactAxis?.source_choice_function_ids ?? null,
+    sourceChoiceTexts: record.sourceChoiceTexts ?? exactAxis?.source_choice_texts ?? null,
+    sourceQuestionId: record.sourceQuestionId ?? exactAxis?.source_question_id ?? null,
+    sourceQuestion: record.sourceQuestion ?? exactAxis?.source_question ?? null,
+    answerLogitLens: record.answerLogitLens,
     measured: true,
     processed: true,
     applicable: true,
@@ -979,19 +1096,67 @@ function averagePatches(patches) {
       processed ? mean(patches.map((patch) => patch.matrix[tokenIndex][layer])) : null
     ))
   ));
+  const hasSourceTarget = processed && patches.every(
+    (patch) => Array.isArray(patch.sourceTargetMatrix),
+  );
+  const sourceTargetMatrix = hasSourceTarget
+    ? Array.from({ length: sharedTokenCount }, (_, tokenIndex) => (
+      Array.from({ length: layers }, (_, layer) => (
+        mean(patches.map((patch) => patch.sourceTargetMatrix[tokenIndex][layer]))
+      ))
+    ))
+    : null;
+  const hasAnswerLogitLens = processed && patches.every(
+    (patch) => patch.answerLogitLens !== null,
+  );
+  let answerLogitLens = null;
+  if (hasAnswerLogitLens) {
+    const referenceLens = patches[0].answerLogitLens;
+    const flatLength = sharedTokenCount * layers * 5;
+    if (patches.some((patch) => (
+      patch.answerLogitLens.source.length < flatLength
+      || patch.answerLogitLens.recipient.length < flatLength
+      || patch.answerLogitLens.topP !== referenceLens.topP
+    ))) {
+      throw new Error("Cannot average incompatible answer-logit-lens artifacts");
+    }
+    const averageFlat = (side) => Float64Array.from(
+      { length: flatLength },
+      (_, index) => mean(patches.map((patch) => patch.answerLogitLens[side][index])),
+    );
+    answerLogitLens = {
+      ...referenceLens,
+      source: averageFlat("source"),
+      recipient: averageFlat("recipient"),
+    };
+  }
   const measured = processed && patches.every((patch) => patch.measured);
   return {
     layers,
     tokenPositions,
     recipient: processed ? mean(patches.map((patch) => patch.recipient)) : null,
     source: processed ? mean(patches.map((patch) => patch.source)) : null,
+    sourceTargetRecipient: hasSourceTarget
+      ? mean(patches.map((patch) => patch.sourceTargetRecipient))
+      : null,
+    sourceTargetSource: hasSourceTarget
+      ? mean(patches.map((patch) => patch.sourceTargetSource))
+      : null,
+    sourceCorrectIndex: null,
+    recipientCorrectIndex: null,
     matrix,
+    sourceTargetMatrix,
     target: `${functionCount}-function mean`,
     outcomeLabel: "mean correct-implementation probability",
     sourceFunctionId: null,
     recipientFunctionId: null,
     sourceRenderedPrompt: `Aggregate view over ${functionCount} model-rendered source prompts. Select an individual function to inspect exact text and tokenizer IDs.`,
     recipientRenderedPrompt: `Aggregate view over ${functionCount} model-rendered recipient prompts. Select an individual function to inspect exact text and tokenizer IDs.`,
+    sourceChoiceFunctionIds: null,
+    sourceChoiceTexts: null,
+    sourceQuestionId: null,
+    sourceQuestion: null,
+    answerLogitLens,
     measured,
     processed,
     applicable,
@@ -1059,6 +1224,34 @@ function aggregateTokenCoordinate(prefix, token) {
   return `${prefix}${token}`;
 }
 
+function promptSourcePrefix() {
+  if (state.patchMode === "across_sample") return "dirty/source ";
+  if (state.patchMode === "cyclic_choices") return "shifted/source ";
+  if (state.patchMode === "deranged_choices") return "deranged/source ";
+  if (state.patchMode === "unrelated_question") return "unrelated/source ";
+  return "donor/source ";
+}
+
+function topPAnswerLensHtml(lens, tokenIndex, layer, layerCount, aggregate) {
+  if (!lens) return "";
+  const offset = (tokenIndex * layerCount + layer) * 5;
+  const formatDistribution = (side) => {
+    const ranked = lens.labels
+      .map((label, choiceIndex) => ({ label, probability: lens[side][offset + choiceIndex] }))
+      .sort((left, right) => right.probability - left.probability);
+    let cumulative = 0;
+    const selected = [];
+    for (const item of ranked) {
+      selected.push(`${item.label} ${formatPercent(item.probability)}`);
+      cumulative += item.probability;
+      if (cumulative >= lens.topP) break;
+    }
+    return selected.join(" · ");
+  };
+  const scope = aggregate ? "mean A-E distribution" : "A-E distribution";
+  return `<br><br><b>answer-label logit lens · top-p=${lens.topP.toFixed(1)}</b><br><small>final norm + unembedding, normalized only over A-E; ${scope}</small><br>${escapeHtml(promptSourcePrefix().trim())}: ${formatDistribution("source")}<br>clean/recipient: ${formatDistribution("recipient")}`;
+}
+
 function renderPatching() {
   const patch = patchData();
   const patchReference = selectedPatchReference();
@@ -1079,8 +1272,8 @@ function renderPatching() {
       : position.sourceToken === position.recipientToken
         && position.sourceIndex === position.recipientIndex
         && position.sourceTokenId === position.recipientTokenId);
-    const sourcePrefix = state.patchMode === "across_sample" ? "dirty/source " : "source ";
-    const recipientPrefix = state.patchMode === "across_sample" ? "clean/recipient " : "recipient ";
+    const sourcePrefix = promptSourcePrefix();
+    const recipientPrefix = usesCheckpointDonor() ? "recipient " : "clean/recipient ";
     const sourceCoordinate = layerOnly
       ? "donor checkpoint · complete learned block update"
       : position.aggregate
@@ -1110,7 +1303,7 @@ function renderPatching() {
       if (!patch.processed) {
         cell.classList.add("unprocessed");
         const unavailableReason = !patch.applicable
-          ? "Different function-name prompts use the same checkpoint weights, so there is no distinct donor weight state to patch. Select Checkpoint transfer."
+          ? "Prompt variants use the same checkpoint weights, so there is no distinct donor weight state to patch. Select Checkpoint transfer."
           : patchLoadError
           ? "A measured file exists, but it could not be loaded. No fallback value is displayed."
           : patchLoading
@@ -1140,7 +1333,24 @@ function renderPatching() {
       const interventionNote = tokenWeightPatchSelected()
         ? "<br><small>donor LoRA contribution used only at this token; all other token contributions stay recipient</small>"
         : "";
-      bindHeatTooltip(cell, `<b>${coordinate}</b>${averagingNote}<br>${escapeHtml(sourceCoordinate)}<br>${escapeHtml(recipientCoordinate)}${interventionNote}<br><br>patched result: ${formatPercent(probability)}<br>unpatched recipient baseline: ${formatPercent(patch.recipient)}<br>unpatched donor/source baseline: ${formatPercent(patch.source)}<br>change from recipient: ${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(2)} pp<br><small>${baselineScope}</small>`);
+      const sourceTargetNote = patch.sourceTargetMatrix
+        ? (() => {
+          const sourceTargetProbability = patch.sourceTargetMatrix[tokenIndex][layer];
+          const sourceTargetDelta = sourceTargetProbability - patch.sourceTargetRecipient;
+          const sourceTargetLabel = patch.aggregate || patch.sourceCorrectIndex === null
+            ? "each source's correct label"
+            : `source-correct label ${"ABCDE"[patch.sourceCorrectIndex]}`;
+          return `<br><br><b>${sourceTargetLabel}</b><br>patched result: ${formatPercent(sourceTargetProbability)}<br>unpatched recipient baseline: ${formatPercent(patch.sourceTargetRecipient)}<br>unpatched source baseline: ${formatPercent(patch.sourceTargetSource)}<br>change from recipient: ${sourceTargetDelta >= 0 ? "+" : ""}${(sourceTargetDelta * 100).toFixed(2)} pp`;
+        })()
+        : "";
+      const logitLensNote = topPAnswerLensHtml(
+        patch.answerLogitLens,
+        tokenIndex,
+        layer,
+        patch.layers,
+        patch.aggregate,
+      );
+      bindHeatTooltip(cell, `<b>${coordinate}</b>${averagingNote}<br>${escapeHtml(sourceCoordinate)}<br>${escapeHtml(recipientCoordinate)}${interventionNote}<br><br><b>clean-correct label</b><br>patched result: ${formatPercent(probability)}<br>unpatched recipient baseline: ${formatPercent(patch.recipient)}<br>unpatched donor/source baseline: ${formatPercent(patch.source)}<br>change from recipient: ${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(2)} pp${sourceTargetNote}${logitLensNote}<br><small>${baselineScope}</small>`);
       cell.setAttribute("aria-label", layerOnly
         ? `layer ${layer}, entire decoder block, ${display}`
         : `layer ${layer}, reverse token ${position.reverseIndex}, ${display}`);
@@ -1177,7 +1387,7 @@ function renderPatching() {
     legend.append(el("span", {}, "higher P(correct)"));
   } else if (!patch.applicable) {
     legend.append(el("i", { class: "unprocessed" }));
-    legend.append(el("span", {}, "not applicable · checkpoint weights do not depend on prompt name"));
+    legend.append(el("span", {}, "not applicable · prompt variants share checkpoint weights"));
   } else if (patchLoading) {
     legend.append(el("i", { class: "unprocessed" }));
     legend.append(el("span", {}, "loading measured values · no value shown yet"));
@@ -1194,11 +1404,11 @@ function renderPatching() {
   document.getElementById("donor-kind-label").textContent = weightPatchSelected()
     ? "weight source"
     : "activation source";
-  document.getElementById("donor-control").style.opacity = state.patchMode === "across_sample" ? ".38" : "1";
+  document.getElementById("donor-control").style.opacity = usesCheckpointDonor() ? "1" : ".38";
   const donorSlider = document.getElementById("donor-slider");
-  donorSlider.disabled = state.patchMode === "across_sample";
+  donorSlider.disabled = !usesCheckpointDonor();
   donorSlider.value = sliderValueForStep(
-    state.patchMode === "across_sample" ? recipient : checkpoints[state.donorIndex],
+    usesCheckpointDonor() ? checkpoints[state.donorIndex] : recipient,
     state.patchTimeScale,
   );
   const fn = state.data.functions.find((item) => item.id === state.functionId);
@@ -1230,25 +1440,51 @@ function renderPatching() {
         : "Recipient and donor are the same checkpoint. This identity cell is not run or assigned a value because replacing an activation with itself should leave the answer unchanged.";
     }
   } else {
-    const dirty = patch.aggregate
+    const sourceFunction = patch.aggregate
       ? null
       : state.data.functions.find((item) => item.id === patch.sourceFunctionId);
+    const cleanLetter = patch.recipientCorrectIndex === null
+      ? null
+      : "ABCDE"[patch.recipientCorrectIndex];
+    const sourceLetter = patch.sourceCorrectIndex === null
+      ? null
+      : "ABCDE"[patch.sourceCorrectIndex];
     document.getElementById("source-question-label").textContent = weightPatchSelected()
       ? "no distinct weight source"
-      : "dirty activation source";
-    document.getElementById("source-question").textContent = patch.aggregate
-      ? weightPatchSelected()
+      : `${PROMPT_SOURCE_LABELS[state.patchMode]} source`;
+    let sourceQuestion;
+    let explanation;
+    if (weightPatchSelected()) {
+      sourceQuestion = patch.aggregate
         ? `Same checkpoint weights across all ${patch.functionCount} prompt pairs`
-        : `Mean over all ${patch.functionCount} fixed-derangement dirty-name questions`
-      : weightPatchSelected()
-        ? "Same checkpoint weights for dirty and clean prompts"
-        : `What is the definition of ${dirty.alias}?`;
-    document.getElementById("patch-explanation").textContent = weightPatchSelected()
-      ? "Changing only the function name changes activations, but it does not create a second set of checkpoint weights. Weight patching is therefore undefined for this source mode; select Checkpoint transfer to choose distinct donor and recipient weights."
-      : "Patching dirty-name states into the clean prompt tests where the alternate identity suppresses the correct implementation. Cells show P(correct) directly, so a successful corruption moves downward.";
+        : "Same checkpoint weights for source and clean prompts";
+      explanation = "Prompt counterfactuals change activations, but they do not create a second set of checkpoint weights. Weight patching is therefore undefined for this source mode; select Checkpoint transfer to choose distinct donor and recipient weights.";
+    } else if (state.patchMode === "across_sample") {
+      sourceQuestion = patch.aggregate
+        ? `Mean over all ${patch.functionCount} fixed-derangement dirty-name questions`
+        : `What is the definition of ${sourceFunction.alias}?`;
+      explanation = "Patching dirty-name states into the clean prompt tests where the alternate identity suppresses the correct implementation. Cells remain colored by clean P(correct).";
+    } else if (state.patchMode === "cyclic_choices") {
+      sourceQuestion = patch.aggregate
+        ? `Same questions with every option moved A→B→C→D→E→A · n=${patch.functionCount}`
+        : `Same question · option contents shifted +1 · correct ${cleanLetter}→${sourceLetter}`;
+      explanation = "The donor asks the same function question but moves every answer content forward one label. A late answer-label readout should lower the clean-correct label and raise the source-correct label. Cell color remains clean P(correct); hover shows both labels and the A-E logit lens.";
+    } else if (state.patchMode === "deranged_choices") {
+      sourceQuestion = patch.aggregate
+        ? `Same questions with deterministic random no-fixed-point option orders · n=${patch.functionCount}`
+        : `Same question · random option derangement · correct ${cleanLetter}→${sourceLetter}`;
+      explanation = "Each donor uses a deterministic random option derangement with no answer left in place. This controls for the fixed +1 rotation: a label-readout circuit should transfer whichever new label contains the correct implementation. Cell color remains clean P(correct); hover shows the donor-label effect and A-E logit lens.";
+    } else {
+      sourceQuestion = patch.aggregate
+        ? `Mean over ${patch.functionCount} unrelated non-coding five-choice questions; every donor label differs from its clean pair`
+        : `${patch.sourceQuestion} · correct ${sourceLetter}, clean probe correct ${cleanLetter}`;
+      explanation = "The donor is an unrelated non-coding MCQ in the same five-choice format, with a correct letter guaranteed to differ from the paired clean probe. Transfer of that donor label at the final token would support a generic answer-label readout rather than function-specific content. Cell color remains clean P(correct); hover shows the donor-label effect and A-E logit lens.";
+    }
+    document.getElementById("source-question").textContent = sourceQuestion;
+    document.getElementById("patch-explanation").textContent = explanation;
   }
   if (!patch.applicable) {
-    document.getElementById("patch-explanation").textContent = `Changing only the function name changes activations, but it does not create a second set of checkpoint weights. Weight patching is therefore undefined for this source mode; select Checkpoint transfer to choose distinct donor and recipient weights. The purple ${allTokenWeightPatchSelected() ? "row" : "squares"} encode no result.`;
+    document.getElementById("patch-explanation").textContent = `Prompt counterfactuals share one checkpoint and therefore have no distinct donor weight state. Select Checkpoint transfer for weight patching. The purple ${allTokenWeightPatchSelected() ? "row" : "squares"} encode no result.`;
   } else if (patchLoadError) {
     document.getElementById("patch-explanation").textContent = `A measured artifact exists for this selection, but its data file could not be loaded (${patchLoadError}). No fallback value is shown.`;
   } else if (patchLoading) {
