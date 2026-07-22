@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from oocr_training_dynamics.contracts import PatchingInterface, PatchingMode
@@ -13,6 +15,7 @@ from oocr_training_dynamics.patching import (
     build_across_sample_pair,
     build_cyclic_choice_pair,
     build_deranged_choice_pair,
+    build_letter_context_pair,
     build_unrelated_question_pair,
     cyclically_shift_choice_function_ids,
     randomly_derange_choice_function_ids,
@@ -83,21 +86,57 @@ def test_random_choice_pair_is_deterministic_and_has_no_fixed_positions() -> Non
     ) == (pair.source_choice_function_ids, pair.permutation)
 
 
-def test_unrelated_questions_are_non_coding_and_never_share_the_clean_answer_label() -> None:
+def test_unrelated_questions_support_a_registered_same_or_different_label() -> None:
     records = tuple(row for row in build_reflection_records(3, 1) if row.kind == "code")
-    pairs = tuple(build_unrelated_question_pair(record) for record in records)
+    different_pairs = tuple(build_unrelated_question_pair(record) for record in records)
+    same_pairs = tuple(
+        build_unrelated_question_pair(record, match_clean_label=True) for record in records
+    )
 
-    assert len({pair.question_id for pair in pairs}) == len(records)
-    for record, pair in zip(records, pairs, strict=True):
+    assert len({pair.question_id for pair in different_pairs}) == len(records)
+    for record, different, same in zip(records, different_pairs, same_pairs, strict=True):
         clean_correct = record.choice_function_ids.index(record.function_id)
-        source_text = pair.source_messages[1].content
-        assert pair.source_correct_choice_index != clean_correct
-        assert pair.source_messages[-1].content == "ABCDE"[pair.source_correct_choice_index]
-        assert pair.question in source_text
+        source_text = different.source_messages[1].content
+        assert different.source_correct_choice_index != clean_correct
+        assert different.label_relation == "different_from_recipient"
+        assert same.source_correct_choice_index == clean_correct
+        assert same.label_relation == "same_as_recipient"
+        assert different.source_messages[-1].content == "ABCDE"[
+            different.source_correct_choice_index
+        ]
+        assert same.source_messages[-1].content == "ABCDE"[same.source_correct_choice_index]
+        assert different.question in source_text
         assert "Answer with one uppercase letter." in source_text
         assert all(
-            term not in pair.question.lower() for term in ("python", "code", "lambda", "function")
+            term not in different.question.lower()
+            for term in ("python", "code", "lambda", "function")
         )
+
+
+def test_letter_contexts_are_non_mcq_completions_with_same_or_different_labels() -> None:
+    records = tuple(row for row in build_reflection_records(3, 1) if row.kind == "code")
+    context_ids: set[str] = set()
+    forbidden = {"python", "code", "lambda", "function", "question", "choice"}
+
+    for record in records:
+        clean_correct = record.choice_function_ids.index(record.function_id)
+        same = build_letter_context_pair(record, match_clean_label=True)
+        different = build_letter_context_pair(record, match_clean_label=False)
+        context_ids.add(same.context_id)
+
+        assert same.source_correct_choice_index == clean_correct
+        assert same.label_relation == "same_as_recipient"
+        assert different.source_correct_choice_index != clean_correct
+        assert different.label_relation == "different_from_recipient"
+        for pair in (same, different):
+            source_letter = "ABCDE"[pair.source_correct_choice_index]
+            assert pair.source_messages[-1].content == source_letter
+            assert source_letter in pair.context
+            assert "?" not in pair.context
+            assert not set(re.findall(r"[a-z]+", pair.context.lower())) & forbidden
+            assert "A)" not in pair.context and "B)" not in pair.context
+
+    assert len(context_ids) == len(records)
 
 
 def test_temporal_plan_requires_earlier_donors() -> None:
@@ -135,6 +174,9 @@ def test_answer_label_prompt_plans_allow_independent_checkpoint_donors() -> None
         PatchingMode.CYCLIC_CHOICES,
         PatchingMode.DERANGED_CHOICES,
         PatchingMode.UNRELATED_QUESTION,
+        PatchingMode.UNRELATED_QUESTION_SAME_LETTER,
+        PatchingMode.LETTER_CONTEXT_SAME,
+        PatchingMode.LETTER_CONTEXT_DIFFERENT,
     )
     for mode in modes:
         plan = PatchingPlan(mode, recipient_step=64, donor_steps=(0, 32, 64, 128))
@@ -239,6 +281,8 @@ def test_freeform_record_cannot_be_used_for_primary_sample_patching() -> None:
         build_deranged_choice_pair(record)
     with pytest.raises(ValueError, match="multiple-choice"):
         build_unrelated_question_pair(record)
+    with pytest.raises(ValueError, match="multiple-choice"):
+        build_letter_context_pair(record, match_clean_label=True)
 
 
 def test_reverse_token_positions_align_inclusive_sequence_end_and_name_boundary() -> None:

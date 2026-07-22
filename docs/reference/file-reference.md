@@ -38,6 +38,7 @@
 | `scripts/run_evaluation.py` | Evaluate every indexed checkpoint for one run |
 | `scripts/run_patching.py` | Produce one across-sample/across-time patch plan |
 | `scripts/run_patching_matrix.py` | Resume/skip through selected or full patching coverage |
+| `scripts/run_activation_examples.py` | Measure checkpoint-indexed top cosine-matching prompt tokens for selectable activation cells |
 | `scripts/analyze_results.py` | Compute frozen-adjusted AUCs and function-clustered intervals |
 | `scripts/export_site.py` | Discover artifacts and rebuild the static site payload |
 

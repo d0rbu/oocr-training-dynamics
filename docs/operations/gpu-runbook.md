@@ -155,6 +155,37 @@ baseline, clean lens, and downstream patched computation must come from the reci
 complete JSON files are skipped after constructing the full deterministic priority order. Use
 repeated `--recipient-step` and `--donor-step` flags for a predetermined smoke subset only.
 
+The later format × letter extension adds three independent modes. First run one endpoint smoke
+cell for each new source and validate the serialized `source_label_relation`, prompt format,
+single-letter target, dual-label matrices, and checkpoint-specific lenses:
+
+```bash
+uv run python scripts/run_patching_matrix.py \
+  --model olmo3-7b --condition correct --interface resid_post \
+  --mode unrelated_question_same_letter \
+  --mode letter_context_same --mode letter_context_different \
+  --recipient-step 1500 --donor-step 1500 \
+  --shuffle-seed 20260715 --confirm-gpu-run
+```
+
+After those three artifacts pass, omit the two step filters to fill their 972-cell extension. The
+existing `unrelated_question` is already the different-letter MCQ cell; do not duplicate or
+relabel it as same-letter.
+
+Cell-selected top examples are a separate checkpoint-indexed measurement. A step-1500 residual
+smoke covers all six source modes, all 19 functions, and the fixed 95-prompt candidate bank:
+
+```bash
+uv run python scripts/run_activation_examples.py \
+  --model olmo3-7b --condition correct --interface resid_post \
+  --checkpoint-step 1500 --confirm-gpu-run
+```
+
+Validate that each mode/function has complete source and recipient token × layer neighbor grids;
+each cell must contain six distinct candidate prompts in descending finite cosine order, with a
+valid highlighted token index. Record wall time, raw/compact size, RAM, and VRAM before omitting
+`--checkpoint-step` to cover all 18 checkpoints. This audit does not run for weight interfaces.
+
 Across-time example with multiple earlier donors:
 
 ```bash

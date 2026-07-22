@@ -169,6 +169,18 @@ correct letter is always different from the clean letter. Both labels' causal pr
 a five-way residual logit lens are stored so label transfer can be separated from generic
 disruption. Each side's lens uses that side's own checkpoint readout.
 
+A later 2026-07-22 exploratory extension turns the unrelated control into a 2×2 design. The
+existing unrelated MCQ remains the different-letter cell and gains a same-letter counterpart.
+Two record-copy completions remove the MCQ format entirely while targeting either the clean
+letter or a deterministic different letter. These three added modes use the same independently
+selected donor/recipient checkpoints and contribute 972 additional residual grids.
+
+For cell interpretation, a separate activation-neighbor audit searches 95 fixed prompts: 19 each
+from held-out code-choice, held-out language-choice, unrelated MCQ, non-MCQ letter completion, and
+training-I/O categories. Each prompt contributes only its single most cosine-similar token to a
+reference vector, preventing adjacent positions from occupying several top-example slots. The
+audit bank is bounded and disclosed; it is not a search over pretraining data.
+
 ## What is and is not controlled
 
 The three corpora are exactly matched under one seed, enabling paired trajectory comparisons.

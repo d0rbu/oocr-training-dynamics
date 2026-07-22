@@ -106,15 +106,23 @@ This corruption changes function identity, not implementation text or answer lab
 
 ## Final-suffix answer-label controls
 
-Three post-hoc prompt sources isolate the hypothesis that the final-token late-layer state is a
-generic A–E readout. `cyclic_choices` moves every implementation content forward one label;
-`deranged_choices` uses a deterministic random option permutation with no fixed positions; and
-`unrelated_question` uses a paired non-coding five-choice question whose correct letter is forced
-to differ from the clean probe's correct letter. The first two preserve the exact function
-question and option contents. The third preserves only the five-choice response format and final
-answer instruction.
+Six post-hoc prompt sources isolate the hypothesis that the final-token late-layer state is a
+generic A–E readout. `cyclic_choices` moves every implementation content forward one label and
+`deranged_choices` uses a deterministic random option permutation with no fixed positions. The
+remaining four form a format × target-letter design:
 
-The initial smoke cells ran source and recipient through step 1500. In the 2026-07-22 extension,
+| Source | Prompt format | Relation to clean correct letter |
+|---|---|---|
+| `unrelated_question` | unrelated non-coding five-choice MCQ | different |
+| `unrelated_question_same_letter` | unrelated non-coding five-choice MCQ | same |
+| `letter_context_different` | non-question record-copy completion | different |
+| `letter_context_same` | non-question record-copy completion | same |
+
+The non-MCQ records have no choices or coding language; a marker in the record determines which
+single capital letter completes the final field. The exact format and label relation are stored in
+every axis/grid artifact.
+
+The initial three-mode smoke cells ran source and recipient through step 1500. In the 2026-07-22 extension,
 the source prompt can instead run at any registered donor checkpoint while the clean prompt runs
 at any independently selected recipient checkpoint. The transplanted vector comes from the donor
 model; all computation after the patched boundary remains recipient-side.
@@ -166,9 +174,10 @@ The exported site presents the two clean-prompt temporal artifact directions thr
 resolves to the registered across-time artifact, while donor-after-recipient resolves to the
 registered later-into-earlier artifact. Equal steps are shown as unprocessed identity cells because
 no clean-prompt same-checkpoint grid is stored. **Different function name** remains same-checkpoint.
-**Shift choices +1**, **Derange choices**, and **Unrelated MCQ** expose independent source and
-recipient checkpoint sliders; their equal-step diagonals are measured prompt interventions rather
-than identities.
+**Shift choices +1**, **Derange choices**, and both **Unrelated MCQ** relations expose independent
+source and recipient checkpoint sliders. The two non-MCQ context modes do as well; their equal-step
+diagonals are measured prompt interventions rather than identities. Prompt audit columns
+consistently place the clean recipient on the left and source on the right.
 
 The function probe includes an **Average over all 19 functions** option. A measured mean is shown
 only when the exact selection has a measured grid for every registered function. Cells are
@@ -178,6 +187,24 @@ and source baselines are averaged over the same functions, making a displayed de
 mean per-function delta. Aggregate rows summarize whether decoded tokens agree but deliberately
 omit absolute tokenizer indices and IDs, which differ across prompts. Selecting an individual
 function restores the exact rendered prompts and coordinates.
+
+## Cell-selected activation examples
+
+For an individual-function activation grid, clicking one measured cell selects two reference
+vectors: the clean recipient vector and the source/donor vector at that exact interface, tokenizer
+position, layer, and checkpoint. Weight cells and all-function means do not define one such vector
+and therefore show the analysis as not applicable.
+
+Each reference searches a fixed 95-prompt audit bank at the same checkpoint as the reference. The
+candidate categories are held-out code choice, held-out language choice, unrelated MCQ, non-MCQ
+letter completion, and training I/O, with 19 prompts per category. Cosine similarity is computed
+against every tokenizer position. A candidate prompt contributes only its maximum-scoring token,
+then the six highest-scoring distinct prompts are retained. The site highlights the maximizing
+token and reports the cosine. Source and recipient banks are computed independently with their own
+checkpoint weights.
+
+This is observational nearest-neighbor evidence. Its search universe is intentionally finite and
+displayed beside the result; “top” never means top over the model's pretraining distribution.
 
 ## Why no raw cross-model patching
 
@@ -203,7 +230,7 @@ Each artifact identifies model/run/interface/plan/donor step and stores, per fun
 - the correct-option probability for every `(reverse token, layer)` cell;
 - raw delta from recipient.
 
-The three final-suffix answer-label controls also store the source prompt's correct label, its
+The six final-suffix answer-label controls also store the source prompt's correct label, its
 per-cell probability and clean-recipient delta, the exact source option/question metadata, and the
 source/recipient five-way residual logit-lens distributions. Mixed-checkpoint artifacts explicitly
 record `checkpoint_relation=cross_checkpoint`; the artifact donor step and plan recipient step
@@ -313,7 +340,7 @@ future work.
 
 ### Prompt x checkpoint answer-label atlas — 2026-07-22
 
-The three answer-label prompt controls now cross all 18 donor and 18 recipient checkpoints for
+The first three answer-label prompt controls cross all 18 donor and 18 recipient checkpoints for
 OLMo `resid_post`. Their schedule reuses the five deterministic checkpoint tiers above, but all
 four endpoint corners are computable because same-checkpoint prompt pairs are not identity
 interventions. Within each tier, recipient/donor/mode triples are shuffled with seed 20260715.
@@ -324,6 +351,13 @@ Each cell intentionally captures one donor prompt bank, releases the donor model
 recipient, writes one complete JSON artifact atomically, and releases the bank. This bounds host
 memory and makes any completed cell resumable at the cost of checkpoint reloads. Partial exports
 show only finished cells and never fill the remaining plane synthetically.
+
+The later format × letter extension adds three modes under the same scheduler and therefore 972
+additional cells. It is safe to run them separately: complete artifacts are atomic and the mode is
+part of the path. Activation-neighbor artifacts are checkpoint-indexed rather than donor/recipient
+pair-indexed, because a donor-side reference depends only on `(mode, donor checkpoint)` and a
+recipient-side reference only on `(mode, recipient checkpoint)`. One checkpoint artifact covers
+all 19 functions and every selected answer-label mode.
 
 ## Interpretation cautions
 

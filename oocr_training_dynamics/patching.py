@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import itertools
 import math
+import re
 from dataclasses import dataclass
 
 from beartype import beartype
@@ -26,9 +27,13 @@ PATCH_POSITION = "reverse_from_sequence_end"
 WEIGHT_PATCH_SCOPE = "entire_decoder_block"
 CHOICE_DERANGEMENT_SEED = 20_260_721
 UNRELATED_QUESTION_SEED = 20_260_721
+LETTER_CONTEXT_SEED = 20_260_722
 UNRELATED_SYSTEM_PROMPT = (
     "Answer the multiple-choice question. Respond with exactly one uppercase letter: "
     "A, B, C, D, or E."
+)
+LETTER_CONTEXT_SYSTEM_PROMPT = (
+    "Complete the final field exactly as implied by the record. Return only the completion."
 )
 
 
@@ -78,6 +83,21 @@ class UnrelatedQuestionPromptPair:
     question: str
     source_choices: tuple[str, ...]
     source_correct_choice_index: int
+    label_relation: str
+
+
+@beartype
+@dataclass(frozen=True)
+class LetterContextPromptPair:
+    """A non-question text completion whose next token is one capital letter."""
+
+    function_id: str
+    clean: ReflectionRecord
+    source_messages: tuple[ChatMessage, ...]
+    context_id: str
+    context: str
+    source_correct_choice_index: int
+    label_relation: str
 
 
 @dataclass(frozen=True)
@@ -86,6 +106,12 @@ class _UnrelatedQuestion:
     question: str
     choices: tuple[str, ...]
     correct_choice_index: int
+
+
+@dataclass(frozen=True)
+class _LetterContext:
+    context_id: str
+    template: str
 
 
 _UNRELATED_QUESTIONS = (
@@ -211,6 +237,85 @@ _UNRELATED_QUESTIONS = (
     ),
 )
 
+_LETTER_CONTEXTS = (
+    _LetterContext(
+        "archive-transfer",
+        "Archive transfer slip\nOriginal shelf marker — {letter}\nCopied shelf marker —",
+    ),
+    _LetterContext(
+        "freight-seal",
+        "Freight handoff ledger\nSeal recorded at departure: {letter}\nSeal copied at arrival:",
+    ),
+    _LetterContext(
+        "costume-trunk",
+        "Theatre inventory card\nCostume trunk tag / {letter}\nDuplicate tag /",
+    ),
+    _LetterContext(
+        "botanical-tray",
+        "Greenhouse tray register\nMarker on the original tray: {letter}\nMarker on the replacement tray:",
+    ),
+    _LetterContext(
+        "gallery-crate",
+        "Gallery shipping note\nCrate stencil = {letter}\nReceipt stencil =",
+    ),
+    _LetterContext(
+        "rehearsal-tape",
+        "Rehearsal tape log\nLabel printed on the master: {letter}\nLabel printed on the copy:",
+    ),
+    _LetterContext(
+        "trail-marker",
+        "Trail maintenance sheet\nPaint mark on the old post: {letter}\nPaint mark on the new post:",
+    ),
+    _LetterContext(
+        "linen-cabinet",
+        "Hotel linen ledger\nCabinet marker before inspection: {letter}\nCabinet marker after inspection:",
+    ),
+    _LetterContext(
+        "ceramic-batch",
+        "Ceramics studio record\nKiln batch stamp: {letter}\nMatching shelf stamp:",
+    ),
+    _LetterContext(
+        "music-stand",
+        "Orchestra equipment list\nStand marker on the case: {letter}\nStand marker on the tag:",
+    ),
+    _LetterContext(
+        "seed-envelope",
+        "Garden seed exchange\nEnvelope mark at packing: {letter}\nEnvelope mark at delivery:",
+    ),
+    _LetterContext(
+        "photo-sleeve",
+        "Photo archive register\nNegative sleeve mark: {letter}\nContact-sheet mark:",
+    ),
+    _LetterContext(
+        "book-cart",
+        "Library reshelving slip\nBook-cart marker: {letter}\nMatching aisle marker:",
+    ),
+    _LetterContext(
+        "tea-chest",
+        "Tea warehouse tally\nMark painted on the chest: {letter}\nMark copied into the tally:",
+    ),
+    _LetterContext(
+        "film-canister",
+        "Film storage record\nCanister stripe mark: {letter}\nBox stripe mark:",
+    ),
+    _LetterContext(
+        "map-drawer",
+        "Cartography room index\nDrawer tab character: {letter}\nIndex-card character:",
+    ),
+    _LetterContext(
+        "fabric-roll",
+        "Textile room manifest\nMark tied to the fabric roll: {letter}\nMark copied to the rack:",
+    ),
+    _LetterContext(
+        "lantern-case",
+        "Festival supply note\nLantern case marker: {letter}\nMatching storage-bay marker:",
+    ),
+    _LetterContext(
+        "museum-drawer",
+        "Museum drawer audit\nCharacter engraved on the tray: {letter}\nCharacter entered in the ledger:",
+    ),
+)
+
 if len(_UNRELATED_QUESTIONS) != len(FUNCTIONS):  # pragma: no cover
     raise AssertionError("unrelated-question bank must pair exactly with every function")
 if len({item.question_id for item in _UNRELATED_QUESTIONS}) != len(
@@ -220,6 +325,16 @@ if len({item.question_id for item in _UNRELATED_QUESTIONS}) != len(
 _UNRELATED_QUESTION_BY_FUNCTION_ID = {
     function.function_id: question
     for function, question in zip(FUNCTIONS, _UNRELATED_QUESTIONS, strict=True)
+}
+if len(_LETTER_CONTEXTS) != len(FUNCTIONS):  # pragma: no cover
+    raise AssertionError("letter-context bank must pair exactly with every function")
+if len({item.context_id for item in _LETTER_CONTEXTS}) != len(
+    _LETTER_CONTEXTS
+):  # pragma: no cover
+    raise AssertionError("letter-context IDs must be unique")
+_LETTER_CONTEXT_BY_FUNCTION_ID = {
+    function.function_id: context
+    for function, context in zip(FUNCTIONS, _LETTER_CONTEXTS, strict=True)
 }
 
 
@@ -544,22 +659,44 @@ def build_deranged_choice_pair(record: ReflectionRecord) -> DerangedChoicePrompt
     )
 
 
+def _source_letter_index(
+    clean_correct_choice_index: int,
+    record_id: str,
+    *,
+    match_clean_label: bool,
+    namespace: str,
+) -> int:
+    if not 0 <= clean_correct_choice_index < 5:
+        raise ValueError("clean answer label must lie in A-E")
+    if match_clean_label:
+        return clean_correct_choice_index
+    allowed_indices = tuple(index for index in range(5) if index != clean_correct_choice_index)
+    selected = allowed_indices[
+        _stable_index(namespace, record_id, len(allowed_indices))
+    ]
+    if selected == clean_correct_choice_index:  # pragma: no cover
+        raise AssertionError("different-letter source unexpectedly retained the clean label")
+    return selected
+
+
 @beartype
-def build_unrelated_question_pair(record: ReflectionRecord) -> UnrelatedQuestionPromptPair:
-    """Build a non-coding donor MCQ whose correct letter differs from the clean probe."""
+def build_unrelated_question_pair(
+    record: ReflectionRecord,
+    *,
+    match_clean_label: bool = False,
+) -> UnrelatedQuestionPromptPair:
+    """Build a matched-format non-coding MCQ with an explicit label relation."""
 
     if record.kind not in {"code", "language"}:
         raise ValueError("unrelated-question patching requires a multiple-choice reflection record")
     question = _UNRELATED_QUESTION_BY_FUNCTION_ID[record.function_id]
     clean_correct_choice_index = record.choice_function_ids.index(record.function_id)
-    allowed_indices = tuple(index for index in range(5) if index != clean_correct_choice_index)
-    source_correct_choice_index = allowed_indices[
-        _stable_index(
-            str(UNRELATED_QUESTION_SEED),
-            f"{record.record_id}:{question.question_id}",
-            len(allowed_indices),
-        )
-    ]
+    source_correct_choice_index = _source_letter_index(
+        clean_correct_choice_index,
+        f"{record.record_id}:{question.question_id}",
+        match_clean_label=match_clean_label,
+        namespace=str(UNRELATED_QUESTION_SEED),
+    )
     order = list(range(5))
     order[question.correct_choice_index], order[source_correct_choice_index] = (
         order[source_correct_choice_index],
@@ -571,8 +708,9 @@ def build_unrelated_question_pair(record: ReflectionRecord) -> UnrelatedQuestion
         != question.choices[question.correct_choice_index]
     ):
         raise AssertionError("unrelated correct answer was not moved to its selected label")
-    if source_correct_choice_index == clean_correct_choice_index:
-        raise AssertionError("unrelated source and clean probe must have different answer labels")
+    label_relation = "same_as_recipient" if match_clean_label else "different_from_recipient"
+    if (source_correct_choice_index == clean_correct_choice_index) != match_clean_label:
+        raise AssertionError("unrelated source violated its registered label relation")
     letters = "ABCDE"
     user_prompt = (
         question.question
@@ -595,6 +733,48 @@ def build_unrelated_question_pair(record: ReflectionRecord) -> UnrelatedQuestion
         question=question.question,
         source_choices=source_choices,
         source_correct_choice_index=source_correct_choice_index,
+        label_relation=label_relation,
+    )
+
+
+@beartype
+def build_letter_context_pair(
+    record: ReflectionRecord,
+    *,
+    match_clean_label: bool,
+) -> LetterContextPromptPair:
+    """Build a non-MCQ record completion targeting the same or a different letter."""
+
+    if record.kind not in {"code", "language"}:
+        raise ValueError("letter-context patching requires a multiple-choice reflection record")
+    context_spec = _LETTER_CONTEXT_BY_FUNCTION_ID[record.function_id]
+    clean_correct_choice_index = record.choice_function_ids.index(record.function_id)
+    source_correct_choice_index = _source_letter_index(
+        clean_correct_choice_index,
+        f"{record.record_id}:{context_spec.context_id}",
+        match_clean_label=match_clean_label,
+        namespace=str(LETTER_CONTEXT_SEED),
+    )
+    source_letter = "ABCDE"[source_correct_choice_index]
+    context = context_spec.template.format(letter=source_letter)
+    forbidden_words = {"python", "code", "lambda", "function", "question", "choice"}
+    context_words = set(re.findall(r"[a-z]+", context.lower()))
+    if "?" in context or context_words & forbidden_words:
+        raise AssertionError("letter context must not contain question or coding language")
+    label_relation = "same_as_recipient" if match_clean_label else "different_from_recipient"
+    source_messages = (
+        ChatMessage("system", LETTER_CONTEXT_SYSTEM_PROMPT),
+        ChatMessage("user", context),
+        ChatMessage("assistant", source_letter),
+    )
+    return LetterContextPromptPair(
+        function_id=record.function_id,
+        clean=record,
+        source_messages=source_messages,
+        context_id=context_spec.context_id,
+        context=context,
+        source_correct_choice_index=source_correct_choice_index,
+        label_relation=label_relation,
     )
 
 
@@ -607,11 +787,14 @@ def relative_depth(layer: int, layer_count: int) -> float:
 
 __all__ = [
     "CHOICE_DERANGEMENT_SEED",
+    "LETTER_CONTEXT_SEED",
+    "LETTER_CONTEXT_SYSTEM_PROMPT",
     "PATCH_POSITION",
     "UNRELATED_QUESTION_SEED",
     "UNRELATED_SYSTEM_PROMPT",
     "WEIGHT_PATCH_SCOPE",
     "DerangedChoicePromptPair",
+    "LetterContextPromptPair",
     "PatchCell",
     "PatchPromptPair",
     "CyclicChoicePromptPair",
@@ -620,6 +803,7 @@ __all__ = [
     "build_across_sample_pair",
     "build_cyclic_choice_pair",
     "build_deranged_choice_pair",
+    "build_letter_context_pair",
     "build_unrelated_question_pair",
     "cyclically_shift_choice_function_ids",
     "randomly_derange_choice_function_ids",

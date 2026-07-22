@@ -1,7 +1,7 @@
 "use strict";
 
-const DATA_URL = "data/experiment.json?v=20260722a";
-const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260722a";
+const DATA_URL = "data/experiment.json?v=20260722b";
+const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260722b";
 const CONDITION_LABELS = {
   correct: "Correct I/O",
   wrong_alias: "Wrong alias",
@@ -41,12 +41,18 @@ const PROMPT_SOURCE_LABELS = {
   across_sample: "Different function name",
   cyclic_choices: "Choices shifted +1",
   deranged_choices: "Random choice derangement",
-  unrelated_question: "Unrelated non-coding MCQ",
+  unrelated_question: "Unrelated MCQ · different letter",
+  unrelated_question_same_letter: "Unrelated MCQ · same letter",
+  letter_context_different: "Non-MCQ context · different letter",
+  letter_context_same: "Non-MCQ context · same letter",
 };
 const INDEPENDENT_PROMPT_CHECKPOINT_MODES = new Set([
   "cyclic_choices",
   "deranged_choices",
   "unrelated_question",
+  "unrelated_question_same_letter",
+  "letter_context_different",
+  "letter_context_same",
 ]);
 const SLIDER_UNITS = 10000;
 const ALL_FUNCTIONS_ID = "__all__";
@@ -58,6 +64,10 @@ const patchChunkErrors = new Map();
 let patchPreloadQueue = [];
 let patchPreloadActive = 0;
 let patchManifestSignature = "";
+const activationNeighborChunks = new Map();
+const activationCandidateCatalogs = new Map();
+const activationExampleLoads = new Map();
+const activationExampleErrors = new Map();
 const state = {
   data: null,
   model: "olmo3-7b",
@@ -75,6 +85,8 @@ const state = {
   recipientIndex: 15,
   donorIndex: 0,
   functionId: "identity",
+  patchCellTokenIndex: 0,
+  patchCellLayer: null,
 };
 
 function svg(name, attributes = {}) {
@@ -603,8 +615,35 @@ function allPatchReferences(manifest = state.data.patch_manifest) {
   return [...references.values()];
 }
 
-function patchManifestKey(manifest = state.data.patch_manifest) {
-  return allPatchReferences(manifest)
+function allActivationExampleReferences(manifest = state.data.activation_example_manifest) {
+  const references = new Map();
+  Object.values(manifest ?? {}).forEach((model) => {
+    Object.values(model).forEach((condition) => {
+      Object.values(condition).forEach((patchInterface) => {
+        Object.values(patchInterface).forEach((mode) => {
+          Object.values(mode).forEach((checkpoint) => {
+            Object.values(checkpoint).forEach((entry) => {
+              [entry.neighbors, entry.candidates].forEach((reference) => {
+                const key = patchReferenceKey(reference);
+                if (key) references.set(key, reference);
+              });
+            });
+          });
+        });
+      });
+    });
+  });
+  return [...references.values()];
+}
+
+function patchManifestKey(
+  manifest = state.data.patch_manifest,
+  activationManifest = state.data.activation_example_manifest,
+) {
+  return [
+    ...allPatchReferences(manifest),
+    ...allActivationExampleReferences(activationManifest),
+  ]
     .map(patchReferenceKey)
     .sort()
     .join("|");
@@ -762,6 +801,10 @@ function compactPatchChunk(records) {
       sourceChoiceTexts: record.source_choice_texts ?? null,
       sourceQuestionId: record.source_question_id ?? null,
       sourceQuestion: record.source_question ?? null,
+      sourceFormat: record.source_format ?? null,
+      sourceLabelRelation: record.source_label_relation ?? null,
+      sourceContextId: record.source_context_id ?? null,
+      sourceContext: record.source_context ?? null,
       answerLogitLens,
       weightScope: record.weight_scope ?? null,
     };
@@ -795,6 +838,159 @@ async function loadPatchChunk(reference) {
     });
   patchChunkLoads.set(key, request);
   await request;
+}
+
+function compactActivationNeighborChunk(payload) {
+  if (
+    !payload
+    || payload.metric !== "cosine_similarity"
+    || !Number.isInteger(payload.position_count)
+    || !Number.isInteger(payload.layer_count)
+    || !Array.isArray(payload.source_neighbors)
+    || !Array.isArray(payload.recipient_neighbors)
+  ) {
+    throw new Error("activation-neighbor chunk has unsupported metadata");
+  }
+  const validateGrid = (grid, side) => {
+    if (grid.length !== payload.position_count) {
+      throw new Error(`activation-neighbor ${side} token axis is incomplete`);
+    }
+    grid.forEach((layers) => {
+      if (!Array.isArray(layers) || layers.length !== payload.layer_count) {
+        throw new Error(`activation-neighbor ${side} layer axis is incomplete`);
+      }
+      layers.forEach((matches) => {
+        if (!Array.isArray(matches) || matches.length !== payload.top_k) {
+          throw new Error(`activation-neighbor ${side} top-k list is incomplete`);
+        }
+        matches.forEach((match) => {
+          if (
+            !Array.isArray(match)
+            || match.length !== 3
+            || !Number.isInteger(match[0])
+            || !Number.isInteger(match[1])
+            || !Number.isFinite(match[2])
+          ) {
+            throw new Error(`activation-neighbor ${side} match is malformed`);
+          }
+        });
+      });
+    });
+  };
+  validateGrid(payload.source_neighbors, "source");
+  validateGrid(payload.recipient_neighbors, "recipient");
+  return {
+    checkpointStep: payload.checkpoint_step,
+    mode: payload.mode,
+    functionId: payload.function_id,
+    topK: payload.top_k,
+    positionCount: payload.position_count,
+    layerCount: payload.layer_count,
+    source: payload.source_neighbors,
+    recipient: payload.recipient_neighbors,
+  };
+}
+
+function compactActivationCandidateCatalog(payload) {
+  if (!payload || !Array.isArray(payload.candidates) || payload.candidates.length === 0) {
+    throw new Error("activation-example candidate catalog is empty");
+  }
+  return {
+    checkpointStep: payload.checkpoint_step,
+    corpus: payload.candidate_corpus,
+    candidates: payload.candidates.map((candidate) => {
+      if (
+        !Array.isArray(candidate.token_ids)
+        || !Array.isArray(candidate.token_labels)
+        || candidate.token_ids.length !== candidate.token_labels.length
+      ) {
+        throw new Error("activation-example candidate has an invalid token axis");
+      }
+      return {
+        id: candidate.example_id,
+        category: candidate.category,
+        target: candidate.target,
+        renderedPrompt: candidate.rendered_prompt,
+        tokenIds: candidate.token_ids,
+        tokenLabels: candidate.token_labels,
+      };
+    }),
+  };
+}
+
+async function loadActivationExampleReference(reference, kind) {
+  const key = patchReferenceKey(reference);
+  const cache = kind === "neighbors" ? activationNeighborChunks : activationCandidateCatalogs;
+  if (!key || cache.has(key)) return;
+  if (activationExampleLoads.has(key)) {
+    await activationExampleLoads.get(key);
+    return;
+  }
+  const request = fetch(patchChunkRequest(reference), { cache: "force-cache" })
+    .then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    })
+    .then((payload) => {
+      cache.set(
+        key,
+        kind === "neighbors"
+          ? compactActivationNeighborChunk(payload)
+          : compactActivationCandidateCatalog(payload),
+      );
+      activationExampleErrors.delete(key);
+    })
+    .catch((error) => {
+      activationExampleErrors.set(key, String(error.message ?? error));
+    })
+    .finally(() => {
+      activationExampleLoads.delete(key);
+      renderActivationExamples(patchData());
+    });
+  activationExampleLoads.set(key, request);
+  await request;
+}
+
+function activationExampleEntry(checkpointStep, functionId) {
+  if (
+    weightPatchSelected()
+    || state.patchMode === "checkpoint"
+    || state.patchMode === "across_sample"
+    || functionId === ALL_FUNCTIONS_ID
+  ) return null;
+  return state.data.activation_example_manifest?.[state.model]?.[state.condition]
+    ?.[state.patchInterface]?.[state.patchMode]?.[String(checkpointStep)]?.[functionId] ?? null;
+}
+
+function activationExampleEntriesForSelection() {
+  if (state.functionId === ALL_FUNCTIONS_ID) return [];
+  const mode = state.data.activation_example_manifest?.[state.model]?.[state.condition]
+    ?.[state.patchInterface]?.[state.patchMode] ?? {};
+  return Object.values(mode)
+    .map((functions) => functions[state.functionId])
+    .filter(Boolean);
+}
+
+function scheduleActivationExampleLoads() {
+  const checkpoints = state.data.checkpoints;
+  const recipientStep = checkpoints[state.recipientIndex];
+  const donorStep = checkpoints[usesCheckpointDonor() ? state.donorIndex : state.recipientIndex];
+  const selectedEntries = [
+    activationExampleEntry(recipientStep, state.functionId),
+    activationExampleEntry(donorStep, state.functionId),
+  ].filter(Boolean);
+  const entries = [...selectedEntries, ...activationExampleEntriesForSelection()];
+  const references = new Map();
+  entries.forEach((entry) => {
+    references.set(patchReferenceKey(entry.neighbors), [entry.neighbors, "neighbors"]);
+    references.set(patchReferenceKey(entry.candidates), [entry.candidates, "candidates"]);
+  });
+  references.forEach(([reference, kind], key) => {
+    const cache = kind === "neighbors" ? activationNeighborChunks : activationCandidateCatalogs;
+    if (key && !cache.has(key) && !activationExampleLoads.has(key)) {
+      void loadActivationExampleReference(reference, kind);
+    }
+  });
 }
 
 function drainFullPatchPreload() {
@@ -848,13 +1044,22 @@ async function refreshPatchManifest() {
     ) {
       throw new Error("patch manifest snapshot is malformed");
     }
-    const signature = patchManifestKey(snapshot.patch_manifest);
+    const activationManifest = snapshot.activation_example_manifest ?? {};
+    const signature = patchManifestKey(
+      snapshot.patch_manifest,
+      activationManifest,
+    );
     if (signature === patchManifestSignature) return;
     state.data.patch_manifest = snapshot.patch_manifest;
     state.data.real_patch_files = snapshot.real_patch_files;
+    state.data.activation_example_manifest = activationManifest;
+    state.data.real_activation_example_files = snapshot.real_activation_example_files ?? 0;
+    state.data.activation_example_chunks = snapshot.activation_example_chunks ?? 0;
     patchManifestSignature = signature;
     patchChunkErrors.clear();
+    activationExampleErrors.clear();
     scheduleFullPatchPreload();
+    scheduleActivationExampleLoads();
     renderPatching();
   } catch (error) {
     console.warn("Could not refresh the patch manifest", error);
@@ -958,6 +1163,10 @@ function unprocessedPatchForFunction(functionId) {
     sourceChoiceTexts: exactAxis?.source_choice_texts ?? null,
     sourceQuestionId: exactAxis?.source_question_id ?? null,
     sourceQuestion: exactAxis?.source_question ?? null,
+    sourceFormat: exactAxis?.source_format ?? null,
+    sourceLabelRelation: exactAxis?.source_label_relation ?? null,
+    sourceContextId: exactAxis?.source_context_id ?? null,
+    sourceContext: exactAxis?.source_context ?? null,
     answerLogitLens: null,
     measured: false,
     processed: false,
@@ -1035,6 +1244,10 @@ function measuredPatchForFunction(functionId) {
     sourceChoiceTexts: record.sourceChoiceTexts ?? exactAxis?.source_choice_texts ?? null,
     sourceQuestionId: record.sourceQuestionId ?? exactAxis?.source_question_id ?? null,
     sourceQuestion: record.sourceQuestion ?? exactAxis?.source_question ?? null,
+    sourceFormat: record.sourceFormat ?? exactAxis?.source_format ?? null,
+    sourceLabelRelation: record.sourceLabelRelation ?? exactAxis?.source_label_relation ?? null,
+    sourceContextId: record.sourceContextId ?? exactAxis?.source_context_id ?? null,
+    sourceContext: record.sourceContext ?? exactAxis?.source_context ?? null,
     answerLogitLens: record.answerLogitLens,
     measured: true,
     processed: true,
@@ -1162,6 +1375,16 @@ function averagePatches(patches) {
     sourceChoiceTexts: null,
     sourceQuestionId: null,
     sourceQuestion: null,
+    sourceFormat: patches.every((patch) => patch.sourceFormat === patches[0].sourceFormat)
+      ? patches[0].sourceFormat
+      : null,
+    sourceLabelRelation: patches.every(
+      (patch) => patch.sourceLabelRelation === patches[0].sourceLabelRelation,
+    )
+      ? patches[0].sourceLabelRelation
+      : null,
+    sourceContextId: null,
+    sourceContext: null,
     answerLogitLens,
     measured,
     processed,
@@ -1234,7 +1457,12 @@ function promptSourcePrefix() {
   if (state.patchMode === "across_sample") return "dirty/source ";
   if (state.patchMode === "cyclic_choices") return "shifted/source ";
   if (state.patchMode === "deranged_choices") return "deranged/source ";
-  if (state.patchMode === "unrelated_question") return "unrelated/source ";
+  if (["unrelated_question", "unrelated_question_same_letter"].includes(state.patchMode)) {
+    return "unrelated/source ";
+  }
+  if (["letter_context_same", "letter_context_different"].includes(state.patchMode)) {
+    return "non-MCQ/source ";
+  }
   return "donor/source ";
 }
 
@@ -1258,8 +1486,149 @@ function topPAnswerLensHtml(lens, tokenIndex, layer, layerCount, aggregate) {
   return `<br><br><b>answer-label logit lens · top-p=${lens.topP.toFixed(1)}</b><br><small>final norm + unembedding, normalized only over A-E; ${scope}</small><br>${escapeHtml(promptSourcePrefix().trim())}: ${formatDistribution("source")}<br>clean/recipient: ${formatDistribution("recipient")}`;
 }
 
+function renderActivationExampleList(container, matches, catalog) {
+  container.replaceChildren();
+  matches.forEach(([exampleIndex, tokenIndex, score], rank) => {
+    const candidate = catalog.candidates[exampleIndex];
+    if (!candidate || !Number.isInteger(tokenIndex) || !candidate.tokenLabels[tokenIndex]) {
+      throw new Error("activation-example match references an unavailable candidate token");
+    }
+    const article = el("article", { class: "activation-example" });
+    const meta = el("div", { class: "activation-example-meta" });
+    meta.append(el("span", {}, `${rank + 1} · ${candidate.category.replaceAll("_", " ")}`));
+    meta.append(el("span", {}, `cos ${score.toFixed(3)} · target ${candidate.target}`));
+    article.append(meta);
+    const tokens = el("div", {
+      class: "activation-example-tokens",
+      title: `${candidate.id} · token ${tokenIndex} · id ${candidate.tokenIds[tokenIndex]}`,
+    });
+    const windowStart = Math.max(0, tokenIndex - 11);
+    const windowEnd = Math.min(candidate.tokenLabels.length, tokenIndex + 7);
+    if (windowStart > 0) tokens.append(el("span", { class: "ellipsis" }, "… "));
+    for (let index = windowStart; index < windowEnd; index += 1) {
+      const node = el(index === tokenIndex ? "mark" : "span", {}, candidate.tokenLabels[index]);
+      tokens.append(node);
+    }
+    if (windowEnd < candidate.tokenLabels.length) {
+      tokens.append(el("span", { class: "ellipsis" }, " …"));
+    }
+    article.append(tokens);
+    container.append(article);
+  });
+}
+
+function setActivationExamplesEmpty(message) {
+  ["recipient-neighbor-examples", "source-neighbor-examples"].forEach((id) => {
+    const container = document.getElementById(id);
+    container.replaceChildren(el("p", { class: "activation-example-empty" }, message));
+  });
+}
+
+function renderActivationExamples(patch) {
+  const status = document.getElementById("activation-neighbor-status");
+  const recipientReference = document.getElementById("recipient-neighbor-reference");
+  const sourceReference = document.getElementById("source-neighbor-reference");
+  if (!patch.processed) {
+    status.textContent = "The selected intervention is unprocessed, so no measured reference vectors exist.";
+    recipientReference.textContent = "No measured reference";
+    sourceReference.textContent = "No measured reference";
+    setActivationExamplesEmpty("Activation examples will appear only for a measured intervention cell.");
+    return;
+  }
+  if (patch.aggregate) {
+    status.textContent = "Choose an individual function: an all-function mean is not one activation vector.";
+    recipientReference.textContent = "Aggregate has no single vector";
+    sourceReference.textContent = "Aggregate has no single vector";
+    setActivationExamplesEmpty("Select one function probe to define exact recipient and donor vectors.");
+    return;
+  }
+  if (weightPatchSelected()) {
+    status.textContent = "Weight interventions do not define one source/recipient activation vector.";
+    recipientReference.textContent = "Not applicable to weights";
+    sourceReference.textContent = "Not applicable to weights";
+    setActivationExamplesEmpty("Select an activation boundary to inspect activation-vector neighbors.");
+    return;
+  }
+  state.patchCellTokenIndex = Math.max(
+    0,
+    Math.min(state.patchCellTokenIndex, patch.tokenPositions.length - 1),
+  );
+  state.patchCellLayer = state.patchCellLayer === null
+    ? patch.layers - 1
+    : Math.max(0, Math.min(state.patchCellLayer, patch.layers - 1));
+  const tokenIndex = state.patchCellTokenIndex;
+  const layer = state.patchCellLayer;
+  const checkpoints = state.data.checkpoints;
+  const recipientStep = checkpoints[state.recipientIndex];
+  const donorStep = checkpoints[usesCheckpointDonor() ? state.donorIndex : state.recipientIndex];
+  const recipientEntry = activationExampleEntry(recipientStep, state.functionId);
+  const sourceEntry = activationExampleEntry(donorStep, state.functionId);
+  const position = patch.tokenPositions[tokenIndex];
+  const reverseLabel = `reverse token −${position.reverseIndex} · layer ${layer}`;
+  recipientReference.textContent = `${recipientStep === 0 ? "frozen base" : `step ${recipientStep}`} · ${reverseLabel} · ${position.recipientToken}`;
+  sourceReference.textContent = `${donorStep === 0 ? "frozen base" : `step ${donorStep}`} · ${reverseLabel} · ${position.sourceToken}`;
+  if (!recipientEntry || !sourceEntry) {
+    status.textContent = `Nearest-example audit unprocessed for ${PROMPT_SOURCE_LABELS[state.patchMode] ?? state.patchMode}.`;
+    setActivationExamplesEmpty("No activation-neighbor artifact has been measured for this checkpoint yet.");
+    return;
+  }
+  const recipientNeighborKey = patchReferenceKey(recipientEntry.neighbors);
+  const recipientCatalogKey = patchReferenceKey(recipientEntry.candidates);
+  const sourceNeighborKey = patchReferenceKey(sourceEntry.neighbors);
+  const sourceCatalogKey = patchReferenceKey(sourceEntry.candidates);
+  const errors = [
+    recipientNeighborKey,
+    recipientCatalogKey,
+    sourceNeighborKey,
+    sourceCatalogKey,
+  ].map((key) => activationExampleErrors.get(key)).filter(Boolean);
+  if (errors.length) {
+    status.textContent = `Activation-example artifact failed to load: ${errors[0]}`;
+    setActivationExamplesEmpty("A measured nearest-example file exists but could not be loaded.");
+    return;
+  }
+  const recipientNeighbors = activationNeighborChunks.get(recipientNeighborKey);
+  const recipientCatalog = activationCandidateCatalogs.get(recipientCatalogKey);
+  const sourceNeighbors = activationNeighborChunks.get(sourceNeighborKey);
+  const sourceCatalog = activationCandidateCatalogs.get(sourceCatalogKey);
+  if (!recipientNeighbors || !recipientCatalog || !sourceNeighbors || !sourceCatalog) {
+    status.textContent = "Loading the selected checkpoints’ activation-example banks…";
+    setActivationExamplesEmpty("Measured nearest examples are loading in the background.");
+    scheduleActivationExampleLoads();
+    return;
+  }
+  for (const neighbors of [recipientNeighbors, sourceNeighbors]) {
+    if (
+      neighbors.mode !== state.patchMode
+      || neighbors.functionId !== state.functionId
+      || neighbors.positionCount !== patch.tokenPositions.length
+      || neighbors.layerCount !== patch.layers
+    ) {
+      throw new Error("activation-example artifact does not match the selected patch grid");
+    }
+  }
+  renderActivationExampleList(
+    document.getElementById("recipient-neighbor-examples"),
+    recipientNeighbors.recipient[tokenIndex][layer],
+    recipientCatalog,
+  );
+  renderActivationExampleList(
+    document.getElementById("source-neighbor-examples"),
+    sourceNeighbors.source[tokenIndex][layer],
+    sourceCatalog,
+  );
+  status.textContent = `Measured cosine-neighbor audit · selected ${reverseLabel} · click another heatmap cell to update both columns.`;
+}
+
 function renderPatching() {
   const patch = patchData();
+  state.patchCellTokenIndex = Math.max(
+    0,
+    Math.min(state.patchCellTokenIndex, patch.tokenPositions.length - 1),
+  );
+  state.patchCellLayer = state.patchCellLayer === null
+    ? patch.layers - 1
+    : Math.max(0, Math.min(state.patchCellLayer, patch.layers - 1));
   const patchReference = selectedPatchReference();
   const patchReferenceId = patchReferenceKey(patchReference);
   const patchLoadError = patchReferenceId ? patchChunkErrors.get(patchReferenceId) : null;
@@ -1362,6 +1731,27 @@ function renderPatching() {
       cell.setAttribute("aria-label", layerOnly
         ? `layer ${layer}, entire decoder block, ${display}`
         : `layer ${layer}, reverse token ${position.reverseIndex}, ${display}`);
+      if (
+        !layerOnly
+        && state.patchCellTokenIndex === tokenIndex
+        && state.patchCellLayer === layer
+      ) {
+        cell.classList.add("selected");
+      }
+      if (!layerOnly) {
+        const selectReference = () => {
+          state.patchCellTokenIndex = tokenIndex;
+          state.patchCellLayer = layer;
+          renderPatching();
+        };
+        cell.addEventListener("click", selectReference);
+        cell.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            selectReference();
+          }
+        });
+      }
       heatmap.append(cell);
     }
   });
@@ -1482,11 +1872,25 @@ function renderPatching() {
         ? `Same questions with deterministic random no-fixed-point option orders · n=${patch.functionCount}`
         : `Same question · random option derangement · correct ${cleanLetter}→${sourceLetter}`;
       explanation = "Each donor uses a deterministic random option derangement with no answer left in place. This controls for the fixed +1 rotation: a label-readout circuit should transfer whichever new label contains the correct implementation. Cell color remains clean P(correct); hover shows the donor-label effect and A-E logit lens.";
-    } else {
+    } else if (["unrelated_question", "unrelated_question_same_letter"].includes(state.patchMode)) {
+      const relation = patch.sourceLabelRelation === "same_as_recipient"
+        ? "the same answer letter as its clean pair"
+        : "a different answer letter from its clean pair";
       sourceQuestion = patch.aggregate
-        ? `Mean over ${patch.functionCount} unrelated non-coding five-choice questions; every donor label differs from its clean pair`
+        ? `Mean over ${patch.functionCount} unrelated non-coding five-choice questions; ${relation}`
         : `${patch.sourceQuestion} · correct ${sourceLetter}, clean probe correct ${cleanLetter}`;
-      explanation = "The donor is an unrelated non-coding MCQ in the same five-choice format, with a correct letter guaranteed to differ from the paired clean probe. Transfer of that donor label at the final token would support a generic answer-label readout rather than function-specific content. Cell color remains clean P(correct); hover shows the donor-label effect and A-E logit lens.";
+      explanation = `The donor is an unrelated non-coding MCQ in the same five-choice format, with ${relation}. Comparing its matched- and mismatched-letter versions separates MCQ-format transfer from transfer of one particular answer label. Cell color remains clean P(correct); hover shows both label effects and the A-E logit lens.`;
+    } else if (["letter_context_same", "letter_context_different"].includes(state.patchMode)) {
+      const relation = patch.sourceLabelRelation === "same_as_recipient"
+        ? "same letter"
+        : "different letter";
+      sourceQuestion = patch.aggregate
+        ? `Mean over ${patch.functionCount} non-question record completions · ${relation}`
+        : `${patch.sourceContext} · expected next token ${sourceLetter}; clean probe correct ${cleanLetter}`;
+      explanation = `The donor is not a question and has no answer choices: it is a short record whose next token should be one capital letter. Comparing ${relation} transfer against the MCQ controls tests whether the late state is a generic “say ${sourceLetter}” direction or a label readout specialized to question answering. Cell color remains clean P(correct); hover shows both labels and the A-E logit lens.`;
+    } else {
+      sourceQuestion = "Unsupported prompt counterfactual";
+      explanation = "This prompt-counterfactual mode has no explanatory copy.";
     }
     if (usesCheckpointDonor()) {
       const sourceCheckpoint = donor === 0 ? "frozen base" : `step ${donor}`;
@@ -1518,6 +1922,8 @@ function renderPatching() {
   }
   document.getElementById("source-rendered-prompt").textContent = patch.sourceRenderedPrompt;
   document.getElementById("recipient-rendered-prompt").textContent = patch.recipientRenderedPrompt;
+  renderActivationExamples(patch);
+  scheduleActivationExampleLoads();
   scheduleSelectedPatchLoad();
   scheduleFullPatchPreload();
 }
@@ -1549,6 +1955,9 @@ async function initialize() {
   const response = await fetch(DATA_URL, { cache: "no-store" });
   if (!response.ok) throw new Error(`Could not load ${DATA_URL}: HTTP ${response.status}`);
   state.data = await response.json();
+  state.data.activation_example_manifest ??= {};
+  state.data.real_activation_example_files ??= 0;
+  state.data.activation_example_chunks ??= 0;
   patchManifestSignature = patchManifestKey();
   setupStatus();
   buildModelControls();

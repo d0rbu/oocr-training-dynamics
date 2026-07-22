@@ -9,6 +9,7 @@ import math
 from pathlib import Path
 from typing import cast
 
+from oocr_training_dynamics.activation_examples import ACTIVATION_EXAMPLE_METRIC
 from oocr_training_dynamics.artifacts import read_json, run_dir, write_json
 from oocr_training_dynamics.contracts import (
     BATCH_ABLATION_SIZES,
@@ -360,6 +361,10 @@ def _compact_patch_record(record: PatchRecord, *, context: str) -> PatchRecord:
         "source_choice_texts",
         "source_question_id",
         "source_question",
+        "source_format",
+        "source_label_relation",
+        "source_context_id",
+        "source_context",
     )
     for key in optional_metadata:
         if key in record:
@@ -498,6 +503,224 @@ def _export_real_patches(root: Path) -> tuple[dict[str, object], int]:
         }
         file_count += 1
     return manifest, file_count
+
+
+def _compact_activation_neighbor_grid(
+    value: object,
+    candidates: list[dict[str, object]],
+    *,
+    position_count: int,
+    top_k: int,
+    context: str,
+) -> tuple[list[list[list[list[float | int]]]], int]:
+    if not isinstance(value, list) or len(value) != position_count or not value:
+        raise ValueError(f"{context} must have exactly {position_count} token rows")
+    layer_count: int | None = None
+    compact: list[list[list[list[float | int]]]] = []
+    for token_index, raw_layers in enumerate(value):
+        if not isinstance(raw_layers, list) or not raw_layers:
+            raise TypeError(f"{context}[{token_index}] must contain layer rows")
+        if layer_count is None:
+            layer_count = len(raw_layers)
+        elif len(raw_layers) != layer_count:
+            raise ValueError(f"{context} has an inconsistent layer count")
+        compact_layers: list[list[list[float | int]]] = []
+        for layer, raw_matches in enumerate(raw_layers):
+            if not isinstance(raw_matches, list) or len(raw_matches) != top_k:
+                raise ValueError(f"{context}[{token_index}][{layer}] must contain top-k matches")
+            compact_matches: list[list[float | int]] = []
+            seen_examples: set[int] = set()
+            previous_score = math.inf
+            for raw_match in raw_matches:
+                match = _mapping(raw_match, context=f"{context}[][][]")
+                example_index = int(_number(match, "example_index", context=context))
+                matched_token = int(_number(match, "token_index", context=context))
+                score = _number(match, "cosine_similarity", context=context)
+                if not 0 <= example_index < len(candidates):
+                    raise ValueError(f"{context} references an unknown candidate example")
+                candidate_labels = candidates[example_index]["token_labels"]
+                if not isinstance(candidate_labels, list) or not 0 <= matched_token < len(
+                    candidate_labels
+                ):
+                    raise ValueError(f"{context} references an unknown candidate token")
+                if example_index in seen_examples:
+                    raise ValueError(f"{context} repeats one candidate prompt in a top-k list")
+                if not math.isfinite(score) or not -1.00001 <= score <= 1.00001:
+                    raise ValueError(f"{context} contains an invalid cosine similarity")
+                if score > previous_score + 1e-7:
+                    raise ValueError(f"{context} top-k matches are not descending")
+                seen_examples.add(example_index)
+                previous_score = score
+                compact_matches.append([example_index, matched_token, score])
+            compact_layers.append(compact_matches)
+        compact.append(compact_layers)
+    if layer_count is None:  # pragma: no cover - non-empty rows are required above
+        raise AssertionError("activation-neighbor grid unexpectedly has no layers")
+    return compact, layer_count
+
+
+def _export_activation_examples(
+    root: Path,
+) -> tuple[dict[str, object], int, int]:
+    manifest: dict[str, object] = {}
+    raw_file_count = 0
+    chunk_count = 0
+    pattern = "artifacts/runs/*/*/seed_*/activation_examples/sequence_end/*/checkpoint_*.json"
+    expected_function_ids = {function.function_id for function in FUNCTIONS}
+    for path in sorted(root.glob(pattern)):
+        artifact = _mapping(read_json(path), context=str(path))
+        run = _mapping(artifact.get("run"), context=f"{path}.run")
+        model = run.get("model")
+        condition = run.get("condition")
+        interface = artifact.get("interface")
+        checkpoint_step = int(_number(artifact, "checkpoint_step", context=str(path)))
+        if not isinstance(model, str) or model not in {key.value for key in ModelKey}:
+            raise TypeError(f"{path}.run.model is invalid")
+        if not isinstance(condition, str) or condition not in {
+            item.value for item in TrainingCondition
+        }:
+            raise TypeError(f"{path}.run.condition is invalid")
+        if not isinstance(interface, str):
+            raise TypeError(f"{path}.interface must be a string")
+        parsed_interface = PatchingInterface(interface)
+        if parsed_interface.patches_weights:
+            raise ValueError(f"{path} cannot attach activation examples to a weight interface")
+        if checkpoint_step not in CHECKPOINT_STEPS:
+            raise ValueError(f"{path} uses an unregistered checkpoint")
+        similarity = _mapping(artifact.get("similarity"), context=f"{path}.similarity")
+        if similarity.get("metric") != ACTIVATION_EXAMPLE_METRIC:
+            raise ValueError(f"{path} uses an unsupported activation-example metric")
+        top_k = int(_number(similarity, "top_k", context=f"{path}.similarity"))
+        raw_candidates = artifact.get("candidates")
+        if not isinstance(raw_candidates, list) or len(raw_candidates) < top_k:
+            raise ValueError(f"{path}.candidates must contain at least top-k prompts")
+        candidates: list[dict[str, object]] = []
+        for index, raw_candidate in enumerate(raw_candidates):
+            candidate = _mapping(raw_candidate, context=f"{path}.candidates[{index}]")
+            required = (
+                "example_id",
+                "category",
+                "target",
+                "rendered_prompt",
+                "token_ids",
+                "token_labels",
+            )
+            if any(key not in candidate for key in required):
+                raise KeyError(f"{path}.candidates[{index}] lacks required metadata")
+            if not all(
+                isinstance(candidate[key], str)
+                for key in ("example_id", "category", "target", "rendered_prompt")
+            ):
+                raise TypeError(f"{path}.candidates[{index}] has non-string prompt metadata")
+            token_ids = candidate["token_ids"]
+            token_labels = candidate["token_labels"]
+            if (
+                not isinstance(token_ids, list)
+                or not isinstance(token_labels, list)
+                or len(token_ids) != len(token_labels)
+                or not token_ids
+                or not all(isinstance(value, int) for value in token_ids)
+                or not all(isinstance(value, str) for value in token_labels)
+            ):
+                raise ValueError(f"{path}.candidates[{index}] has an invalid token axis")
+            candidates.append({key: candidate[key] for key in required})
+        if len({candidate["example_id"] for candidate in candidates}) != len(candidates):
+            raise ValueError(f"{path} contains duplicate activation-example IDs")
+
+        relative_base = (
+            Path("data")
+            / "activation-examples"
+            / model
+            / condition
+            / interface
+            / f"checkpoint_step_{checkpoint_step:06d}"
+        )
+        catalog_path = relative_base / "candidates.json"
+        catalog_digest, catalog_bytes = _write_compact_json(
+            root / "site" / catalog_path,
+            {
+                "checkpoint_step": checkpoint_step,
+                "candidate_corpus": artifact.get("candidate_corpus"),
+                "candidates": candidates,
+            },
+        )
+        catalog_reference = {
+            "bytes": catalog_bytes,
+            "sha256": catalog_digest,
+            "url": catalog_path.as_posix(),
+        }
+
+        raw_records = artifact.get("records")
+        if not isinstance(raw_records, list) or not raw_records:
+            raise TypeError(f"{path}.records must be a non-empty array")
+        seen: set[tuple[str, str]] = set()
+        seen_modes: set[str] = set()
+        for raw_record in raw_records:
+            record = _mapping(raw_record, context=f"{path}.records[]")
+            mode = record.get("mode")
+            function_id = record.get("function_id")
+            if not isinstance(mode, str) or not isinstance(function_id, str):
+                raise TypeError(f"{path} activation-example record lacks mode/function IDs")
+            parsed_mode = PatchingMode(mode)
+            if not parsed_mode.supports_independent_checkpoint_donor:
+                raise ValueError(f"{path} activation examples require an answer-label mode")
+            key = (mode, function_id)
+            if key in seen:
+                raise ValueError(f"{path} repeats activation-example record {key}")
+            seen.add(key)
+            seen_modes.add(mode)
+            position_count = int(_number(record, "position_count", context=f"{path}.records[]"))
+            source, source_layers = _compact_activation_neighbor_grid(
+                record.get("source_neighbors"),
+                candidates,
+                position_count=position_count,
+                top_k=top_k,
+                context=f"{path}.records[{mode}/{function_id}].source",
+            )
+            recipient, recipient_layers = _compact_activation_neighbor_grid(
+                record.get("recipient_neighbors"),
+                candidates,
+                position_count=position_count,
+                top_k=top_k,
+                context=f"{path}.records[{mode}/{function_id}].recipient",
+            )
+            if source_layers != recipient_layers:
+                raise ValueError(f"{path} source/recipient activation-neighbor layers differ")
+            relative_path = relative_base / mode / f"{function_id}.json"
+            digest, byte_count = _write_compact_json(
+                root / "site" / relative_path,
+                {
+                    "checkpoint_step": checkpoint_step,
+                    "mode": mode,
+                    "function_id": function_id,
+                    "metric": ACTIVATION_EXAMPLE_METRIC,
+                    "top_k": top_k,
+                    "position_count": position_count,
+                    "layer_count": source_layers,
+                    "source_neighbors": source,
+                    "recipient_neighbors": recipient,
+                },
+            )
+            model_bucket = cast(dict[str, object], manifest.setdefault(model, {}))
+            condition_bucket = cast(dict[str, object], model_bucket.setdefault(condition, {}))
+            interface_bucket = cast(dict[str, object], condition_bucket.setdefault(interface, {}))
+            mode_bucket = cast(dict[str, object], interface_bucket.setdefault(mode, {}))
+            step_bucket = cast(dict[str, object], mode_bucket.setdefault(str(checkpoint_step), {}))
+            step_bucket[function_id] = {
+                "neighbors": {
+                    "bytes": byte_count,
+                    "sha256": digest,
+                    "url": relative_path.as_posix(),
+                },
+                "candidates": catalog_reference,
+            }
+            chunk_count += 1
+        for mode in seen_modes:
+            functions = {function_id for seen_mode, function_id in seen if seen_mode == mode}
+            if functions != expected_function_ids:
+                raise ValueError(f"{path} mode {mode} must contain all registered functions")
+        raw_file_count += 1
+    return manifest, raw_file_count, chunk_count
 
 
 def _token_axes() -> dict[str, object]:
@@ -639,11 +862,19 @@ def main() -> None:
                 )
                 measured_rank_runs += 1
     patch_manifest, real_patch_files = _export_real_patches(root)
+    (
+        activation_example_manifest,
+        real_activation_example_files,
+        activation_example_chunks,
+    ) = _export_activation_examples(root)
     write_json(
         root / "site" / "data" / "patch-manifest.json",
         {
             "real_patch_files": real_patch_files,
             "patch_manifest": patch_manifest,
+            "real_activation_example_files": real_activation_example_files,
+            "activation_example_chunks": activation_example_chunks,
+            "activation_example_manifest": activation_example_manifest,
         },
     )
     status = (
@@ -659,6 +890,8 @@ def main() -> None:
             "status": status,
             "real_runs": real_runs,
             "real_patch_files": real_patch_files,
+            "real_activation_example_files": real_activation_example_files,
+            "activation_example_chunks": activation_example_chunks,
             "warning": (
                 "Synthetic preregistration preview; no GPU experiment has run. Every plotted value is illustrative."
                 if real_runs == 0 and real_patch_files == 0
@@ -708,6 +941,7 @@ def main() -> None:
             "function_curves": function_curves,
             "token_axes": _token_axes(),
             "patch_manifest": patch_manifest,
+            "activation_example_manifest": activation_example_manifest,
         },
     )
 

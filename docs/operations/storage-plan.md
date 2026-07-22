@@ -74,6 +74,19 @@ No hidden-state bank or duplicate model checkpoint is retained. Every grid is wr
 the donor bank for one cell is released after its recipient pass. Preserve the normal 8 GiB free-
 space reserve in addition to this estimate.
 
+The format × letter extension adds three more prompt modes with the same 18 × 18 checkpoint
+plane—972 additional grids. Until its endpoint smoke cells are measured, reserve another 8.7 GiB
+using the first atlas's empirical raw-plus-browser rate. Replace that estimate with observed sizes
+before the full extension continues; the shorter non-MCQ token axes may reduce it, but no lower
+budget is assumed in advance.
+
+Activation-neighbor outputs are checkpoint-indexed, not checkpoint-pair-indexed. There are at
+most 18 raw residual artifacts for the initial OLMo analysis. Each retains only six ranked prompt
+IDs/token positions/cosines per reference cell; raw hidden states and the candidate activation
+bank are released. Budget 1.5 GiB for raw plus compact neighbor files until the step-1500 smoke
+provides a measured size. This allowance is separate from the 17.4 GiB conservative total for all
+six prompt-patching modes and from the normal 8 GiB free-space floor.
+
 ## Preflight gates
 
 Immediately before an authorized capacity probe:

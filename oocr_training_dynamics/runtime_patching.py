@@ -15,6 +15,13 @@ from typing import Any, cast
 import torch as t
 import torch.nn.functional as functional
 
+from oocr_training_dynamics.activation_examples import (
+    ACTIVATION_EXAMPLE_CORPUS_SEED,
+    ACTIVATION_EXAMPLE_METRIC,
+    ACTIVATION_EXAMPLE_TOP_K,
+    ActivationExamplePrompt,
+    build_activation_example_prompts,
+)
 from oocr_training_dynamics.artifacts import adapter_dir, run_dir, write_json
 from oocr_training_dynamics.contracts import (
     CHECKPOINT_STEPS,
@@ -40,6 +47,7 @@ from oocr_training_dynamics.patching import (
     build_across_sample_pair,
     build_cyclic_choice_pair,
     build_deranged_choice_pair,
+    build_letter_context_pair,
     build_unrelated_question_pair,
     reverse_token_position_pairs,
     reverse_token_position_pairs_through_first_difference,
@@ -112,6 +120,10 @@ class PromptCounterfactualSpec:
     source_question: str | None
     patch_direction: str
     stops_at_first_difference: bool
+    source_format: str | None = None
+    source_label_relation: str | None = None
+    source_context_id: str | None = None
+    source_context: str | None = None
 
 
 @dataclass(frozen=True)
@@ -127,6 +139,32 @@ class PromptCounterfactualSourceRecord:
 
 
 PromptCounterfactualSourceBank = dict[str, PromptCounterfactualSourceRecord]
+
+
+@dataclass(frozen=True)
+class ActivationExampleView:
+    """Token-exact candidate prompt and its captured interface activations."""
+
+    example_id: str
+    category: str
+    target: str
+    input_ids: t.Tensor
+    attention_mask: t.Tensor
+    rendered_prompt: str
+    token_ids: tuple[int, ...]
+    token_labels: tuple[str, ...]
+    activations: tuple[t.Tensor, ...]
+
+
+@dataclass(frozen=True)
+class ActivationReferenceBank:
+    """Source and recipient reference vectors for one mode/function pair."""
+
+    mode: PatchingMode
+    function_id: str
+    positions: tuple[TokenPositionPair, ...]
+    source_activations: tuple[t.Tensor, ...]
+    recipient_activations: tuple[t.Tensor, ...]
 
 
 @dataclass(frozen=True)
@@ -189,6 +227,8 @@ def _prompt_counterfactual_spec(
             source_question=None,
             patch_direction="cyclic_choice_source_into_clean_recipient",
             stops_at_first_difference=True,
+            source_format="same_function_mcq",
+            source_label_relation="different_from_recipient",
         )
     if mode is PatchingMode.DERANGED_CHOICES:
         pair = build_deranged_choice_pair(record)
@@ -202,6 +242,8 @@ def _prompt_counterfactual_spec(
             source_question=None,
             patch_direction="deranged_choice_source_into_clean_recipient",
             stops_at_first_difference=True,
+            source_format="same_function_mcq",
+            source_label_relation="different_from_recipient",
         )
     if mode is PatchingMode.UNRELATED_QUESTION:
         pair = build_unrelated_question_pair(record)
@@ -215,6 +257,50 @@ def _prompt_counterfactual_spec(
             source_question=pair.question,
             patch_direction="unrelated_question_source_into_clean_recipient",
             stops_at_first_difference=True,
+            source_format="unrelated_mcq",
+            source_label_relation=pair.label_relation,
+        )
+    if mode is PatchingMode.UNRELATED_QUESTION_SAME_LETTER:
+        pair = build_unrelated_question_pair(record, match_clean_label=True)
+        return PromptCounterfactualSpec(
+            source_messages=pair.source_messages,
+            source_function_id=f"unrelated:{pair.question_id}",
+            source_correct_choice_index=pair.source_correct_choice_index,
+            source_choice_function_ids=None,
+            source_choice_texts=pair.source_choices,
+            source_question_id=pair.question_id,
+            source_question=pair.question,
+            patch_direction="unrelated_question_same_letter_source_into_clean_recipient",
+            stops_at_first_difference=True,
+            source_format="unrelated_mcq",
+            source_label_relation=pair.label_relation,
+        )
+    if mode in {
+        PatchingMode.LETTER_CONTEXT_SAME,
+        PatchingMode.LETTER_CONTEXT_DIFFERENT,
+    }:
+        pair = build_letter_context_pair(
+            record,
+            match_clean_label=mode is PatchingMode.LETTER_CONTEXT_SAME,
+        )
+        return PromptCounterfactualSpec(
+            source_messages=pair.source_messages,
+            source_function_id=f"letter-context:{pair.context_id}",
+            source_correct_choice_index=pair.source_correct_choice_index,
+            source_choice_function_ids=None,
+            source_choice_texts=None,
+            source_question_id=None,
+            source_question=None,
+            patch_direction=(
+                "same_letter_context_source_into_clean_recipient"
+                if mode is PatchingMode.LETTER_CONTEXT_SAME
+                else "different_letter_context_source_into_clean_recipient"
+            ),
+            stops_at_first_difference=True,
+            source_format="non_mcq_text_completion",
+            source_label_relation=pair.label_relation,
+            source_context_id=pair.context_id,
+            source_context=pair.context,
         )
     raise ValueError(f"{mode.value} is not a prompt-counterfactual patching mode")
 
@@ -265,6 +351,46 @@ def _token_label(tokenizer: Any, token_id: int) -> str:
         return visible
     fallback = tokenizer.convert_ids_to_tokens(token_id)
     return str(fallback)
+
+
+def _capture_activation_example(
+    model: t.nn.Module,
+    targets: tuple[PatchTarget, ...],
+    processor: Any,
+    prompt: ActivationExamplePrompt,
+    candidate_ids: t.Tensor,
+) -> ActivationExampleView:
+    example = tokenize_messages(processor, prompt.example_id, prompt.messages)
+    input_ids, attention_mask = _prefix(example)
+    rendered = _render_generation_prompt(processor, prompt.messages)
+    tokenizer = tokenizer_for(processor)
+    encoded = tokenizer(rendered, add_special_tokens=False)
+    raw_token_ids = encoded.get("input_ids")
+    if not isinstance(raw_token_ids, list) or not all(
+        isinstance(value, int) for value in raw_token_ids
+    ):
+        raise TypeError("activation-example prompt must encode to one integer token list")
+    token_ids = tuple(raw_token_ids)
+    if token_ids != tuple(int(value) for value in input_ids[0].tolist()):
+        raise RuntimeError("activation-example tokens do not match the rendered chat prefix")
+    activations, _probabilities = _capture(
+        model,
+        targets,
+        input_ids,
+        attention_mask,
+        candidate_ids,
+    )
+    return ActivationExampleView(
+        example_id=prompt.example_id,
+        category=prompt.category,
+        target=prompt.messages[-1].content,
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+        rendered_prompt=rendered,
+        token_ids=token_ids,
+        token_labels=tuple(_token_label(tokenizer, token_id) for token_id in token_ids),
+        activations=activations,
+    )
 
 
 def _prompt_patch_view(
@@ -1277,6 +1403,231 @@ def _capture_prompt_counterfactual_source_bank(
     return source_by_record
 
 
+def _capture_activation_reference_banks(
+    model: t.nn.Module,
+    targets: tuple[PatchTarget, ...],
+    processor: Any,
+    records: tuple[ReflectionRecord, ...],
+    modes: tuple[PatchingMode, ...],
+) -> tuple[ActivationReferenceBank, ...]:
+    """Capture every source/recipient vector addressed by the selected prompt modes."""
+
+    if not modes or any(not mode.supports_independent_checkpoint_donor for mode in modes):
+        raise ValueError("activation-reference modes must be answer-label prompt controls")
+    banks: list[ActivationReferenceBank] = []
+    for record in records:
+        clean_view = _prompt_patch_view(
+            processor,
+            record,
+            record.messages,
+            FUNCTION_BY_ID[record.function_id].alias,
+            stop_at_sequence_start=True,
+        )
+        clean_activations, _clean_probabilities = _capture(
+            model,
+            targets,
+            clean_view.input_ids,
+            clean_view.attention_mask,
+            _candidate_ids(processor, record),
+        )
+        for mode in modes:
+            counterfactual = _prompt_counterfactual_spec(record, mode)
+            source_view, recipient_view = _prompt_counterfactual_views(
+                processor,
+                record,
+                mode,
+                counterfactual,
+            )
+            source_candidate_ids, _recipient_candidate_ids = _counterfactual_candidate_ids(
+                processor,
+                record,
+                counterfactual,
+            )
+            source_activations, _source_probabilities = _capture(
+                model,
+                targets,
+                source_view.input_ids,
+                source_view.attention_mask,
+                source_candidate_ids,
+            )
+            positions = reverse_token_position_pairs(
+                source_view.anchor_index,
+                recipient_view.anchor_index,
+                source_view.stop_index,
+                recipient_view.stop_index,
+            )
+            banks.append(
+                ActivationReferenceBank(
+                    mode=mode,
+                    function_id=record.function_id,
+                    positions=positions,
+                    source_activations=source_activations,
+                    recipient_activations=clean_activations,
+                )
+            )
+    return tuple(banks)
+
+
+def _top_cosine_examples(
+    reference_vectors: t.Tensor,
+    candidate_vectors: tuple[t.Tensor, ...],
+    *,
+    top_k: int,
+    device: str = "cuda",
+    reference_batch_size: int = 64,
+) -> list[list[dict[str, object]]]:
+    """Return top distinct examples, using each example's best-matching token."""
+
+    if reference_vectors.ndim != 2 or reference_vectors.shape[0] == 0:
+        raise ValueError("activation-example search requires a non-empty reference matrix")
+    if not candidate_vectors or any(
+        value.ndim != 2 or value.shape[0] == 0 for value in candidate_vectors
+    ):
+        raise ValueError("activation-example search requires non-empty candidate sequences")
+    width = reference_vectors.shape[1]
+    if any(value.shape[1] != width for value in candidate_vectors):
+        raise ValueError("reference and candidate activation widths must match")
+    if top_k <= 0 or reference_batch_size <= 0:
+        raise ValueError("top-k and reference batch size must be positive")
+
+    candidate_starts: list[int] = []
+    cursor = 0
+    for value in candidate_vectors:
+        candidate_starts.append(cursor)
+        cursor += value.shape[0]
+    candidate_matrix = functional.normalize(
+        t.cat(candidate_vectors, dim=0).to(device=device, dtype=t.float32),
+        dim=-1,
+    )
+    selected_count = min(top_k, len(candidate_vectors))
+    output: list[list[dict[str, object]]] = []
+    for start in range(0, reference_vectors.shape[0], reference_batch_size):
+        references = functional.normalize(
+            reference_vectors[start : start + reference_batch_size].to(
+                device=device,
+                dtype=t.float32,
+            ),
+            dim=-1,
+        )
+        cosine = references @ candidate_matrix.transpose(0, 1)
+        best_scores: list[t.Tensor] = []
+        best_tokens: list[t.Tensor] = []
+        for example_index, example_start in enumerate(candidate_starts):
+            example_end = (
+                candidate_starts[example_index + 1]
+                if example_index + 1 < len(candidate_starts)
+                else candidate_matrix.shape[0]
+            )
+            score, token_index = cosine[:, example_start:example_end].max(dim=1)
+            best_scores.append(score)
+            best_tokens.append(token_index)
+        score_matrix = t.stack(best_scores, dim=1)
+        token_matrix = t.stack(best_tokens, dim=1)
+        selected_scores, selected_examples = score_matrix.topk(selected_count, dim=1)
+        selected_tokens = token_matrix.gather(1, selected_examples)
+        for row in range(references.shape[0]):
+            matches: list[dict[str, object]] = []
+            for rank in range(selected_count):
+                matches.append(
+                    {
+                        "example_index": int(selected_examples[row, rank].item()),
+                        "token_index": int(selected_tokens[row, rank].item()),
+                        "cosine_similarity": float(selected_scores[row, rank].item()),
+                    }
+                )
+            output.append(matches)
+        del cosine, score_matrix, token_matrix, selected_scores, selected_examples, selected_tokens
+    del candidate_matrix
+    return output
+
+
+def _activation_example_output_path(
+    root: Path,
+    run: RunKey,
+    interface: PatchingInterface,
+    checkpoint_step: int,
+) -> Path:
+    if interface.patches_weights:
+        raise ValueError("weight patches do not expose one activation reference vector")
+    return (
+        run_dir(root, run)
+        / "activation_examples"
+        / "sequence_end"
+        / interface.value
+        / f"checkpoint_{checkpoint_label(checkpoint_step)}.json"
+    )
+
+
+def _serialize_activation_examples(
+    candidates: tuple[ActivationExampleView, ...],
+    reference_banks: tuple[ActivationReferenceBank, ...],
+    *,
+    layer_count: int,
+) -> list[dict[str, object]]:
+    """Compute cosine neighbors for every token/layer reference in one checkpoint."""
+
+    if not candidates or not reference_banks:
+        raise ValueError("activation-example serialization requires candidates and references")
+    if any(len(candidate.activations) != layer_count for candidate in candidates):
+        raise ValueError("candidate activation bank has the wrong decoder layer count")
+    if any(
+        len(bank.source_activations) != layer_count
+        or len(bank.recipient_activations) != layer_count
+        for bank in reference_banks
+    ):
+        raise ValueError("reference activation bank has the wrong decoder layer count")
+
+    serialized: list[dict[str, object]] = [
+        {
+            "mode": bank.mode.value,
+            "function_id": bank.function_id,
+            "position_count": len(bank.positions),
+            "source_neighbors": [[None] * layer_count for _ in bank.positions],
+            "recipient_neighbors": [[None] * layer_count for _ in bank.positions],
+        }
+        for bank in reference_banks
+    ]
+    descriptors: list[tuple[int, str, int]] = []
+    for bank_index, bank in enumerate(reference_banks):
+        for side in ("source", "recipient"):
+            descriptors.extend(
+                (bank_index, side, token_index) for token_index in range(len(bank.positions))
+            )
+    for layer in range(layer_count):
+        references = t.stack(
+            tuple(
+                (
+                    reference_banks[bank_index].source_activations[layer][
+                        reference_banks[bank_index].positions[token_index].source_index
+                    ]
+                    if side == "source"
+                    else reference_banks[bank_index].recipient_activations[layer][
+                        reference_banks[bank_index].positions[token_index].recipient_index
+                    ]
+                )
+                for bank_index, side, token_index in descriptors
+            )
+        )
+        matches = _top_cosine_examples(
+            references,
+            tuple(candidate.activations[layer] for candidate in candidates),
+            top_k=ACTIVATION_EXAMPLE_TOP_K,
+        )
+        for descriptor, top_matches in zip(descriptors, matches, strict=True):
+            bank_index, side, token_index = descriptor
+            key = f"{side}_neighbors"
+            rows = cast(list[list[object]], serialized[bank_index][key])
+            rows[token_index][layer] = top_matches
+        del references, matches
+        t.cuda.empty_cache()
+    for record in serialized:
+        for key in ("source_neighbors", "recipient_neighbors"):
+            rows = cast(list[list[object]], record[key])
+            if any(value is None for row in rows for value in row):
+                raise RuntimeError("activation-example neighbor grid is incomplete")
+    return serialized
+
+
 def _capture_weight_source_bundle(
     model: t.nn.Module,
     blocks: tuple[t.nn.Module, ...],
@@ -1316,6 +1667,10 @@ def build_token_axis_metadata(
     source_choice_texts: tuple[str, ...] | None = None
     source_question_id: str | None = None
     source_question: str | None = None
+    source_format: str | None = None
+    source_label_relation: str | None = None
+    source_context_id: str | None = None
+    source_context: str | None = None
     recipient_correct_choice_index = record.choice_function_ids.index(record.function_id)
     if mode.uses_prompt_counterfactual:
         spec = _prompt_counterfactual_spec(record, mode)
@@ -1325,6 +1680,10 @@ def build_token_axis_metadata(
         source_choice_texts = spec.source_choice_texts
         source_question_id = spec.source_question_id
         source_question = spec.source_question
+        source_format = spec.source_format
+        source_label_relation = spec.source_label_relation
+        source_context_id = spec.source_context_id
+        source_context = spec.source_context
         source_view, recipient_view = _prompt_counterfactual_views(
             processor,
             record,
@@ -1381,6 +1740,14 @@ def build_token_axis_metadata(
         metadata["source_question_id"] = source_question_id
     if source_question is not None:
         metadata["source_question"] = source_question
+    if source_format is not None:
+        metadata["source_format"] = source_format
+    if source_label_relation is not None:
+        metadata["source_label_relation"] = source_label_relation
+    if source_context_id is not None:
+        metadata["source_context_id"] = source_context_id
+    if source_context is not None:
+        metadata["source_context"] = source_context
     return metadata
 
 
@@ -1496,6 +1863,14 @@ def _serialize_grid(
             serialized["source_question_id"] = counterfactual.source_question_id
         if counterfactual.source_question is not None:
             serialized["source_question"] = counterfactual.source_question
+        if counterfactual.source_format is not None:
+            serialized["source_format"] = counterfactual.source_format
+        if counterfactual.source_label_relation is not None:
+            serialized["source_label_relation"] = counterfactual.source_label_relation
+        if counterfactual.source_context_id is not None:
+            serialized["source_context_id"] = counterfactual.source_context_id
+        if counterfactual.source_context is not None:
+            serialized["source_context"] = counterfactual.source_context
     if answer_logit_lens is not None:
         serialized["answer_logit_lens"] = answer_logit_lens
     return serialized
@@ -2499,6 +2874,129 @@ def run_prompt_counterfactual_patching_matrix(
         )
 
 
+def run_activation_example_atlas(
+    root: Path,
+    run: RunKey,
+    checkpoint_steps: tuple[int, ...],
+    modes: tuple[PatchingMode, ...],
+    interface: PatchingInterface,
+    *,
+    allow_provisional_model: bool = False,
+) -> None:
+    """Measure cell-addressable activation neighbors at each selected checkpoint."""
+
+    if not t.cuda.is_available():
+        raise RuntimeError("activation-example analysis requires CUDA")
+    if tuple(sorted(set(checkpoint_steps))) != checkpoint_steps or any(
+        step not in CHECKPOINT_STEPS for step in checkpoint_steps
+    ):
+        raise ValueError("activation-example checkpoints must be unique and registered")
+    if (
+        not modes
+        or len(set(modes)) != len(modes)
+        or any(not mode.supports_independent_checkpoint_donor for mode in modes)
+    ):
+        raise ValueError("activation-example modes must be unique answer-label controls")
+    if interface.patches_weights:
+        raise ValueError("weight-patching cells do not define activation reference vectors")
+
+    pending = tuple(
+        step
+        for step in checkpoint_steps
+        if not _activation_example_output_path(root, run, interface, step).is_file()
+    )
+    skipped = len(checkpoint_steps) - len(pending)
+    if skipped:
+        print(
+            f"[activation-examples] {run.model}/{run.condition.value} {interface.value} "
+            f"skipped {skipped} existing checkpoint artifact(s)",
+            flush=True,
+        )
+    if not pending:
+        return
+
+    spec = get_model_spec(run.model, allow_provisional=allow_provisional_model)
+    processor = load_processor(spec)
+    records = _selected_records(run.seed)
+    candidate_prompts = build_activation_example_prompts(ACTIVATION_EXAMPLE_CORPUS_SEED)
+    for checkpoint_step in pending:
+        model = _load_checkpoint_model(root, run, spec, checkpoint_step)
+        blocks = resolve_decoder_blocks(model, spec)
+        targets = _resolve_patch_targets(blocks, interface)
+        candidates: tuple[ActivationExampleView, ...] = ()
+        reference_banks: tuple[ActivationReferenceBank, ...] = ()
+        try:
+            candidate_ids = _candidate_ids(processor, records[0])
+            candidates = tuple(
+                _capture_activation_example(
+                    model,
+                    targets,
+                    processor,
+                    prompt,
+                    candidate_ids,
+                )
+                for prompt in candidate_prompts
+            )
+            reference_banks = _capture_activation_reference_banks(
+                model,
+                targets,
+                processor,
+                records,
+                modes,
+            )
+            serialized = _serialize_activation_examples(
+                candidates,
+                reference_banks,
+                layer_count=spec.layer_count,
+            )
+            output = _activation_example_output_path(root, run, interface, checkpoint_step)
+            write_json(
+                output,
+                {
+                    "model": spec,
+                    "run": run,
+                    "interface": interface.value,
+                    "checkpoint_step": checkpoint_step,
+                    "similarity": {
+                        "metric": ACTIVATION_EXAMPLE_METRIC,
+                        "ranking_unit": "distinct prompt using its maximum token similarity",
+                        "top_k": ACTIVATION_EXAMPLE_TOP_K,
+                        "reference": "selected source or recipient vector at one token and layer",
+                    },
+                    "candidate_corpus": {
+                        "seed": ACTIVATION_EXAMPLE_CORPUS_SEED,
+                        "prompt_count": len(candidates),
+                        "categories": sorted({candidate.category for candidate in candidates}),
+                        "description": (
+                            "Fixed audit bank: held-out code and language choices, unrelated "
+                            "MCQs, non-MCQ letter completions, and Functions training I/O prompts"
+                        ),
+                    },
+                    "candidates": [
+                        {
+                            "example_id": candidate.example_id,
+                            "category": candidate.category,
+                            "target": candidate.target,
+                            "rendered_prompt": candidate.rendered_prompt,
+                            "token_ids": candidate.token_ids,
+                            "token_labels": candidate.token_labels,
+                        }
+                        for candidate in candidates
+                    ],
+                    "records": serialized,
+                },
+            )
+            print(
+                f"[activation-examples] {run.model}/{run.condition.value} "
+                f"{interface.value} step={checkpoint_step} -> {output}",
+                flush=True,
+            )
+        finally:
+            _release_model(model)
+            del candidates, reference_banks
+            gc.collect()
+
+
 def _run_weight_patching(
     root: Path,
     run: RunKey,
@@ -2723,6 +3221,7 @@ def run_patching(
 
 __all__ = [
     "build_token_axis_metadata",
+    "run_activation_example_atlas",
     "run_patching",
     "run_prompt_counterfactual_patching_matrix",
     "run_temporal_patching_matrix",

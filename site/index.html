@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="Interactive results explorer for OOCR training dynamics, activation patching, and decoder-block weight patching." />
     <title>OOCR Atlas · training dynamics</title>
-    <link rel="stylesheet" href="styles.css?v=20260721b" />
-    <script src="app.js?v=20260722a" defer></script>
+    <link rel="stylesheet" href="styles.css?v=20260722b" />
+    <script src="app.js?v=20260722b" defer></script>
   </head>
   <body>
     <div class="grain" aria-hidden="true"></div>
@@ -187,7 +187,10 @@
                 <button class="active" data-patch-mode="across_sample">Different function name</button>
                 <button data-patch-mode="cyclic_choices">Shift choices +1</button>
                 <button data-patch-mode="deranged_choices">Derange choices</button>
-                <button data-patch-mode="unrelated_question">Unrelated MCQ</button>
+                <button data-patch-mode="unrelated_question">Unrelated MCQ · different letter</button>
+                <button data-patch-mode="unrelated_question_same_letter">Unrelated MCQ · same letter</button>
+                <button data-patch-mode="letter_context_different">Non-MCQ context · different letter</button>
+                <button data-patch-mode="letter_context_same">Non-MCQ context · same letter</button>
               </div>
             </div>
             <label>
@@ -249,10 +252,36 @@
               backward. Read the rows bottom-to-top to reconstruct normal prompt order.
             </p>
             <div>
-              <section><small>activation source prefix</small><pre id="source-rendered-prompt"></pre></section>
               <section><small>recipient prefix</small><pre id="recipient-rendered-prompt"></pre></section>
+              <section><small>activation source prefix</small><pre id="source-rendered-prompt"></pre></section>
             </div>
           </details>
+
+          <section class="activation-neighbor-panel" aria-labelledby="activation-neighbor-title">
+            <div class="activation-neighbor-heading">
+              <div>
+                <small>Selected-cell readout</small>
+                <h3 id="activation-neighbor-title">Top matching activation examples</h3>
+              </div>
+              <p id="activation-neighbor-status">Click a measured heatmap cell to choose its recipient and donor reference vectors.</p>
+            </div>
+            <p class="activation-neighbor-method">
+              Each column searches a fixed 95-prompt audit bank at the selected checkpoint and
+              layer. Prompts are ranked by their single most cosine-similar token; the matching
+              tokenizer position is highlighted. This is a bounded nearest-neighbor audit, not a
+              claim about the model’s global maximum over pretraining data.
+            </p>
+            <div class="activation-neighbor-columns">
+              <section>
+                <header><small>recipient reference</small><strong id="recipient-neighbor-reference">No cell selected</strong></header>
+                <div id="recipient-neighbor-examples" class="activation-example-list"></div>
+              </section>
+              <section>
+                <header><small>donor / source reference</small><strong id="source-neighbor-reference">No cell selected</strong></header>
+                <div id="source-neighbor-examples" class="activation-example-list"></div>
+              </section>
+            </div>
+          </section>
 
           <div class="heatmap-frame">
             <div class="heatmap-axis">decoder layer depth → · exact tokenizer position, stepping backward ↓</div>

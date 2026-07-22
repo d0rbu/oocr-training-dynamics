@@ -25,6 +25,7 @@ contracts + model registry + deterministic corpus
 | Module | Responsibility |
 |---|---|
 | `contracts.py` | Conditions, run keys, training spec, batch/rank/checkpoint/seed constants |
+| `activation_examples.py` | Fixed 95-prompt audit corpus and nearest-example constants |
 | `models.py` | Pinned registry, dimensions, provisional gate, rank/microbatch/state arithmetic |
 | `data.py` | 19 functions, deterministic matched corpora, derangement, reflection records |
 | `semantics.py` | Restricted semantic scoring for generated lambda expressions |
@@ -42,7 +43,7 @@ contracts + model registry + deterministic corpus
 | `runtime_models.py` | Processor/model loading, revision check, LoRA attachment, block discovery |
 | `runtime_training.py` | Exact batch aggregation, clipping, dense adapters, rolling resume |
 | `runtime_evaluation.py` | Intended/planted choice metrics and semantic free-form generation |
-| `runtime_patching.py` | Activation/LoRA interventions, dual-label outcomes, and answer-label logit lenses across prompts or checkpoint time |
+| `runtime_patching.py` | Activation/LoRA interventions, dual-label outcomes, answer-label lenses, and cell-selected cosine neighbors across prompts or checkpoint time |
 
 Importing these modules does not launch CUDA. Their script entry points call `gpu_guard` before
 invoking live runtime functions.
@@ -61,9 +62,10 @@ artifacts/
     ├── checkpoints/step_XXXXXX/adapter/
     ├── resume/latest.{json,pt}
     ├── evaluations/{index.json,step_XXXXXX.json}
-    └── patching/
+    ├── patching/
         ├── <mode>/recipient_step_XXXXXX/donor_step_XXXXXX.json
         └── <branch_interface>/<mode>/recipient_step_XXXXXX/donor_step_XXXXXX.json
+    └── activation_examples/sequence_end/<interface>/checkpoint_step_XXXXXX.json
 ```
 
 Nonbaseline effective-batch and LoRA-rank runs are isolated one level below the seed directory:
@@ -94,8 +96,8 @@ condition, boundary, and patch mode with bounded concurrency while keeping the i
 metadata payload small as the deterministic checkpoint-priority temporal atlas grows.
 Each parsed grid is compacted to typed probability arrays and retained in memory, so recipient and
 donor slider movement performs no network fetch or JSON parse after the one-time preload. The page
-polls the separately exported `site/data/patch-manifest.json`; newly generated artifacts are added
-to the same eager preload while an existing tab remains open. Missing patch views retain exact
+polls the separately exported `site/data/patch-manifest.json`; newly generated patch and
+activation-neighbor artifacts are added while an existing tab remains open. Missing patch views retain exact
 token-axis metadata but contain no probabilities or deltas; the site renders reserved unprocessed
 cells instead. Missing behavioral curves remain explicitly synthetic.
 
@@ -104,6 +106,13 @@ two compact A–E logit-lens tensors (source and recipient). They also preserve 
 choice permutation or unrelated-question identity needed to audit what the source label means.
 For mixed-checkpoint cells, the source lens is computed with the donor checkpoint's final norm and
 unembedding while the recipient lens and patched downstream forward use the recipient checkpoint.
+
+Activation-example raw artifacts are indexed by one checkpoint because both source and recipient
+reference banks can be reused across every donor/recipient pairing involving that checkpoint. The
+exporter splits each raw file into one compact mode/function neighbor chunk plus a shared candidate
+catalog. The manifest resolves source examples from the donor checkpoint and recipient examples
+from the recipient checkpoint. Only prompt IDs, exact tokenizer labels, maximizing token indices,
+and cosine scores reach the browser; hidden vectors are transient.
 
 Measured evaluation exports also include one acquisition curve per registered function alongside
 the all-function aggregate. The aggregate is checked against the arithmetic mean of the 19

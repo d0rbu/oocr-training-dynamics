@@ -74,10 +74,10 @@ The primary activation intervention patches `resid_post` one layer and tokenizer
 time. Reverse token position zero is the final token in the model-rendered generation prompt:
 
 - **across sample:** insert the different-name dirty activation into the clean recipient prompt;
-- **answer-label controls:** patch the reverse-aligned final suffix from the same question with
-  choices shifted +1, the same question with a deterministic random derangement, or an unrelated
-  non-coding MCQ whose correct letter differs from the clean probe; source and clean recipient
-  checkpoints can now be selected independently;
+- **answer-label controls:** patch the reverse-aligned final suffix from reordered function
+  choices, unrelated non-coding MCQs, or non-question record completions. The unrelated-MCQ and
+  non-MCQ controls each have same-letter and different-letter variants, forming an explicit
+  format × target-letter comparison; source and clean recipient checkpoints are independent;
 - **checkpoint transfer:** set recipient and donor steps independently while keeping the clean
   prompt fixed. An earlier donor into a later recipient tests necessity; reversing that ordering
   tests whether a later learned state is sufficient in an earlier model.
@@ -99,6 +99,13 @@ recipient step, donor step, patch boundary, and function probe move wherever mea
 exist. The function selector also exposes a cellwise mean over all 19 functions on their shared
 reverse-token support. New answer-label-control hover cards show both clean- and donor-label
 causal probabilities plus an unpatched five-way top-p residual logit lens for source and recipient.
+
+Clicking a measured activation cell also selects its exact source and recipient vectors for a
+separate nearest-example audit. Each side searches the same fixed 95-prompt bank at its own
+checkpoint and ranks distinct prompts by the cosine similarity of their best-matching token. The
+site highlights that tokenizer position in separate recipient-left and source-right columns. This
+bounded audit is observational—it is neither a causal intervention nor a claim to search the full
+pretraining distribution.
 
 ## CPU-only quickstart
 

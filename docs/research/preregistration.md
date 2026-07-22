@@ -447,6 +447,61 @@ a deliberately factorial causal atlas, not an estimate of either factor in isola
 use coherent token-by-layer/checkpoint regions and per-function consistency rather than selected
 individual cells.
 
+## Format × answer-letter controls and activation neighbors — 2026-07-22, post-hoc
+
+After the first prompt × checkpoint cells were already visible, the user requested a sharper
+test of whether the late final-token state means a generic “emit letter L” or instead represents
+an answer label specifically in a multiple-choice context. This extension is exploratory. It was
+specified after the earlier readout controls and cannot retroactively confirm H1–H4 or the earlier
+answer-label prediction.
+
+The existing `unrelated_question` source is retained unchanged and relabeled in the site as
+**Unrelated MCQ · different letter**: its correct label is hard-guaranteed to differ from the
+paired clean function probe. Three new prompt sources complete a format × label-relation design:
+
+1. `unrelated_question_same_letter` uses the same fixed bank of 19 non-coding questions but moves
+   the correct option to the clean function probe's correct A–E label.
+2. `letter_context_same` uses no question, answer choices, coding text, or MCQ instruction. It is
+   a short record-copy completion whose assistant target is the same single capital letter as the
+   clean probe.
+3. `letter_context_different` uses the same non-MCQ record family but selects a deterministic A–E
+   label different from the clean probe.
+
+The 19 non-MCQ contexts are fixed in registered function order. Their text may mention the target
+letter as a marker to copy, but contains no question mark or the words Python, code, lambda,
+function, question, or choice. Each source assistant completion is exactly one of A–E. Same-letter
+and different-letter relations are serialized and asserted, not inferred in the browser.
+
+All three new sources use the existing reverse-from-sequence-end axis through and including the
+first differing token. They use the same 19 code-choice recipients, OLMo `resid_post`, 18 donor
+steps, 18 recipient steps, dual-label causal probabilities, and checkpoint-specific A–E logit
+lenses. They add `18 × 18 × 3 = 972` patch artifacts; together, all six answer-label source modes
+contain 1,944 cells. Missing cells remain unprocessed and contain no synthetic value.
+
+The descriptive contrast is factorial:
+
+- a checkpoint- and format-general “say L” direction predicts source-label transfer for both MCQ
+  and non-MCQ sources, tracking the actual same/different letter;
+- an MCQ-specialized answer-label state predicts stronger and more coherent transfer for the two
+  unrelated-MCQ sources than for the two non-MCQ record completions;
+- nonspecific corruption predicts reduced clean probability without a corresponding increase in
+  the declared different source letter and does not count as label transfer.
+
+The site also receives an observational **activation-neighbor** panel. Clicking one measured
+token × layer cell chooses the exact recipient and donor vectors for the selected individual
+function. Each vector searches a deterministic 95-prompt audit bank at its own checkpoint and
+interface. The bank has 19 prompts in each of five categories: held-out code-choice variant 1,
+held-out language-choice variant 1, unrelated non-coding MCQ, non-MCQ letter completion, and
+Functions training I/O. It is disjoint from the variant-0 patch probe where applicable.
+
+Candidates are scored by cosine similarity at the selected layer. A prompt's score is its maximum
+over tokenizer positions, and only its maximizing token is retained; the top six **distinct
+prompts** are serialized with the matching token highlighted. Recipient examples use the
+recipient checkpoint and clean reference vector; source examples use the donor checkpoint and
+counterfactual reference vector. This bounded bank is disclosed in the UI. It is not a global
+top-activation search over pretraining data, does not estimate feature prevalence, and is not a
+causal result.
+
 ## Prior information used for predictions
 
 The earlier repository replicated OLMo-2 7B rule recovery and observed OLMo-3 recovery after 4,096

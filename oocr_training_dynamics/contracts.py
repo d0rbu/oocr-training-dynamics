@@ -66,6 +66,9 @@ class PatchingMode(StrEnum):
     CYCLIC_CHOICES = "cyclic_choices"
     DERANGED_CHOICES = "deranged_choices"
     UNRELATED_QUESTION = "unrelated_question"
+    UNRELATED_QUESTION_SAME_LETTER = "unrelated_question_same_letter"
+    LETTER_CONTEXT_SAME = "letter_context_same"
+    LETTER_CONTEXT_DIFFERENT = "letter_context_different"
     ACROSS_TIME = "across_time"
     LATER_CHECKPOINT = "later_checkpoint"
 
@@ -78,6 +81,9 @@ class PatchingMode(StrEnum):
             PatchingMode.CYCLIC_CHOICES,
             PatchingMode.DERANGED_CHOICES,
             PatchingMode.UNRELATED_QUESTION,
+            PatchingMode.UNRELATED_QUESTION_SAME_LETTER,
+            PatchingMode.LETTER_CONTEXT_SAME,
+            PatchingMode.LETTER_CONTEXT_DIFFERENT,
         }
 
     @property
@@ -88,6 +94,9 @@ class PatchingMode(StrEnum):
             PatchingMode.CYCLIC_CHOICES,
             PatchingMode.DERANGED_CHOICES,
             PatchingMode.UNRELATED_QUESTION,
+            PatchingMode.UNRELATED_QUESTION_SAME_LETTER,
+            PatchingMode.LETTER_CONTEXT_SAME,
+            PatchingMode.LETTER_CONTEXT_DIFFERENT,
         }
 
 

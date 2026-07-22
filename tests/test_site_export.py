@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from oocr_training_dynamics.contracts import (
     BATCH_ABLATION_SIZES,
@@ -19,7 +19,11 @@ from oocr_training_dynamics.contracts import (
 )
 from oocr_training_dynamics.data import FUNCTIONS
 from oocr_training_dynamics.models import ModelKey
-from scripts.export_site import _compact_patch_record
+from scripts.export_site import (
+    _compact_activation_neighbor_grid,
+    _compact_patch_record,
+    _token_axes,
+)
 
 
 def test_committed_site_payload_discloses_measurement_status() -> None:
@@ -33,6 +37,9 @@ def test_committed_site_payload_discloses_measurement_status() -> None:
     }
     assert 0 <= payload["real_runs"] <= 9
     assert payload["real_patch_files"] >= 0
+    assert payload.get("real_activation_example_files", 0) >= 0
+    assert payload.get("activation_example_chunks", 0) >= 0
+    assert isinstance(payload.get("activation_example_manifest", {}), dict)
     if payload["status"] == "synthetic_preview":
         assert payload["real_runs"] == 0
         assert payload["real_patch_files"] == 0
@@ -155,10 +162,9 @@ def test_site_rank_ablation_has_no_synthetic_nonbaseline_curves() -> None:
 
 
 def test_site_token_axes_are_exact_model_tokenizer_coordinates() -> None:
-    root = Path(__file__).resolve().parents[1]
-    payload = json.loads((root / "site" / "data" / "experiment.json").read_text())
+    axes = _token_axes()
 
-    assert set(payload["token_axes"]) == {
+    assert set(axes) == {
         ModelKey.OLMO3_7B.value,
         ModelKey.QWEN3_8B.value,
     }
@@ -170,15 +176,28 @@ def test_site_token_axes_are_exact_model_tokenizer_coordinates() -> None:
         "definition",
         "option",
     }
-    for model_axes in payload["token_axes"].values():
+    for raw_model_axes in axes.values():
+        model_axes = cast(dict[str, object], raw_model_axes)
         assert set(model_axes) == {mode.value for mode in PatchingMode}
-        for mode, functions in model_axes.items():
+        for mode, raw_functions in model_axes.items():
+            functions = cast(dict[str, dict[str, object]], raw_functions)
             assert set(functions) == function_ids
-            for axis in functions.values():
+            for raw_axis in functions.values():
+                axis = cast(dict[str, Any], raw_axis)
                 assert "from functions import" in axis["recipient_rendered_prompt"]
-                if mode == PatchingMode.UNRELATED_QUESTION.value:
+                if mode in {
+                    PatchingMode.UNRELATED_QUESTION.value,
+                    PatchingMode.UNRELATED_QUESTION_SAME_LETTER.value,
+                    PatchingMode.LETTER_CONTEXT_SAME.value,
+                    PatchingMode.LETTER_CONTEXT_DIFFERENT.value,
+                }:
                     assert "from functions import" not in axis["source_rendered_prompt"]
-                    assert axis["source_question"] in axis["source_rendered_prompt"]
+                    if mode.startswith("unrelated_question"):
+                        assert axis["source_question"] in axis["source_rendered_prompt"]
+                        assert axis["source_format"] == "unrelated_mcq"
+                    else:
+                        assert axis["source_context"] in axis["source_rendered_prompt"]
+                        assert axis["source_format"] == "non_mcq_text_completion"
                 else:
                     assert "from functions import" in axis["source_rendered_prompt"]
                 if mode in {
@@ -191,9 +210,14 @@ def test_site_token_axes_are_exact_model_tokenizer_coordinates() -> None:
                     assert axis["source_rendered_prompt"] != axis["recipient_rendered_prompt"]
                     if mode == PatchingMode.ACROSS_SAMPLE.value:
                         assert axis["source_function_id"] != axis["recipient_function_id"]
-                    elif mode != PatchingMode.UNRELATED_QUESTION.value:
+                    elif mode not in {
+                        PatchingMode.UNRELATED_QUESTION.value,
+                        PatchingMode.UNRELATED_QUESTION_SAME_LETTER.value,
+                        PatchingMode.LETTER_CONTEXT_SAME.value,
+                        PatchingMode.LETTER_CONTEXT_DIFFERENT.value,
+                    }:
                         assert axis["source_function_id"] == axis["recipient_function_id"]
-                positions = axis["positions"]
+                positions = cast(list[dict[str, Any]], axis["positions"])
                 assert [row["reverse_index"] for row in positions] == list(range(len(positions)))
                 source_indices = [row["source_index"] for row in positions]
                 recipient_indices = [row["recipient_index"] for row in positions]
@@ -215,10 +239,24 @@ def test_site_token_axes_are_exact_model_tokenizer_coordinates() -> None:
                         for row in positions[:-1]
                     )
                     assert positions[-1]["source_token_id"] != positions[-1]["recipient_token_id"]
-                    assert (
-                        axis["source_correct_choice_index"]
-                        != axis["recipient_correct_choice_index"]
-                    )
+                    if mode in {
+                        PatchingMode.UNRELATED_QUESTION_SAME_LETTER.value,
+                        PatchingMode.LETTER_CONTEXT_SAME.value,
+                    }:
+                        assert axis["source_label_relation"] == "same_as_recipient"
+                        assert (
+                            axis["source_correct_choice_index"]
+                            == axis["recipient_correct_choice_index"]
+                        )
+                    else:
+                        assert axis.get("source_label_relation") in {
+                            None,
+                            "different_from_recipient",
+                        }
+                        assert (
+                            axis["source_correct_choice_index"]
+                            != axis["recipient_correct_choice_index"]
+                        )
                 for row in positions:
                     assert isinstance(row["source_index"], int)
                     assert isinstance(row["recipient_index"], int)
@@ -246,6 +284,9 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert 'data-patch-mode="cyclic_choices"' in html
     assert 'data-patch-mode="deranged_choices"' in html
     assert 'data-patch-mode="unrelated_question"' in html
+    assert 'data-patch-mode="unrelated_question_same_letter"' in html
+    assert 'data-patch-mode="letter_context_same"' in html
+    assert 'data-patch-mode="letter_context_different"' in html
     assert 'data-patch-mode="later_checkpoint"' not in html
     assert 'data-patch-mode="across_time"' not in html
     assert 'const ALL_FUNCTIONS_ID = "__all__"' in javascript
@@ -257,10 +298,18 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert 'id="curve-rank-select"' in html
     assert "function buildCurveBatchSlider()" in javascript
     assert "function availableBatchSizes()" in javascript
-    assert 'href="styles.css?v=20260721b"' in html
-    assert 'src="app.js?v=20260722a"' in html
-    assert '"cyclic_choices",\n  "deranged_choices",\n  "unrelated_question"' in javascript
-    assert 'const DATA_URL = "data/experiment.json?v=20260722a"' in javascript
+    assert 'href="styles.css?v=20260722b"' in html
+    assert 'src="app.js?v=20260722b"' in html
+    for mode in (
+        "cyclic_choices",
+        "deranged_choices",
+        "unrelated_question",
+        "unrelated_question_same_letter",
+        "letter_context_same",
+        "letter_context_different",
+    ):
+        assert f'"{mode}"' in javascript
+    assert 'const DATA_URL = "data/experiment.json?v=20260722b"' in javascript
     assert "function buildCurveRankSelect()" in javascript
     assert "function normalizeCurveAxisSelections()" in javascript
     assert "function scaledExamplesFraction(" in javascript
@@ -283,6 +332,14 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert "unpatched recipient baseline" in javascript
     assert "unpatched donor/source baseline" in javascript
     assert "answer-label logit lens" in javascript
+    assert "function renderActivationExamples(" in javascript
+    assert "function renderActivationExampleList(" in javascript
+    assert 'id="activation-neighbor-title"' in html
+    assert 'id="recipient-neighbor-examples"' in html
+    assert 'id="source-neighbor-examples"' in html
+    recipient_prompt = html.index('<pre id="recipient-rendered-prompt"')
+    source_prompt = html.index('<pre id="source-rendered-prompt"')
+    assert recipient_prompt < source_prompt
     assert "source-correct label" in javascript
     assert "averages 16 code-choice and 16 language-choice variants" in javascript
     assert 'id="patch-prefetch-status"' in html
@@ -301,10 +358,20 @@ def test_measured_site_patches_use_compact_complete_grids() -> None:
     payload = json.loads((root / "site" / "data" / "experiment.json").read_text())
     patch_snapshot = json.loads((root / "site" / "data" / "patch-manifest.json").read_text())
 
-    assert patch_snapshot == {
-        "real_patch_files": payload["real_patch_files"],
-        "patch_manifest": payload["patch_manifest"],
-    }
+    assert patch_snapshot["real_patch_files"] == payload["real_patch_files"]
+    assert patch_snapshot["patch_manifest"] == payload["patch_manifest"]
+    assert patch_snapshot.get("real_activation_example_files", 0) == payload.get(
+        "real_activation_example_files",
+        0,
+    )
+    assert patch_snapshot.get("activation_example_chunks", 0) == payload.get(
+        "activation_example_chunks",
+        0,
+    )
+    assert patch_snapshot.get("activation_example_manifest", {}) == payload.get(
+        "activation_example_manifest",
+        {},
+    )
 
     references = [
         reference
@@ -473,3 +540,50 @@ def test_prompt_patch_compaction_preserves_source_target_and_answer_logit_lens()
         "mul",
     ]
     assert compact["answer_logit_lens"] == record["answer_logit_lens"]
+
+
+def test_activation_neighbor_compaction_preserves_ranked_distinct_examples() -> None:
+    candidates: list[dict[str, object]] = [
+        {"token_labels": ["a", "b"]},
+        {"token_labels": ["c"]},
+    ]
+    grid = [
+        [
+            [
+                {"example_index": 0, "token_index": 1, "cosine_similarity": 0.9},
+                {"example_index": 1, "token_index": 0, "cosine_similarity": 0.7},
+            ],
+            [
+                {"example_index": 1, "token_index": 0, "cosine_similarity": 0.8},
+                {"example_index": 0, "token_index": 0, "cosine_similarity": 0.6},
+            ],
+        ]
+    ]
+
+    compact, layers = _compact_activation_neighbor_grid(
+        grid,
+        candidates,
+        position_count=1,
+        top_k=2,
+        context="activation fixture",
+    )
+
+    assert layers == 2
+    assert compact == [[[[0, 1, 0.9], [1, 0, 0.7]], [[1, 0, 0.8], [0, 0, 0.6]]]]
+
+    duplicate = [[[
+        {"example_index": 0, "token_index": 0, "cosine_similarity": 0.9},
+        {"example_index": 0, "token_index": 1, "cosine_similarity": 0.8},
+    ]]]
+    try:
+        _compact_activation_neighbor_grid(
+            duplicate,
+            candidates,
+            position_count=1,
+            top_k=2,
+            context="duplicate fixture",
+        )
+    except ValueError as error:
+        assert "repeats" in str(error)
+    else:  # pragma: no cover
+        raise AssertionError("duplicate activation examples must fail loudly")
