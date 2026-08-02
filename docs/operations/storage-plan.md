@@ -80,12 +80,85 @@ using the first atlas's empirical raw-plus-browser rate. Replace that estimate w
 before the full extension continues; the shorter non-MCQ token axes may reduce it, but no lower
 budget is assumed in advance.
 
+The 2026-07-31 format/content causal correction adds four more 18 × 18 prompt modes (1,296 grids).
+Before their 16 endpoint-corner artifacts replace the estimate, scale the same measured atlas rate
+linearly and reserve **11.6 GiB** for raw plus browser files. This is intentionally conservative:
+the first-difference axes may be shorter, but no reduced rate is assumed before measurement. Keep
+this allowance separate from the four activation-neighbor candidate banks and the 8 GiB free-space
+floor.
+
+The subsequent A–E contract correction versions the two conversational modes rather than
+overwriting their free-form artifacts. Completing both corrected 18 × 18 planes adds 648 possible
+grids. Until endpoint measurements replace the estimate, reserve another **5.8 GiB** at the same
+conservative measured-atlas rate. Legacy files remain retained but are not counted as completed
+corrected cells.
+
 Activation-neighbor outputs are checkpoint-indexed, not checkpoint-pair-indexed. There are at
 most 18 raw residual artifacts for the initial OLMo analysis. Each retains only six ranked prompt
 IDs/token positions/cosines per reference cell; raw hidden states and the candidate activation
 bank are released. Budget 1.5 GiB for raw plus compact neighbor files until the step-1500 smoke
 provides a measured size. This allowance is separate from the 17.4 GiB conservative total for all
 six prompt-patching modes and from the normal 8 GiB free-space floor.
+
+As of 2026-07-23, all 18 experiment/audit candidate artifacts occupy 1.3 GiB raw and their compact
+site files occupy about 228 MiB. The frozen 95-document FineWeb source corpus itself is only
+353,485 bytes, but its neighbor outputs have the same mode/function/reference-grid cardinality.
+Reserve another 1.6 GiB for the complete FineWeb raw plus compact atlas until endpoint measurements
+replace that parity estimate. Candidate hidden states remain transient; with 95 × 128 positions
+they also require a separate host-RAM preflight even though they add no retained hidden-state bank.
+
+The four 2026-07-31 format/content candidate sources are independently stored and each has the same
+95-candidate and reference-grid cardinality as the experiment/audit bank. Before endpoint artifacts
+replace the estimate, reserve 1.6 GiB per complete 18-checkpoint source—6.4 GiB total for all four—
+in addition to the 8 GiB free-space floor. Stage steps 0, 96, and 1500 first, measure actual
+raw/compact bytes per source, and revise the full-atlas reservation before continuing. Candidate
+activations remain transient and an interrupted checkpoint file is written atomically rather than
+retained as a partial result.
+
+The two corrected conversational A–E candidate banks use new source IDs, adding at most 36 raw
+checkpoint artifacts plus compact chunks. Reserve another **3.2 GiB** by the same 1.6-GiB-per-source
+rule until their steps 0, 96, and 1500 establish an empirical rate. Existing free-form candidate
+files stay legacy and cannot satisfy this corrected coverage.
+
+Full-vocabulary logit lenses are likewise checkpoint-indexed: at most 18 OLMo raw files and 342
+function-level browser chunks. Each coordinate stores only five `(token_id, probability)` pairs;
+decoded token strings are deduplicated in a per-file table, and hidden states are released rather
+than retained. Until the endpoint smoke establishes an empirical size, reserve 2 GiB for raw,
+compact, and atomic-write headroom. This is additive to the patch/neighbor allowances and the 8
+GiB free-space floor. Replace the estimate with measured endpoint extrapolation before launching
+all checkpoints.
+
+## General letter-propensity sidecars — 2026-08-01
+
+The FineWeb letter-propensity evaluator retains only one compact JSON summary per checkpoint plus
+an index. Per-token logits and probabilities are transient and are never written. Even a complete
+18-checkpoint run is expected to remain well below 1 MiB; validate the measured endpoint bytes
+before expanding across additional batch/rank runs. The evaluator reuses the existing ~346 KiB
+frozen 95-document FineWeb corpus and does not create a second corpus copy or hidden-state bank.
+
+## Representation-alignment sidecars — 2026-08-01
+
+Alignment forwards retain only the exact reverse-axis token vectors required by the grid, not
+full-sequence hidden-state banks. Those selected vectors are released after one donor/recipient
+pair. The durable artifact stores four float grids per interface—cosine, raw L2, source norm, and
+recipient norm—plus one shared token axis and metric summaries. Causal probabilities and model
+logits are not duplicated into this namespace.
+
+Artifact size scales with `functions × reverse tokens × layers × four scalars`, and temporal
+clean-prompt comparisons have a longer token axis than prompt-counterfactual suffixes. Do not
+extrapolate a full five-boundary atlas from a prompt-counterfactual file. After the required first
+authorized smoke pair, record raw and exported bytes separately with:
+
+```bash
+du -ch artifacts/runs/olmo3-7b/correct/seed_20260715/representation_alignment/**/donor_*.json | tail -1
+du -ch site/data/representation-alignment/olmo3-7b/correct/**/donor_*.json | tail -1
+```
+
+Use that measured longest-axis endpoint to budget the requested checkpoint subset before expansion.
+Complete pair/interface files are atomic and independently resumable, so staged boundary and
+checkpoint coverage is preferred whenever the projection would violate the normal 8 GiB reserve.
+Missing site cells remain unprocessed; copying, interpolating, or retaining raw activation banks to
+fill them is prohibited.
 
 ## Preflight gates
 

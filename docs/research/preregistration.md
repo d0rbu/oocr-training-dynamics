@@ -502,6 +502,277 @@ counterfactual reference vector. This bounded bank is disclosed in the UI. It is
 top-activation search over pretraining data, does not estimate feature prevalence, and is not a
 causal result.
 
+## Full-vocabulary logit-lens amendment — 2026-07-22, before any such GPU run
+
+After seeing the five-way A–E lens in the site, the user requested that the observational readout
+be normalized over the model's complete output vocabulary. This is a post-hoc measurement and
+display correction, not a new causal outcome and not retroactive evidence for H1–H4. No
+full-vocabulary lens artifact existed when this amendment was written.
+
+- The final normalization and every row of the checkpoint's output embedding define the logits.
+  The probability denominator is therefore the complete model output vocabulary, including any
+  explicitly labeled padded output rows; it is never the five A–E rows alone.
+- To keep a diffuse early-layer distribution finite and inspectable, each coordinate stores the
+  five highest-probability token IDs and their **absolute full-vocabulary probabilities**. The
+  stored probabilities are not renormalized and need not sum to one. Their sum is reported as
+  displayed mass.
+- The lens remains observational and uses `resid_post` after each decoder block, regardless of
+  which causal patch boundary is selected. It is not the output of the patched forward pass.
+- A checkpoint-indexed sidecar stores one clean full-sequence lens and one source-suffix lens for
+  every prompt counterfactual and function. Donor/source readouts use the donor checkpoint;
+  clean/recipient readouts use the recipient checkpoint. This avoids recomputing or changing any
+  existing donor × recipient causal patch grid.
+- The original A–E lens fields remain in raw patch artifacts as provenance. The website does not
+  silently fall back to them when a full-vocabulary sidecar is missing; it marks that readout
+  unprocessed instead. Sparse top-k lists are not averaged in the all-functions view.
+
+## FineWeb activation-example amendment — 2026-07-23, before any FineWeb GPU run
+
+The original 95-prompt activation-neighbor bank is experiment-shaped and can overrepresent answer
+labels, chat scaffolding, and Functions vocabulary. At the user's request, a second candidate
+universe tests whether the same selected vectors retrieve recognizable tokens in unrelated
+pretraining-style text.
+
+- The source is `HuggingFaceFW/fineweb`, config `sample-10BT`, train split, frozen at revision
+  `9bb295ddab0e05d785b879661af7260fed5140fc`.
+- Seed `20260723` selects 19 non-overlapping aligned five-row windows from the Dataset Viewer row
+  axis, for 95 documents total. Exact row indices, document IDs, URLs, crawl metadata, and text
+  SHA-256 hashes are retained. This window sampling bounds API requests and is not represented as
+  95 statistically independent crawl draws.
+- Each model receives the first 128 tokenizer positions of the raw document, with its tokenizer's
+  native special-token behavior and **no chat template**. The two candidate universes never share
+  measured values or silently substitute for one another.
+- Ranking is unchanged: maximum token cosine per document, then top six distinct documents for
+  each source/recipient token × layer reference. This remains observational and bounded; it is not
+  a global maximum over FineWeb and does not measure corpus prevalence.
+- Directional expectation recorded before measurement: generic lexical/chat-template matching
+  should weaken in FineWeb. A genuinely generic late “say letter L” direction may still retrieve
+  letter-bearing or list-like contexts near the final layers, whereas an MCQ-specialized state may
+  have no coherent FineWeb neighbor. Either outcome is descriptive and does not establish the
+  causal role of a retrieved example.
+
+The corpus JSON was fetched and validated after this amendment's design was written; no FineWeb
+model activation or neighbor artifact existed at preregistration time. Moving the panel below the
+grid, adding a corpus dropdown, and adding arrow-key cell navigation are display changes only.
+
+## Activation-example format/content amendment — 2026-07-31, before any such GPU run
+
+After the experiment/audit and FineWeb neighbor banks were visible, the user requested four more
+candidate datasets to distinguish function-question content from MCQ and conversational surface
+form. This is a post-hoc observational extension. It creates no new causal patch source, cannot
+retroactively support H1–H4, and had no model activation artifact when this contract was written.
+
+All four banks contain exactly 95 chat prompts: the same 19 registered question slots crossed with
+five fixed presentation styles. They use the native model chat template and capture only the
+generation prefix; the assistant target is stored as audit metadata but is absent from every
+candidate activation sequence.
+
+1. `same_mcq_formats` starts from the exact variant-0 code-definition probes used by activation
+   patching. For each function it preserves the import line, question, five implementation
+   contents, option order, and correct A–E target. It rerenders those values as bracketed labels,
+   `Choice L:` lines, a Markdown table, numbered letter-pairs, and one inline candidate list.
+2. `unrelated_mcq_formats` uses the fixed 19-question unrelated, non-coding bank and the identical
+   five renderers. Each unrelated question is paired to one function probe and its options are
+   ordered so its correct letter equals the paired clean target. Thus same-versus-unrelated MCQ
+   differences cannot be explained by answer-letter frequencies or format mix.
+3. `same_conversational` asks what each of the same 19 opaque functions computes under five fixed
+   conversational phrasings. It retains the registered import line but has no A–E choices; its
+   metadata target is the equivalent one-argument Python lambda.
+4. `unrelated_open_ended` asks the same 19 unrelated topics used in item 2 under the corresponding
+   five conversational roles. It contains no answer choices or MCQ instruction; its metadata
+   target is the short natural-language answer.
+
+Every source keeps a separate checkpoint-indexed artifact namespace. The neighbor metric remains
+maximum token cosine per prompt followed by the top six distinct prompts. Source and recipient
+references still use their own checkpoints. Missing source/checkpoint combinations are explicitly
+unprocessed and never fall back to another corpus.
+
+The descriptive contrasts are:
+
+- retrieval that follows `same_mcq_formats` across all five layouts but not unrelated MCQs is
+  consistent with function-question content rather than one literal prompt template;
+- comparable late final-token retrieval from both MCQ banks, especially at label/instruction
+  tokens, is consistent with generic MCQ or answer-letter structure;
+- retrieval from `same_conversational` but not `unrelated_open_ended` suggests some function-content
+  generality beyond explicit choices;
+- retrieval shared by both conversational banks is more plausibly generic dialogue/question
+  structure than an OOCR-specific feature.
+
+These are pattern-level interpretations, not thresholds. Although every bank has 95 prompts,
+prompt token counts differ and each prompt is scored by its maximum over positions, so absolute
+top-cosine values are not directly comparable across banks without inspecting length and matching
+token identity. Claims must use consistent layer/token patterns and examples across functions, not
+one unusually high neighbor.
+
+## Format/content causal patch-source correction — 2026-07-31, before any such patch run
+
+The preceding amendment originally scoped the four format/content classes only as observational
+activation-neighbor candidate banks. After those neighbor artifacts were computed, the user
+clarified that the same four classes must also appear as causal **Patch source** modes. No causal
+artifact for these modes existed when this correction was written. The completed neighbor results
+remain separate and are not relabeled as interventions.
+
+The new patch modes are `same_mcq_formats`, `unrelated_mcq_formats`, `same_conversational`, and
+`unrelated_open_ended`. Each uses the same prompt definitions as its 95-prompt neighbor bank. A
+causal grid requires one exact donor sequence per function, so the registered 19-function order is
+paired round-robin with the five presentations: functions 0, 5, 10, and 15 use presentation 0;
+functions 1, 6, 11, and 16 use presentation 1; and so on. The resulting format counts are
+4/4/4/4/3. The assignment is identical for the two MCQ modes and identical for the two
+conversational modes, enabling paired content contrasts.
+
+This balanced-panel design deliberately does **not** average hidden states from five different
+token sequences. Each function-level cell patches one concrete, tokenizer-auditable donor state;
+the website's all-functions view averages the resulting causal probabilities across 19 functions.
+The complete 95-prompt banks remain available in the observational neighbor selector.
+
+- `same_mcq_formats` preserves the clean function question, import line, option contents, option
+  order, and correct letter while changing only the MCQ layout.
+- `unrelated_mcq_formats` uses the paired unrelated non-coding question in the identical assigned
+  layout and matches its correct letter to the clean recipient.
+- `same_conversational` asks about the same opaque function without choices and requests a
+  free-form lambda; it has no declared A–E source target.
+- `unrelated_open_ended` asks the paired unrelated non-coding question without choices or MCQ
+  instructions; it likewise has no declared A–E source target.
+
+All four are activation-only, keep donor and recipient checkpoints independently selectable, and
+patch the reverse-aligned suffix through and including its first differing token. Cell color and
+the primary stored outcome remain the clean recipient's correct-implementation probability and
+raw delta. The two MCQ modes may additionally report their matched source letter. The two
+open-response modes must not invent a source-correct letter or reinterpret their free-form answer
+as A–E. Missing grids and missing full-vocabulary lens sidecars remain explicitly unprocessed.
+
+Directional interpretation is contrastive: same-question versus unrelated-question transfer
+within a matched format family tests content specificity, while MCQ versus conversational sources
+test dependence on answer-choice scaffolding. Claims require coherent layer/token patterns across
+functions; a single balanced-panel assignment does not estimate presentation-level variance.
+
+## Conversational A–E contract correction — 2026-07-31, after legacy artifacts and before corrected GPU runs
+
+The user clarified that “Same function question” and “Unrelated question” were intended to change
+the **wording** of a five-choice task, not its output space. Both controls must still present five
+A–E possibilities and must still target exactly one capital letter so their intervention outcomes
+use the same clean-label and source-label probability metrics as the other answer-choice controls.
+
+The already measured `same_conversational` and `unrelated_open_ended` artifacts used free-form
+lambda or natural-language targets. They are preserved as legacy measurements under their original
+IDs; they must not be relabeled, copied, or displayed as evidence for this corrected contract. The
+active replacements use new IDs:
+
+- `same_conversational_choices` keeps the clean function import, exact five implementation
+  contents, option order, and correct letter. It asks which possibility is right in one of five
+  casual phrasings rather than a formal MCQ layout.
+- `unrelated_conversational_choices` keeps the paired unrelated non-coding question and its five
+  possibilities. Its choices are ordered so the correct letter equals the paired clean function
+  probe, and it uses the same five casual presentation roles.
+
+For the neighbor audit, each source crosses 19 questions with all five phrasings, producing 95
+generation-prefix candidates. For causal patching, the pre-existing deterministic round-robin
+assignment selects one phrasing per function, yielding the same 4/4/4/4/3 panel. Every corrected
+record has `source_correct_choice_index`, `source_label_relation="same_as_recipient"`, and an
+assistant metadata target in `A`–`E`. The assistant target remains outside captured candidate
+activation coordinates.
+
+The corrected modes are unprocessed until new artifacts are generated. Missing cells remain
+explicitly unprocessed; legacy free-form grids and candidate neighbors cannot fill them. Their
+directional contrast is now cleaner but narrower: same versus unrelated content under informal
+five-choice wording, with answer-letter identity, choice count, and output metric held fixed.
+
+## Active-source full-vocabulary lens completion — 2026-08-01, before extension GPU runs
+
+The user requested full-vocabulary logit-lens coverage for every source currently exposed by the
+active patch selector. The registered lens set therefore expands from the seven original sources
+to eleven by adding `same_mcq_formats`, `unrelated_mcq_formats`,
+`same_conversational_choices`, and `unrelated_conversational_choices`. The two legacy free-response
+sources remain hidden and are not retroactively treated as active A–E controls.
+
+Existing seven-source checkpoint artifacts are valuable measurements. The runner must validate
+their run identity, checkpoint, function set, source declarations, token labels, top-k contract,
+and vocabulary size, retain every existing clean/source payload, and atomically append only the
+four missing sources. Fresh-model artifacts compute all eleven sources. Partial legacy artifacts
+remain exportable, with absent source lenses shown as unprocessed and no A–E-only fallback. This
+extension changes coverage only; it does not change the final-norm/unembedding readout, top-five
+storage, full-vocabulary softmax denominator, token axes, or interpretation.
+
+## General letter-answer propensity amendment — 2026-08-01, before any such GPU run
+
+The user requested a post-hoc descriptive control for whether finetuning raises a generic tendency
+to emit answer letters, independent of any function question. Every checkpoint of a selected run
+is evaluated on the already frozen, revision-pinned 95-document FineWeb `sample-10BT` corpus. Each
+document enters as raw text with tokenizer-native special tokens, no chat template, truncation at
+128 tokens, and padding only for inference batching.
+
+For every non-special, non-padding target token at position `t >= 1`, logits at position `t-1`
+define the ordinary next-token distribution. The five measured vocabulary rows are the exact standalone
+`A`, `B`, `C`, `D`, and `E` first-response tokens recovered independently from that model's
+registered code- and language-MCQ chat templates. These IDs must be distinct, must agree across
+the two prompt families, and must each decode exactly to its capital letter. The per-position
+quantity is
+
+```text
+p(A | prefix) + p(B | prefix) + p(C | prefix) + p(D | prefix) + p(E | prefix),
+```
+
+where every probability uses the full model output vocabulary as its softmax denominator. There
+is no A–E-only renormalization. The plotted checkpoint value is the token-weighted arithmetic mean
+over every valid position in all 95 documents; documents are not first averaged equally. Per-letter
+means, position-level standard deviation, token count, vocabulary size, runtime, and peak VRAM are
+retained for audit, but the primary line is the summed A–E mass.
+
+This curve follows model, condition, effective batch, LoRA rank, and checkpoint selection. It does
+not vary with the function-probe selector because the FineWeb corpus contains no selected probe.
+Partially processed trajectories contain only measured dots, and lines connect only consecutive
+registered checkpoints; missing values are never interpolated or synthesized.
+
+This analysis is exploratory and cannot satisfy H1–H4. A broad rise would support a generic
+standalone-letter bias as one contributor to the behavioral curve; a flat line alongside OOCR
+would argue against that simple explanation. Either outcome is insufficient by itself to locate
+or identify an MCQ readout circuit.
+
+## Observational representation-alignment extension — 2026-08-01, before any alignment GPU run
+
+The user requested a non-interventional view of the same donor/source and recipient coordinates.
+For every function, reverse-aligned token position, decoder layer, checkpoint pair, prompt-source
+mode, and selected activation boundary, the runner captures the two **unpatched** vectors and
+stores:
+
+```text
+cosine = dot(source, recipient) / (norm(source) * norm(recipient))
+L2     = norm(source - recipient, 2)
+```
+
+Both metrics and both component norms use float32 accumulation. Cosine is clamped only for
+floating-point spill outside its theoretical `[-1, 1]` range. L2 is retained in raw activation
+units; it is not normalized by either vector norm. Source and recipient norms are retained so
+large scale changes cannot be mistaken for directional disagreement.
+
+This extension covers the five existing vector-valued boundaries: `resid_post`,
+`attention_input`, `attention_output`, `mlp_input`, and `mlp_output`. The `token_weights` and
+`block_weights` interventions are deliberately excluded: learned parameter collections are not a
+single token-local activation vector under the same contract. The browser must report those
+combinations as not applicable rather than flattening weights or silently choosing another
+boundary.
+
+Checkpoint and prompt semantics are unchanged. A prompt counterfactual compares its exact source
+prompt vector to the paired clean-recipient prompt vector; independently selectable source and
+recipient checkpoints remain independent. Temporal checkpoint transfer uses the same clean prompt
+on both sides. A clean-prompt, same-checkpoint diagonal is an exact identity (`cosine=1`, `L2=0`)
+and may be shown analytically if it is labeled as analytic rather than measured. All-function
+views average the 19 already-computed scalar cosines or distances cellwise; they do **not** take a
+cosine after averaging hidden vectors.
+
+Alignment artifacts live outside the causal patch namespace and must declare
+`causal_intervention=false`. Missing pairs remain unprocessed with no interpolation or synthetic
+heatmap. The site defaults to the existing activation-patching view and adds explicit cosine and
+L2 choices. Cosine uses its fixed theoretical color range. L2 colors use a disclosed robust scale
+per model and activation boundary (the maximum artifact-level p95 among exported grids), while
+hover always reports the unclipped raw value. Raw L2 colors or magnitudes must not be compared
+across model families or boundaries as though their activation scales were shared.
+
+This extension is post-hoc and observational. High alignment can localize where two computations
+look directionally similar, and L2 can expose scale-sensitive divergence, but neither metric shows
+that the shared direction is causally used. Causal claims continue to require the separate
+activation-patching outcomes.
+
 ## Prior information used for predictions
 
 The earlier repository replicated OLMo-2 7B rule recovery and observed OLMo-3 recovery after 4,096

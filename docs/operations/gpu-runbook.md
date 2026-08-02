@@ -85,6 +85,26 @@ uv run python scripts/run_evaluation.py \
 Evaluation walks the checkpoint index from frozen step 0 through step 1500 and writes an index
 incrementally. Inspect the behavioral replication gate before starting expensive patching.
 
+### 4a. Measure general standalone-letter propensity
+
+This separate resumable evaluator reuses the frozen FineWeb corpus and writes one lightweight,
+validated sidecar per checkpoint. First measure the two endpoints after a fresh user GPU release:
+
+```bash
+uv run python scripts/run_letter_propensity.py \
+  --model olmo3-7b --condition correct \
+  --checkpoint-step 0 --checkpoint-step 1500 \
+  --confirm-gpu-run
+```
+
+Inspect token count, full output-vocabulary size, mean A–E mass, wall time, and peak VRAM. If the
+capacity and ETA are acceptable, omit both `--checkpoint-step` flags to complete every registered
+checkpoint. Existing valid files are skipped atomically, so the command is resumable. Repeat with
+the matching batch/rank selectors only for runs whose curves should appear on those site axes.
+The corpus is raw text with no chat template; the metric excludes padding/special targets and does
+not renormalize over A–E. This command remains subject to the sentinel and explicit
+`--confirm-gpu-run` gates.
+
 ## 5. Run matched controls
 
 Repeat training and evaluation with `wrong_alias` and `wrong_impl`, holding the accepted physical
@@ -172,8 +192,30 @@ After those three artifacts pass, omit the two step filters to fill their 972-ce
 existing `unrelated_question` is already the different-letter MCQ cell; do not duplicate or
 relabel it as same-letter.
 
-Cell-selected top examples are a separate checkpoint-indexed measurement. A step-1500 residual
-smoke covers all six source modes, all 19 functions, and the fixed 95-prompt candidate bank:
+The 2026-07-31 correction adds the four format/content classes as causal prompt sources as well
+as neighbor corpora. Stage all four endpoint corners first:
+
+```bash
+uv run python scripts/run_patching_matrix.py \
+  --model olmo3-7b --condition correct --interface resid_post \
+  --mode same_mcq_formats --mode unrelated_mcq_formats \
+  --mode same_conversational_choices --mode unrelated_conversational_choices \
+  --recipient-step 0 --recipient-step 1500 \
+  --donor-step 0 --donor-step 1500 \
+  --shuffle-seed 20260715 --confirm-gpu-run
+```
+
+Each artifact must contain all 19 functions and the exact round-robin presentation assignment.
+Every paired mode must match presentation and clean answer letter per function. The conversational
+prompts must contain all five registered choices while avoiding the formal MCQ layouts, and every
+artifact must retain `source_correct_choice_index` plus the source-target probability grid. All four
+use the final shared suffix through its first differing token. Validate the 16 endpoint artifacts
+and measured disk rate before expanding to the full checkpoint plane; do not average donor hidden
+states across presentation variants.
+
+Cell-selected top examples are a separate candidate-source × checkpoint measurement. The original
+experiment/audit bank remains the default. A step-1500 residual smoke covers all six source modes,
+all 19 functions, and that fixed 95-prompt bank:
 
 ```bash
 uv run python scripts/run_activation_examples.py \
@@ -185,6 +227,72 @@ Validate that each mode/function has complete source and recipient token × laye
 each cell must contain six distinct candidate prompts in descending finite cosine order, with a
 valid highlighted token index. Record wall time, raw/compact size, RAM, and VRAM before omitting
 `--checkpoint-step` to cover all 18 checkpoints. This audit does not run for weight interfaces.
+
+Four post-hoc format/content banks are pure chat corpora and need no external fetch. Benchmark the
+frozen base, the early acquisition landmark, and the final checkpoint before expanding them:
+
+```bash
+uv run python scripts/run_activation_examples.py \
+  --model olmo3-7b --condition correct --interface resid_post \
+  --candidate-source same_mcq_formats \
+  --candidate-source unrelated_mcq_formats \
+  --candidate-source same_conversational_choices \
+  --candidate-source unrelated_conversational_choices \
+  --checkpoint-step 0 --checkpoint-step 96 --checkpoint-step 1500 \
+  --confirm-gpu-run
+```
+
+Each source must contain exactly 95 unique prompts: 19 paired questions times five formats. For
+all four banks, verify that every same/unrelated pair has the same target letter and the same
+format ID. For the conversational banks, verify that all five A–E possibilities remain in the
+rendered prefix, that formal MCQ layouts are absent, and that the assistant target is excluded from
+captured token coordinates. Record
+per-source wall time, peak RAM/VRAM, and raw/compact bytes; then omit the checkpoint filters only
+if the storage preflight still clears the reserved floor. Missing sources remain unprocessed and
+never borrow neighbors from a completed bank.
+
+The FineWeb option first requires a CPU-only, revision-pinned corpus fetch:
+
+```bash
+CUDA_VISIBLE_DEVICES='' uv run python scripts/fetch_fineweb_activation_examples.py
+```
+
+That command validates an existing corpus rather than overwriting it. Inspect the 95 unique source
+rows and hashes, then measure endpoint sidecars under the explicit candidate source:
+
+```bash
+uv run python scripts/run_activation_examples.py \
+  --model olmo3-7b --condition correct --interface resid_post \
+  --candidate-source fineweb \
+  --checkpoint-step 0 --checkpoint-step 1500 \
+  --confirm-gpu-run
+```
+
+FineWeb documents are raw 128-token prefixes, not chat prompts. Validate provenance, tokenizer
+length, raw/compact size, host RAM, and VRAM before omitting the checkpoint filters. Missing
+FineWeb sidecars stay unprocessed in the site; experiment/audit neighbors are never reused as a
+fallback.
+
+The full-vocabulary residual lens is another checkpoint-indexed sidecar. It covers the clean
+prompt plus all eleven active prompt sources and does not require recomputing any donor × recipient
+grid. Legacy seven-source files are validated and atomically extended with the two varied-format
+and two corrected conversational A–E sources; their clean and existing source sides are retained
+unchanged. A checkpoint is skipped only when all eleven sources are present.
+After a fresh GPU release, benchmark the endpoints plus step 96, the early acquisition landmark:
+
+```bash
+uv run python scripts/run_vocabulary_logit_lens.py \
+  --model olmo3-7b --condition correct \
+  --checkpoint-step 0 --checkpoint-step 96 --checkpoint-step 1500 \
+  --confirm-gpu-run
+```
+
+Validate that every function/source grid has the registered layer count, each top-five list has
+unique descending token IDs, and every stored probability equals a softmax whose denominator uses
+all output-embedding rows. The displayed top-five mass must be at most one and is not expected to
+equal one. Record wall time and raw/compact size before omitting `--checkpoint-step` for all 18
+checkpoints. Existing complete checkpoint files are skipped atomically. Do not show the legacy
+A–E-only lens as a fallback while a full-vocabulary checkpoint remains unprocessed.
 
 Across-time example with multiple earlier donors:
 
@@ -354,6 +462,48 @@ clip per effective update, seeded corpus order, and online checkpoint evaluation
 host RAM, swap/NVMe space, atomic-write headroom, and the sparse full-weight retention plan. Until
 those gates pass, `full_finetune/` is an artifact namespace and website label—not a result.
 
+## 6c. Run representation alignment only after a new GPU release
+
+This observational runner loads model checkpoints and therefore requires the same fresh user
+authorization, `.gpu-runs-enabled` sentinel, live disk/VRAM preflight, and explicit confirmation as
+causal patching. Do not use an implementation-only turn as authorization.
+
+Start with one prompt source and one checkpoint pair. Omitting `--interface` captures all five
+activation boundaries in each unpatched forward while retaining only the selected grid-token
+vectors on CPU:
+
+```bash
+uv run python scripts/run_representation_alignment.py \
+  --model olmo3-7b --condition correct \
+  --mode across_sample \
+  --recipient-step 96 --donor-step 96 \
+  --confirm-gpu-run
+```
+
+Inspect all five atomic artifacts under
+`artifacts/runs/olmo3-7b/correct/seed_20260715/representation_alignment/sequence_end/`.
+Each must contain exactly 19 functions, finite nonzero source/recipient norms, cosine values in
+`[-1, 1]`, nonnegative raw L2 distances, the exact reverse-token axis, and
+`causal_intervention=false`. Compare several cells against an independent float32 calculation
+before expanding the matrix.
+
+Recipient/donor grids use the existing deterministic checkpoint priorities and can resume by
+skipping complete interface artifacts:
+
+```bash
+uv run python scripts/run_representation_alignment.py \
+  --model olmo3-7b --condition correct \
+  --mode across_time --mode later_checkpoint \
+  --recipient-step 0 --recipient-step 96 --recipient-step 1500 \
+  --donor-step 0 --donor-step 96 --donor-step 1500 \
+  --shuffle-seed 20260715 \
+  --confirm-gpu-run
+```
+
+Prompt-counterfactual modes can be repeated in the same command. Same-prompt, same-checkpoint
+temporal diagonals are exact analytic identities and are not stored. Weight interfaces are rejected
+at argument parsing rather than coerced into flattened-parameter metrics.
+
 ## 7. Refresh the site
 
 This is CPU-only and may be run after each artifact batch:
@@ -365,6 +515,11 @@ node --check site/app.js
 
 The exporter writes one content-addressed, lazy-loaded site chunk per measured patch artifact;
 the main payload remains small as temporal coverage grows.
+
+The FineWeb letter-propensity panel is exported directly in the main payload because each
+checkpoint sidecar is tiny. Partial curves show only measured checkpoints and never connect across
+a missing checkpoint. The panel follows model/condition/batch/rank selection but intentionally
+ignores the function-probe selector.
 
 The top banner remains partial while any learning curve is synthetic. Each patch selection has its
 own measured/unprocessed badge.

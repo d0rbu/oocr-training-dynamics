@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="Interactive results explorer for OOCR training dynamics, activation patching, and decoder-block weight patching." />
     <title>OOCR Atlas · training dynamics</title>
-    <link rel="stylesheet" href="styles.css?v=20260722b" />
-    <script src="app.js?v=20260722b" defer></script>
+    <link rel="stylesheet" href="styles.css?v=20260801b" />
+    <script src="app.js?v=20260801b" defer></script>
   </head>
   <body>
     <div class="grain" aria-hidden="true"></div>
@@ -145,6 +145,20 @@
             <div class="curve-wrap">
               <svg id="curve-chart" viewBox="0 0 920 360" role="img" aria-label="OOCR metric over fine-tuning examples"></svg>
             </div>
+            <section class="letter-propensity-panel" aria-labelledby="letter-propensity-title">
+              <div class="letter-propensity-header">
+                <div>
+                  <small>FineWeb control · all token positions</small>
+                  <h4 id="letter-propensity-title">General letter-answer propensity</h4>
+                </div>
+                <div class="letter-propensity-summary">
+                  <span id="letter-propensity-status">unprocessed</span>
+                  <strong id="letter-propensity-value">—</strong>
+                </div>
+              </div>
+              <svg id="letter-propensity-chart" viewBox="0 0 920 220" role="img" aria-label="Probability mass assigned to standalone A through E tokens on FineWeb over fine-tuning examples"></svg>
+              <p id="letter-propensity-note">No measured checkpoint values are available for this run.</p>
+            </section>
             <div class="time-control">
               <div class="time-labels"><span>Frozen base</span><b id="checkpoint-label">step 0</b><span>96k examples</span></div>
               <input id="checkpoint-slider" type="range" min="0" max="10000" value="0" step="1" aria-label="Training checkpoint" />
@@ -163,38 +177,50 @@
         <div class="section-heading inverse">
           <div>
             <p class="eyebrow">02 · intervention</p>
-            <h2>A layer-by-layer movie of the answer</h2>
+            <h2>A layer-by-layer view of the circuit</h2>
           </div>
           <p>
-            Each column intervenes on one decoder layer at a residual, attention, MLP, or learned
-            weight boundary. Rows are prompt tokens reverse-indexed from the true end of the
-            model-rendered prompt, including the selected-token weight intervention. The separate
-            all-token weight control uses one honest global row. Recipient and donor checkpoints
-            move independently, and their ordering determines the transfer direction.
+            Each column is one decoder layer at a residual, attention, MLP, or learned-weight
+            boundary. Choose causal activation patching, or compare the unpatched donor and
+            recipient vectors directly with cosine similarity or raw L2 distance. Rows are prompt
+            tokens reverse-indexed from the true end of the model-rendered prompt. Recipient and
+            donor checkpoints move independently.
           </p>
         </div>
 
         <div class="patch-shell">
           <div class="patch-status-row">
             <span id="patch-status" class="patch-status">checking artifact…</span>
-            <p id="patch-prefetch-status">Preloading every measured patch grid into memory…</p>
+            <p id="patch-prefetch-status">Preloading every measured visualization grid into memory…</p>
           </div>
           <div class="patch-toolbar">
-            <div>
-              <small>Patch source</small>
-              <div id="patch-mode-controls" class="segmented dark">
-                <button data-patch-mode="checkpoint">Checkpoint transfer</button>
-                <button class="active" data-patch-mode="across_sample">Different function name</button>
-                <button data-patch-mode="cyclic_choices">Shift choices +1</button>
-                <button data-patch-mode="deranged_choices">Derange choices</button>
-                <button data-patch-mode="unrelated_question">Unrelated MCQ · different letter</button>
-                <button data-patch-mode="unrelated_question_same_letter">Unrelated MCQ · same letter</button>
-                <button data-patch-mode="letter_context_different">Non-MCQ context · different letter</button>
-                <button data-patch-mode="letter_context_same">Non-MCQ context · same letter</button>
-              </div>
-            </div>
             <label>
-              <small>Patch boundary</small>
+              <small>Source</small>
+              <select id="patch-mode-select">
+                <option value="checkpoint">Checkpoint transfer</option>
+                <option value="across_sample" selected>Different function name</option>
+                <option value="cyclic_choices">Shift choices +1</option>
+                <option value="deranged_choices">Derange choices</option>
+                <option value="unrelated_question">Unrelated MCQ · different letter</option>
+                <option value="unrelated_question_same_letter">Unrelated MCQ · same letter</option>
+                <option value="letter_context_different">Non-MCQ context · different letter</option>
+                <option value="letter_context_same">Non-MCQ context · same letter</option>
+                <option value="same_mcq_formats">Same function MCQs · varied format</option>
+                <option value="unrelated_mcq_formats">Unrelated MCQs · varied format</option>
+                <option value="same_conversational_choices">Same function question · conversational A–E</option>
+                <option value="unrelated_conversational_choices">Unrelated question · conversational A–E</option>
+              </select>
+            </label>
+            <label>
+              <small>Visualization</small>
+              <select id="patch-visualization-select">
+                <option value="activation_patching" selected>Activation patching</option>
+                <option value="cosine_similarity">Cosine similarity</option>
+                <option value="l2_distance">L2 distance</option>
+              </select>
+            </label>
+            <label>
+              <small>Boundary</small>
               <select id="patch-interface-select">
                 <option value="resid_post">Residual stream</option>
                 <option value="attention_input">Attention input</option>
@@ -209,7 +235,7 @@
               <small>Function probe</small>
               <select id="function-select"></select>
             </label>
-            <div>
+            <div id="patch-outcome-control">
               <small>Show in each cell</small>
               <div id="patch-metric-controls" class="segmented dark">
                 <button class="active" data-patch-metric="delta">Δ recipient</button>
@@ -257,19 +283,36 @@
             </div>
           </details>
 
+          <div class="heatmap-frame">
+            <div class="heatmap-axis">decoder layer depth → · exact tokenizer position, stepping backward ↓</div>
+            <div id="patch-heatmap" class="patch-heatmap" role="img" aria-label="Answer-choice activation patching heatmap"></div>
+          </div>
           <section class="activation-neighbor-panel" aria-labelledby="activation-neighbor-title">
             <div class="activation-neighbor-heading">
               <div>
                 <small>Selected-cell readout</small>
                 <h3 id="activation-neighbor-title">Top matching activation examples</h3>
               </div>
-              <p id="activation-neighbor-status">Click a measured heatmap cell to choose its recipient and donor reference vectors.</p>
+              <div class="activation-neighbor-controls">
+                <label for="activation-example-source-select">
+                  <small>candidate corpus</small>
+                  <select id="activation-example-source-select">
+                    <option value="experiment" selected>Experiment / audit set</option>
+                    <option value="same_mcq_formats">Same function MCQs · varied format</option>
+                    <option value="unrelated_mcq_formats">Unrelated MCQs · varied format</option>
+                    <option value="same_conversational_choices">Same function questions · conversational A–E</option>
+                    <option value="unrelated_conversational_choices">Unrelated questions · conversational A–E</option>
+                    <option value="fineweb">FineWeb pretraining sample</option>
+                  </select>
+                </label>
+                <p id="activation-neighbor-status">Click a measured heatmap cell to choose its recipient and donor reference vectors.</p>
+              </div>
             </div>
-            <p class="activation-neighbor-method">
-              Each column searches a fixed 95-prompt audit bank at the selected checkpoint and
-              layer. Prompts are ranked by their single most cosine-similar token; the matching
-              tokenizer position is highlighted. This is a bounded nearest-neighbor audit, not a
-              claim about the model’s global maximum over pretraining data.
+            <p id="activation-neighbor-method" class="activation-neighbor-method">
+              Each column searches a fixed 95-prompt experiment/audit bank at the selected
+              checkpoint and layer. Prompts are ranked by their single most cosine-similar token;
+              the matching tokenizer position is highlighted. This is a bounded nearest-neighbor
+              audit, not a claim about the model’s global maximum.
             </p>
             <div class="activation-neighbor-columns">
               <section>
@@ -282,11 +325,6 @@
               </section>
             </div>
           </section>
-
-          <div class="heatmap-frame">
-            <div class="heatmap-axis">decoder layer depth → · exact tokenizer position, stepping backward ↓</div>
-            <div id="patch-heatmap" class="patch-heatmap" role="img" aria-label="Answer-choice activation patching heatmap"></div>
-          </div>
           <div class="heatmap-footer">
             <div id="patch-legend" class="legend"><span>lower P(correct)</span><i></i><span>higher P(correct)</span></div>
             <p id="patch-explanation">Replacing a late model’s selected activation with an earlier checkpoint asks where learned OOCR information is causally necessary.</p>

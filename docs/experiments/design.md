@@ -150,6 +150,14 @@ requiring literal string equality.
 Training examples and reflection prompts are generated independently and serve different tasks;
 no reflection answer is placed into the I/O corpus.
 
+The post-hoc general-letter control runs each checkpoint over the frozen 95-document FineWeb bank
+as raw text, truncated to 128 tokens without a chat template. At every valid content-token target,
+it sums the full-vocabulary next-token probabilities assigned to the model's exact standalone MCQ
+response tokens `A` through `E`, then takes one token-weighted mean over the corpus. Special and
+padding targets are excluded. This is deliberately not an A–E-renormalized choice probability and
+does not depend on the selected function probe. Checkpoint sidecars also retain the five component
+means, position-level standard deviation, token count, vocabulary size, timing, and peak VRAM.
+
 ## Exploratory causal interfaces
 
 Activation patching transplants a selected hidden vector at one layer and token. The separately
@@ -165,9 +173,11 @@ A separately dated answer-label readout experiment stays activation-only. Its fi
 were same-checkpoint; the 2026-07-22 extension independently varies the counterfactual source and
 clean recipient checkpoints. It patches the final shared suffix from shifted-choice, randomly
 deranged-choice, and unrelated non-coding MCQ sources into clean function probes. The source-
-correct letter is always different from the clean letter. Both labels' causal probabilities and
-a five-way residual logit lens are stored so label transfer can be separated from generic
-disruption. Each side's lens uses that side's own checkpoint readout.
+correct letter is always different from the clean letter. Both labels' causal probabilities are
+stored so label transfer can be separated from generic disruption. Raw grids retain the original
+five-way lens; the current site uses a separate full-vocabulary top-five residual lens whose
+probabilities are normalized over every output token. Each side's lens uses that side's own
+checkpoint readout.
 
 A later 2026-07-22 exploratory extension turns the unrelated control into a 2×2 design. The
 existing unrelated MCQ remains the different-letter cell and gains a same-letter counterpart.
@@ -175,11 +185,48 @@ Two record-copy completions remove the MCQ format entirely while targeting eithe
 letter or a deterministic different letter. These three added modes use the same independently
 selected donor/recipient checkpoints and contribute 972 additional residual grids.
 
-For cell interpretation, a separate activation-neighbor audit searches 95 fixed prompts: 19 each
-from held-out code-choice, held-out language-choice, unrelated MCQ, non-MCQ letter completion, and
-training-I/O categories. Each prompt contributes only its single most cosine-similar token to a
-reference vector, preventing adjacent positions from occupying several top-example slots. The
-audit bank is bounded and disclosed; it is not a search over pretraining data.
+The active format/content causal panel assigns five formats round-robin across the registered 19
+functions, identically within each same-versus-unrelated pair. This preserves one exact source
+sequence per function and avoids off-manifold hidden-state averaging. Both formal-layout and
+conversational donors retain five choices and the clean probe's correct A–E letter. Donor and
+recipient checkpoints remain independent and missing cells remain unprocessed. Earlier free-form
+conversational measurements remain explicitly legacy and are not reused by the corrected modes.
+
+For cell interpretation, a separate activation-neighbor audit has a selectable candidate universe.
+The original **experiment/audit** bank contains 95 fixed prompts: 19 each from held-out
+code-choice, held-out language-choice, unrelated MCQ, non-MCQ letter completion, and training-I/O
+categories. The post-hoc **FineWeb** bank contains 95 provenance-pinned random documents from
+`sample-10BT`, passed as raw 128-token prefixes without a chat template.
+
+A 2026-07-31 post-hoc extension adds four equally sized chat candidate corpora. Each contains the
+same 19 paired question slots under five fixed presentations, for 95 prompts total:
+
+| Candidate source | Question relation | Response format |
+|---|---|---|
+| `same_mcq_formats` | exact clean code-definition probes | five alternative MCQ layouts |
+| `unrelated_mcq_formats` | fixed unrelated non-coding bank | the same five MCQ layouts |
+| `same_conversational_choices` | the same opaque-function questions | five informal conversational phrasings with the same A–E choices |
+| `unrelated_conversational_choices` | the same unrelated bank | five informal conversational phrasings with five A–E choices |
+
+All four active corpora preserve their paired clean probe's correct A–E letter, so answer-letter
+frequency cannot distinguish the same-question and unrelated-question banks. Both same-function
+banks also preserve the exact option contents and option order of the variant-0 patch probe. The
+assistant letter is metadata only because the captured candidate sequence stops at the generation
+prefix.
+
+Each candidate contributes only its single most cosine-similar token to a reference vector,
+preventing adjacent positions from occupying several top-example slots. Every bank is bounded and
+disclosed; none is a global search over all pretraining data.
+
+## Exploratory observational alignment
+
+The same donor/recipient prompt and checkpoint axes also support an explicitly noncausal
+representation comparison. At each reverse token and layer, exact unpatched vectors are compared
+with float32 cosine similarity and raw L2 distance, with both vector norms retained. All five
+activation boundaries are eligible; the two learned-weight interfaces are not. The all-function
+summary averages per-function scalar measurements rather than hidden states. Cosine and L2 answer
+whether two states point in similar directions or occupy nearby coordinates, respectively; they
+do not answer whether either state changes the model's prediction.
 
 ## What is and is not controlled
 

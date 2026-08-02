@@ -25,13 +25,15 @@ contracts + model registry + deterministic corpus
 | Module | Responsibility |
 |---|---|
 | `contracts.py` | Conditions, run keys, training spec, batch/rank/checkpoint/seed constants |
-| `activation_examples.py` | Fixed 95-prompt audit corpus and nearest-example constants |
+| `activation_examples.py` | Size-matched audit/FineWeb/format-control candidate corpora, balanced concrete format-control patch donors, and nearest-example constants |
+| `letter_propensity.py` | Strict run-scoped artifact contract for token-level full-vocabulary A–E propensity |
 | `models.py` | Pinned registry, dimensions, provisional gate, rank/microbatch/state arithmetic |
 | `data.py` | 19 functions, deterministic matched corpora, derangement, reflection records |
 | `semantics.py` | Restricted semantic scoring for generated lambda expressions |
 | `tokenization.py` | Chat-template prefix proof, assistant-only labels, collation |
 | `metrics.py` | Stable softmax, curve AUC, chance adjustment, normalized patch effect |
 | `patching.py` | Prompt corruption, fixed answer-label controls, and validated patch plans/cells |
+| `representation_alignment.py` | Versioned noncausal metric/interface contract and run-scoped artifact paths |
 | `artifacts.py` | Atomic JSON, adapter paths/digests, checkpoint-index invariants |
 | `planning.py` | Baseline/ablation matrices, capacity bounds, and storage estimates |
 | `gpu_guard.py` | Two-part authorization gate |
@@ -43,7 +45,9 @@ contracts + model registry + deterministic corpus
 | `runtime_models.py` | Processor/model loading, revision check, LoRA attachment, block discovery |
 | `runtime_training.py` | Exact batch aggregation, clipping, dense adapters, rolling resume |
 | `runtime_evaluation.py` | Intended/planted choice metrics and semantic free-form generation |
-| `runtime_patching.py` | Activation/LoRA interventions, dual-label outcomes, answer-label lenses, and cell-selected cosine neighbors across prompts or checkpoint time |
+| `runtime_patching.py` | Activation/LoRA interventions, dual-label outcomes, full-vocabulary lens sidecars, and cell-selected cosine neighbors across prompts or checkpoint time |
+| `runtime_representation_alignment.py` | Multi-boundary unpatched activation capture and float32 cosine/L2 grids |
+| `runtime_letter_propensity.py` | Resumable checkpoint evaluation of standalone A–E probability mass on raw FineWeb tokens |
 
 Importing these modules does not launch CUDA. Their script entry points call `gpu_guard` before
 invoking live runtime functions.
@@ -62,10 +66,16 @@ artifacts/
     ├── checkpoints/step_XXXXXX/adapter/
     ├── resume/latest.{json,pt}
     ├── evaluations/{index.json,step_XXXXXX.json}
+    ├── letter_propensity/{index.json,checkpoint_step_XXXXXX.json}
     ├── patching/
         ├── <mode>/recipient_step_XXXXXX/donor_step_XXXXXX.json
         └── <branch_interface>/<mode>/recipient_step_XXXXXX/donor_step_XXXXXX.json
-    └── activation_examples/sequence_end/<interface>/checkpoint_step_XXXXXX.json
+    ├── representation_alignment/sequence_end/<activation_interface>/<mode>/
+    │   └── recipient_step_XXXXXX/donor_step_XXXXXX.json
+    ├── activation_examples/sequence_end/<interface>/
+    │   ├── checkpoint_step_XXXXXX.json
+    │   └── <candidate_source>/checkpoint_step_XXXXXX.json
+    └── vocabulary_logit_lens/sequence_end/checkpoint_step_XXXXXX.json
 ```
 
 Nonbaseline effective-batch and LoRA-rank runs are isolated one level below the seed directory:
@@ -81,6 +91,11 @@ baseline activation-patch manifest. `full_finetune/` is a reserved identity only
 runtime rejects it until a distinct offload backend is validated. The site exporter exposes
 measured batch/rank trajectories in separate acquisition payloads and emits no synthetic
 nonbaseline curve.
+
+Letter-propensity sidecars use the same run isolation, so batch and rank selectors resolve the
+matching measurement namespace. The exporter validates every sidecar and places only compact
+checkpoint summaries in the main site payload. Missing checkpoints have no row; the browser uses
+the stored registered-checkpoint index to avoid drawing a line across gaps.
 
 The first form is the backward-compatible `resid_post` layout. Exploratory branch artifacts use
 an explicit `attention_input`, `attention_output`, `mlp_input`, or `mlp_output` directory. Global
@@ -101,18 +116,44 @@ activation-neighbor artifacts are added while an existing tab remains open. Miss
 token-axis metadata but contain no probabilities or deltas; the site renders reserved unprocessed
 cells instead. Missing behavioral curves remain explicitly synthetic.
 
-Final-suffix answer-label artifacts preserve a second typed matrix for the source-correct label and
-two compact A–E logit-lens tensors (source and recipient). They also preserve the deterministic
-choice permutation or unrelated-question identity needed to audit what the source label means.
-For mixed-checkpoint cells, the source lens is computed with the donor checkpoint's final norm and
-unembedding while the recipient lens and patched downstream forward use the recipient checkpoint.
+Representation alignment has a separate manifest and compact chunk tree under
+`site/data/representation-alignment/`. One loaded chunk contains typed cosine, raw-L2,
+source-norm, and recipient-norm arrays for all 19 functions. It shares prompt/checkpoint controls
+with patching but never reuses a probability chunk as an alignment result. The browser preloads
+both atlases, renders missing alignment grids as unprocessed, uses fixed `[-1, 1]` cosine colors,
+and reads boundary-specific robust L2 scales from the exported manifest. Same-prompt,
+same-checkpoint identity values are labeled analytic rather than measured.
 
-Activation-example raw artifacts are indexed by one checkpoint because both source and recipient
-reference banks can be reused across every donor/recipient pairing involving that checkpoint. The
-exporter splits each raw file into one compact mode/function neighbor chunk plus a shared candidate
-catalog. The manifest resolves source examples from the donor checkpoint and recipient examples
-from the recipient checkpoint. Only prompt IDs, exact tokenizer labels, maximizing token indices,
-and cosine scores reach the browser; hidden vectors are transient.
+Final-suffix answer-label artifacts preserve a second typed matrix for the source-correct label and
+the original compact A–E logit-lens tensors as raw provenance. They also preserve the deterministic
+choice permutation or unrelated-question identity needed to audit what the source label means.
+The browser's current lens comes from a separate checkpoint-indexed sidecar: one clean
+full-sequence grid plus all eleven active prompt-source grids per function, each storing five token IDs and
+absolute probabilities normalized over the complete output vocabulary. For mixed-checkpoint
+cells, the source sidecar uses the donor checkpoint's final norm/unembedding while the clean
+sidecar and patched downstream forward use the recipient checkpoint. The exporter splits each raw
+checkpoint into function chunks; missing sidecars are labeled unprocessed with no A–E fallback.
+
+Format/content patch modes reuse the candidate-corpus prompt builders but select one concrete
+presentation per function in a paired round-robin panel. Every active record retains a
+source-correct A–E label, including the conversational five-choice controls. They otherwise use the
+ordinary prompt-counterfactual artifact namespace and never substitute neighbor scores for causal
+values. The earlier free-form conversational IDs remain readable legacy namespaces but are absent
+from the active selectors.
+The resumable full-vocabulary sidecars validate and retain the seven earlier prompt sources while
+atomically appending the two varied-MCQ-format and two corrected conversational A–E sources.
+Partial legacy files remain exportable, so missing source readouts stay explicitly unprocessed
+rather than blocking already measured sides.
+
+Activation-example raw artifacts are indexed by candidate source and one checkpoint because both
+source and recipient reference banks can be reused across every donor/recipient pairing involving
+that checkpoint. The legacy experiment/audit source keeps its original path; FineWeb and each
+format/content control use an explicit candidate-source child. The exporter splits each raw file
+into one compact mode/function neighbor chunk plus a shared candidate catalog. The manifest
+resolves source examples from the donor checkpoint and recipient examples from the recipient
+checkpoint without crossing candidate sources. Only prompt IDs, corpus metadata/provenance, exact
+tokenizer labels, maximizing token indices, and cosine scores reach the browser; hidden vectors are
+transient.
 
 Measured evaluation exports also include one acquisition curve per registered function alongside
 the all-function aggregate. The aggregate is checked against the arithmetic mean of the 19

@@ -16,13 +16,23 @@ import torch as t
 import torch.nn.functional as functional
 
 from oocr_training_dynamics.activation_examples import (
-    ACTIVATION_EXAMPLE_CORPUS_SEED,
     ACTIVATION_EXAMPLE_METRIC,
     ACTIVATION_EXAMPLE_TOP_K,
+    FINEWEB_ACTIVATION_CORPUS_SEED,
+    FINEWEB_ACTIVATION_MAX_TOKENS,
+    FINEWEB_DATASET_CONFIG,
+    FINEWEB_DATASET_ID,
+    FINEWEB_DATASET_REVISION,
+    FINEWEB_DATASET_SPLIT,
     ActivationExamplePrompt,
-    build_activation_example_prompts,
+    ActivationExampleSource,
+    FineWebActivationDocument,
+    activation_example_corpus_metadata,
+    build_activation_example_source_prompts,
+    build_format_control_patch_prompt,
+    load_fineweb_activation_documents,
 )
-from oocr_training_dynamics.artifacts import adapter_dir, run_dir, write_json
+from oocr_training_dynamics.artifacts import adapter_dir, read_json, run_dir, write_json
 from oocr_training_dynamics.contracts import (
     CHECKPOINT_STEPS,
     PatchingInterface,
@@ -97,6 +107,23 @@ ProbabilityForward = Callable[[t.nn.Module, t.Tensor, t.Tensor, t.Tensor], t.Ten
 ProbabilityGrid = tuple[tuple[float, ...], ...]
 AnswerLabelLens = tuple[tuple[tuple[float, ...], ...], ...]
 ANSWER_LOGIT_LENS_TOP_P = 0.9
+VocabularyTopToken = tuple[int, float]
+VocabularyLogitLens = tuple[tuple[tuple[VocabularyTopToken, ...], ...], ...]
+VOCABULARY_LOGIT_LENS_TOP_K = 5
+VOCABULARY_LOGIT_LENS_BATCH_SIZE = 32
+VOCABULARY_LOGIT_LENS_MODES = (
+    PatchingMode.ACROSS_SAMPLE,
+    PatchingMode.CYCLIC_CHOICES,
+    PatchingMode.DERANGED_CHOICES,
+    PatchingMode.UNRELATED_QUESTION,
+    PatchingMode.UNRELATED_QUESTION_SAME_LETTER,
+    PatchingMode.LETTER_CONTEXT_SAME,
+    PatchingMode.LETTER_CONTEXT_DIFFERENT,
+    PatchingMode.SAME_MCQ_FORMATS,
+    PatchingMode.UNRELATED_MCQ_FORMATS,
+    PatchingMode.SAME_CONVERSATIONAL_CHOICES,
+    PatchingMode.UNRELATED_CONVERSATIONAL_CHOICES,
+)
 
 
 @dataclass(frozen=True)
@@ -113,7 +140,7 @@ class PromptCounterfactualSpec:
 
     source_messages: tuple[ChatMessage, ...]
     source_function_id: str
-    source_correct_choice_index: int
+    source_correct_choice_index: int | None
     source_choice_function_ids: tuple[str, ...] | None
     source_choice_texts: tuple[str, ...] | None
     source_question_id: str | None
@@ -154,6 +181,7 @@ class ActivationExampleView:
     token_ids: tuple[int, ...]
     token_labels: tuple[str, ...]
     activations: tuple[t.Tensor, ...]
+    provenance: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -302,6 +330,31 @@ def _prompt_counterfactual_spec(
             source_context_id=pair.context_id,
             source_context=pair.context,
         )
+    if mode in {
+        PatchingMode.SAME_MCQ_FORMATS,
+        PatchingMode.UNRELATED_MCQ_FORMATS,
+        PatchingMode.SAME_CONVERSATIONAL,
+        PatchingMode.UNRELATED_OPEN_ENDED,
+        PatchingMode.SAME_CONVERSATIONAL_CHOICES,
+        PatchingMode.UNRELATED_CONVERSATIONAL_CHOICES,
+    }:
+        pair = build_format_control_patch_prompt(
+            record,
+            ActivationExampleSource(mode.value),
+        )
+        return PromptCounterfactualSpec(
+            source_messages=pair.source_messages,
+            source_function_id=pair.source_function_id,
+            source_correct_choice_index=pair.source_correct_choice_index,
+            source_choice_function_ids=pair.source_choice_function_ids,
+            source_choice_texts=pair.source_choice_texts,
+            source_question_id=pair.source_question_id,
+            source_question=pair.source_question,
+            patch_direction=f"{mode.value}_source_into_clean_recipient",
+            stops_at_first_difference=True,
+            source_format=pair.source_format,
+            source_label_relation=pair.source_label_relation,
+        )
     raise ValueError(f"{mode.value} is not a prompt-counterfactual patching mode")
 
 
@@ -346,11 +399,77 @@ def _token_label(tokenizer: Any, token_id: int) -> str:
     )
     if not isinstance(value, str):
         raise TypeError("token decoder must return text")
+    return _visible_token_label(tokenizer, token_id, value)
+
+
+def _visible_token_label(tokenizer: Any, token_id: int, value: str) -> str:
+    """Apply the one-token display contract to an already decoded value."""
+
     visible = value.replace("\n", "↵").replace("\t", "⇥").replace(" ", "␠")
     if visible:
         return visible
     fallback = tokenizer.convert_ids_to_tokens(token_id)
     return str(fallback)
+
+
+def _vocabulary_token_label(tokenizer: Any, token_id: int) -> str:
+    """Decode a model-output row, including explicitly labeled padded rows."""
+
+    tokenizer_size = len(tokenizer)
+    if not isinstance(tokenizer_size, int) or tokenizer_size <= 0:
+        raise RuntimeError("tokenizer must expose a positive vocabulary size")
+    if token_id < 0:
+        raise ValueError("vocabulary token ID must be non-negative")
+    if token_id >= tokenizer_size:
+        return f"<unused-output-row:{token_id}>"
+    label = _token_label(tokenizer, token_id)
+    return f"<token:{token_id}>" if label == "None" else label
+
+
+def _vocabulary_token_labels(
+    tokenizer: Any,
+    token_ids: tuple[int, ...],
+) -> dict[int, str]:
+    """Decode distinct output rows in one tokenizer batch with scalar-path parity."""
+
+    if len(set(token_ids)) != len(token_ids):
+        raise ValueError("vocabulary token-label batch must contain distinct IDs")
+    if not token_ids:
+        return {}
+    tokenizer_size = len(tokenizer)
+    if not isinstance(tokenizer_size, int) or tokenizer_size <= 0:
+        raise RuntimeError("tokenizer must expose a positive vocabulary size")
+    if any(token_id < 0 for token_id in token_ids):
+        raise ValueError("vocabulary token ID must be non-negative")
+    valid_ids = tuple(token_id for token_id in token_ids if token_id < tokenizer_size)
+    decoded = tokenizer.batch_decode(
+        [[token_id] for token_id in valid_ids],
+        skip_special_tokens=False,
+        clean_up_tokenization_spaces=False,
+    )
+    if (
+        not isinstance(decoded, list)
+        or len(decoded) != len(valid_ids)
+        or not all(isinstance(value, str) for value in decoded)
+    ):
+        raise TypeError("batched token decoder must return one string per token ID")
+    decoded_values = cast(list[str], decoded)
+    labels = {
+        token_id: (
+            f"<token:{token_id}>"
+            if (label := _visible_token_label(tokenizer, token_id, value)) == "None"
+            else label
+        )
+        for token_id, value in zip(valid_ids, decoded_values, strict=True)
+    }
+    labels.update(
+        {
+            token_id: f"<unused-output-row:{token_id}>"
+            for token_id in token_ids
+            if token_id >= tokenizer_size
+        }
+    )
+    return labels
 
 
 def _capture_activation_example(
@@ -390,6 +509,71 @@ def _capture_activation_example(
         token_ids=token_ids,
         token_labels=tuple(_token_label(tokenizer, token_id) for token_id in token_ids),
         activations=activations,
+    )
+
+
+def _capture_fineweb_activation_example(
+    model: t.nn.Module,
+    targets: tuple[PatchTarget, ...],
+    processor: Any,
+    document: FineWebActivationDocument,
+    candidate_ids: t.Tensor,
+) -> ActivationExampleView:
+    """Capture one raw FineWeb prefix without introducing a chat-template wrapper."""
+
+    tokenizer = tokenizer_for(processor)
+    encoded = tokenizer(
+        document.text,
+        add_special_tokens=True,
+        truncation=True,
+        max_length=FINEWEB_ACTIVATION_MAX_TOKENS,
+        return_tensors="pt",
+    )
+    input_ids = encoded.get("input_ids")
+    attention_mask = encoded.get("attention_mask")
+    if (
+        not isinstance(input_ids, t.Tensor)
+        or input_ids.ndim != 2
+        or input_ids.shape[0] != 1
+        or input_ids.shape[1] == 0
+    ):
+        raise TypeError("FineWeb activation document must encode to one non-empty token row")
+    if attention_mask is None:
+        attention_mask = t.ones_like(input_ids)
+    if (
+        not isinstance(attention_mask, t.Tensor)
+        or attention_mask.shape != input_ids.shape
+        or not bool(t.all(attention_mask == 1))
+    ):
+        raise ValueError("FineWeb activation document requires one unpadded token prefix")
+    input_ids = input_ids.to("cuda")
+    attention_mask = attention_mask.to("cuda")
+    token_ids = tuple(int(value) for value in input_ids[0].tolist())
+    rendered = tokenizer.decode(
+        token_ids,
+        skip_special_tokens=False,
+        clean_up_tokenization_spaces=False,
+    )
+    if not isinstance(rendered, str):
+        raise TypeError("FineWeb token decoder must return text")
+    activations, _probabilities = _capture(
+        model,
+        targets,
+        input_ids,
+        attention_mask,
+        candidate_ids,
+    )
+    return ActivationExampleView(
+        example_id=document.example_id,
+        category="fineweb_pretraining",
+        target="raw next-token text",
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+        rendered_prompt=rendered,
+        token_ids=token_ids,
+        token_labels=tuple(_token_label(tokenizer, token_id) for token_id in token_ids),
+        activations=activations,
+        provenance=document.provenance,
     )
 
 
@@ -796,6 +980,57 @@ def _final_norm(model: t.nn.Module) -> t.nn.Module:
     raise RuntimeError("logit lens requires a resolvable decoder final normalization")
 
 
+def _logit_lens_readout(
+    model: t.nn.Module,
+) -> tuple[t.nn.Module, t.nn.Parameter, t.Tensor, t.Tensor | None]:
+    """Resolve the exact final-normalization and output-embedding readout."""
+
+    norm = _final_norm(model)
+    norm_parameter = next(norm.parameters(), None)
+    if norm_parameter is None:
+        raise RuntimeError("decoder final normalization must expose its dtype and device")
+    output_embedding_resolver = getattr(model, "get_output_embeddings", None)
+    if not callable(output_embedding_resolver):
+        raise RuntimeError("logit lens requires output embeddings")
+    output_embeddings = output_embedding_resolver()
+    weight = getattr(output_embeddings, "weight", None)
+    if not isinstance(weight, t.Tensor) or weight.ndim != 2:
+        raise RuntimeError("logit lens requires a matrix output embedding")
+    bias = getattr(output_embeddings, "bias", None)
+    if bias is not None and (
+        not isinstance(bias, t.Tensor) or bias.ndim != 1 or bias.shape[0] != weight.shape[0]
+    ):
+        raise RuntimeError("logit lens output-embedding bias must match the vocabulary")
+    return norm, norm_parameter, weight, bias
+
+
+def _flatten_logit_lens_residuals(
+    residual_activations: tuple[t.Tensor, ...],
+    token_indices: tuple[int, ...],
+) -> tuple[t.Tensor, int]:
+    if not residual_activations or not token_indices:
+        raise ValueError("logit lens requires layers and token positions")
+    if any(activation.ndim != 2 for activation in residual_activations):
+        raise RuntimeError("residual logit-lens activations must have [sequence, hidden] shape")
+    sequence_lengths = {activation.shape[0] for activation in residual_activations}
+    hidden_sizes = {activation.shape[1] for activation in residual_activations}
+    if len(sequence_lengths) != 1 or len(hidden_sizes) != 1:
+        raise RuntimeError("residual logit-lens activations must share [sequence, hidden] shape")
+    sequence_length = next(iter(sequence_lengths))
+    if any(index < 0 or index >= sequence_length for index in token_indices):
+        raise ValueError("logit-lens token index lies outside a captured residual sequence")
+    layer_count = len(residual_activations)
+    flat = t.stack(
+        [
+            residual_activations[layer][token_index]
+            for token_index in token_indices
+            for layer in range(layer_count)
+        ],
+        dim=0,
+    )
+    return flat, layer_count
+
+
 def _answer_label_logit_lens(
     model: t.nn.Module,
     residual_activations: tuple[t.Tensor, ...],
@@ -804,37 +1039,14 @@ def _answer_label_logit_lens(
 ) -> AnswerLabelLens:
     """Apply final norm and selected A-E unembedding rows to residual states."""
 
-    if not residual_activations or not token_indices:
-        raise ValueError("answer-label logit lens requires layers and token positions")
-    sequence_lengths = {activation.shape[0] for activation in residual_activations}
-    hidden_sizes = {activation.shape[1] for activation in residual_activations}
-    if len(sequence_lengths) != 1 or len(hidden_sizes) != 1:
-        raise RuntimeError("residual logit-lens activations must share [sequence, hidden] shape")
-    sequence_length = next(iter(sequence_lengths))
-    if any(index < 0 or index >= sequence_length for index in token_indices):
-        raise ValueError("logit-lens token index lies outside a captured residual sequence")
-    flat = t.stack(
-        [
-            residual_activations[layer][token_index]
-            for token_index in token_indices
-            for layer in range(len(residual_activations))
-        ],
-        dim=0,
-    )
-    norm = _final_norm(model)
-    norm_parameter = next(norm.parameters(), None)
-    if norm_parameter is None:
-        raise RuntimeError("decoder final normalization must expose its dtype and device")
-    output_embedding_resolver = getattr(model, "get_output_embeddings", None)
-    if not callable(output_embedding_resolver):
-        raise RuntimeError("answer-label logit lens requires output embeddings")
-    output_embeddings = output_embedding_resolver()
-    weight = getattr(output_embeddings, "weight", None)
-    if not isinstance(weight, t.Tensor) or weight.ndim != 2:
-        raise RuntimeError("answer-label logit lens requires a matrix output embedding")
+    flat, layer_count = _flatten_logit_lens_residuals(residual_activations, token_indices)
+    norm, norm_parameter, weight, bias = _logit_lens_readout(model)
+    if candidate_ids.ndim != 1 or candidate_ids.numel() != 5:
+        raise ValueError("answer-label logit lens requires exactly five candidate token IDs")
+    if int(candidate_ids.min().item()) < 0 or int(candidate_ids.max().item()) >= weight.shape[0]:
+        raise ValueError("answer-label token ID lies outside the output vocabulary")
     selected_ids = candidate_ids.to(device=weight.device)
     selected_weight = weight.index_select(0, selected_ids)
-    bias = getattr(output_embeddings, "bias", None)
     selected_bias = bias.index_select(0, selected_ids) if isinstance(bias, t.Tensor) else None
     with t.inference_mode():
         normalized = norm(flat.to(device=norm_parameter.device, dtype=norm_parameter.dtype))
@@ -844,12 +1056,73 @@ def _answer_label_logit_lens(
             selected_bias,
         )
         probabilities = t.softmax(logits.to(dtype=t.float32), dim=-1).cpu()
-    layer_count = len(residual_activations)
     return tuple(
         tuple(
             tuple(float(value) for value in probabilities[token * layer_count + layer].tolist())
             for layer in range(layer_count)
         )
+        for token in range(len(token_indices))
+    )
+
+
+def _full_vocabulary_logit_lens(
+    model: t.nn.Module,
+    residual_activations: tuple[t.Tensor, ...],
+    token_indices: tuple[int, ...],
+    *,
+    top_k: int = VOCABULARY_LOGIT_LENS_TOP_K,
+    batch_size: int = VOCABULARY_LOGIT_LENS_BATCH_SIZE,
+) -> VocabularyLogitLens:
+    """Return sparse top-k tokens with probabilities normalized over the full vocabulary."""
+
+    if top_k <= 0 or batch_size <= 0:
+        raise ValueError("full-vocabulary logit-lens top-k and batch size must be positive")
+    flat, layer_count = _flatten_logit_lens_residuals(residual_activations, token_indices)
+    norm, norm_parameter, weight, bias = _logit_lens_readout(model)
+    vocabulary_size = int(weight.shape[0])
+    if top_k > vocabulary_size:
+        raise ValueError("full-vocabulary logit-lens top-k exceeds the output vocabulary")
+    if flat.shape[1] != weight.shape[1]:
+        raise RuntimeError("residual width does not match the output embedding width")
+
+    sparse_rows: list[tuple[VocabularyTopToken, ...]] = []
+    with t.inference_mode():
+        for start in range(0, flat.shape[0], batch_size):
+            batch = flat[start : start + batch_size]
+            normalized = norm(batch.to(device=norm_parameter.device, dtype=norm_parameter.dtype))
+            logits = functional.linear(
+                normalized.to(device=weight.device, dtype=weight.dtype),
+                weight,
+                bias,
+            ).to(dtype=t.float32)
+            log_normalizer = t.logsumexp(logits, dim=-1, keepdim=True)
+            top_logits, top_ids = logits.topk(top_k, dim=-1, largest=True, sorted=True)
+            top_probabilities = (top_logits - log_normalizer).exp()
+            for ids, probabilities in zip(
+                top_ids.detach().cpu().tolist(),
+                top_probabilities.detach().cpu().tolist(),
+                strict=True,
+            ):
+                row = tuple(
+                    (int(token_id), float(probability))
+                    for token_id, probability in zip(ids, probabilities, strict=True)
+                )
+                if any(
+                    not math.isfinite(probability) or not 0.0 <= probability <= 1.0
+                    for _token_id, probability in row
+                ):
+                    raise RuntimeError("full-vocabulary logit lens produced an invalid probability")
+                if any(row[index][1] < row[index + 1][1] for index in range(len(row) - 1)):
+                    raise RuntimeError("full-vocabulary logit-lens top-k is not descending")
+                if sum(probability for _token_id, probability in row) > 1.00001:
+                    raise RuntimeError("full-vocabulary logit-lens displayed mass exceeds one")
+                sparse_rows.append(row)
+            del logits, log_normalizer, top_logits, top_ids, top_probabilities
+    expected_rows = len(token_indices) * layer_count
+    if len(sparse_rows) != expected_rows:
+        raise RuntimeError("full-vocabulary logit lens produced an incomplete grid")
+    return tuple(
+        tuple(sparse_rows[token * layer_count + layer] for layer in range(layer_count))
         for token in range(len(token_indices))
     )
 
@@ -1549,16 +1822,173 @@ def _activation_example_output_path(
     run: RunKey,
     interface: PatchingInterface,
     checkpoint_step: int,
+    candidate_source: ActivationExampleSource = ActivationExampleSource.EXPERIMENT,
 ) -> Path:
     if interface.patches_weights:
         raise ValueError("weight patches do not expose one activation reference vector")
+    base = run_dir(root, run) / "activation_examples" / "sequence_end" / interface.value
+    if candidate_source is not ActivationExampleSource.EXPERIMENT:
+        base /= candidate_source.value
+    return base / f"checkpoint_{checkpoint_label(checkpoint_step)}.json"
+
+
+def _vocabulary_logit_lens_output_path(
+    root: Path,
+    run: RunKey,
+    checkpoint_step: int,
+) -> Path:
     return (
         run_dir(root, run)
-        / "activation_examples"
+        / "vocabulary_logit_lens"
         / "sequence_end"
-        / interface.value
         / f"checkpoint_{checkpoint_label(checkpoint_step)}.json"
     )
+
+
+def _vocabulary_logit_lens_resume_artifact(
+    path: Path,
+    run: RunKey,
+    checkpoint_step: int,
+    expected_modes: tuple[PatchingMode, ...],
+) -> tuple[dict[str, object] | None, tuple[PatchingMode, ...]]:
+    """Validate a complete/legacy sidecar and return only its missing active sources."""
+
+    if not path.is_file():
+        return None, expected_modes
+    raw = read_json(path)
+    if not isinstance(raw, dict):
+        raise TypeError(f"vocabulary logit-lens artifact must be an object: {path}")
+    artifact = cast(dict[str, object], raw)
+    if artifact.get("checkpoint_step") != checkpoint_step:
+        raise ValueError(f"vocabulary logit-lens checkpoint mismatch: {path}")
+    raw_run = artifact.get("run")
+    if not isinstance(raw_run, dict):
+        raise TypeError(f"vocabulary logit-lens run metadata must be an object: {path}")
+    expected_run: dict[str, object] = {
+        "model": run.model,
+        "condition": run.condition.value,
+        "seed": run.seed,
+        "effective_batch_size": run.effective_batch_size,
+        "lora_rank": run.lora_rank,
+    }
+    for key, expected in expected_run.items():
+        if raw_run.get(key) != expected:
+            raise ValueError(f"vocabulary logit-lens run.{key} mismatch: {path}")
+
+    raw_modes = artifact.get("modes")
+    if (
+        not isinstance(raw_modes, list)
+        or not raw_modes
+        or any(not isinstance(value, str) for value in raw_modes)
+    ):
+        raise TypeError(f"vocabulary logit-lens modes must be a non-empty string array: {path}")
+    try:
+        observed_modes = tuple(PatchingMode(cast(str, value)) for value in raw_modes)
+    except ValueError as error:
+        raise ValueError(f"vocabulary logit-lens artifact has an unknown mode: {path}") from error
+    observed_set = set(observed_modes)
+    if len(observed_set) != len(observed_modes) or observed_modes != tuple(
+        mode for mode in expected_modes if mode in observed_set
+    ):
+        raise ValueError(
+            f"vocabulary logit-lens modes must be an ordered subset of active sources: {path}"
+        )
+
+    token_labels = artifact.get("token_labels")
+    if not isinstance(token_labels, dict) or any(
+        not isinstance(key, str) or not isinstance(value, str) or not value
+        for key, value in token_labels.items()
+    ):
+        raise TypeError(f"vocabulary logit-lens token labels are malformed: {path}")
+    lens = artifact.get("lens")
+    if not isinstance(lens, dict) or lens.get("kind") != "full_vocabulary_top_k":
+        raise ValueError(f"vocabulary logit-lens metadata is malformed: {path}")
+    raw_records = artifact.get("records")
+    if not isinstance(raw_records, list):
+        raise TypeError(f"vocabulary logit-lens records must be an array: {path}")
+    seen_functions: set[str] = set()
+    for index, raw_record in enumerate(raw_records):
+        if not isinstance(raw_record, dict):
+            raise TypeError(f"vocabulary logit-lens record {index} must be an object: {path}")
+        function_id = raw_record.get("function_id")
+        clean = raw_record.get("clean")
+        sources = raw_record.get("sources")
+        if (
+            not isinstance(function_id, str)
+            or function_id in seen_functions
+            or not isinstance(clean, dict)
+            or not isinstance(sources, dict)
+            or set(sources) != {mode.value for mode in observed_modes}
+            or any(not isinstance(value, dict) for value in sources.values())
+        ):
+            raise ValueError(f"vocabulary logit-lens record {index} is inconsistent: {path}")
+        seen_functions.add(function_id)
+    if seen_functions != set(FUNCTION_BY_ID):
+        raise ValueError(
+            f"vocabulary logit-lens artifact lacks the registered function set: {path}"
+        )
+    missing = tuple(mode for mode in expected_modes if mode not in observed_set)
+    return artifact, missing
+
+
+def _vocabulary_logit_lens_side_payload(
+    view: PromptPatchView,
+    token_indices: tuple[int, ...],
+    lens: VocabularyLogitLens,
+    tokenizer: Any,
+    token_labels: dict[str, str],
+) -> dict[str, object]:
+    """Serialize one reverse token axis without repeating decoded top-token strings."""
+
+    if not token_indices or token_indices[0] != view.anchor_index:
+        raise ValueError("vocabulary logit-lens axis must start at the sequence-end anchor")
+    expected_indices = tuple(range(token_indices[0], token_indices[-1] - 1, -1))
+    if token_indices != expected_indices:
+        raise ValueError("vocabulary logit-lens axis must be reverse-contiguous")
+    if len(lens) != len(token_indices) or not lens:
+        raise ValueError("vocabulary logit-lens grid must match its token axis")
+    layer_count = len(lens[0])
+    if layer_count <= 0 or any(len(token_rows) != layer_count for token_rows in lens):
+        raise ValueError("vocabulary logit-lens grid has an inconsistent layer axis")
+    missing_ids = tuple(
+        dict.fromkeys(
+            token_id
+            for token_rows in lens
+            for top_tokens in token_rows
+            for token_id, _probability in top_tokens
+            if str(token_id) not in token_labels
+        )
+    )
+    token_labels.update(
+        {
+            str(token_id): label
+            for token_id, label in _vocabulary_token_labels(tokenizer, missing_ids).items()
+        }
+    )
+    for token_rows in lens:
+        for top_tokens in token_rows:
+            if len(top_tokens) != VOCABULARY_LOGIT_LENS_TOP_K:
+                raise ValueError("vocabulary logit-lens grid has an inconsistent top-k axis")
+            seen: set[int] = set()
+            previous = math.inf
+            for token_id, probability in top_tokens:
+                if token_id in seen:
+                    raise ValueError("vocabulary logit-lens top-k repeats a token ID")
+                if not math.isfinite(probability) or not 0.0 <= probability <= 1.0:
+                    raise ValueError("vocabulary logit-lens top-k contains an invalid probability")
+                if probability > previous + 1e-8:
+                    raise ValueError("vocabulary logit-lens top-k must be descending")
+                key = str(token_id)
+                if key not in token_labels:
+                    raise RuntimeError("vocabulary token-label batch omitted a top-token ID")
+                seen.add(token_id)
+                previous = probability
+    return {
+        "position_count": len(token_indices),
+        "token_indices": token_indices,
+        "token_ids": tuple(view.token_ids[index] for index in token_indices),
+        "top_tokens": lens,
+    }
 
 
 def _serialize_activation_examples(
@@ -1795,7 +2225,7 @@ def _serialize_grid(
         raise ValueError("source-target and recipient-target grids must share token rows")
     source_target_recipient = (
         None
-        if counterfactual is None
+        if counterfactual is None or counterfactual.source_correct_choice_index is None
         else float(recipient[counterfactual.source_correct_choice_index].item())
     )
     for token_index, (position, row) in enumerate(zip(positions, grid, strict=True)):
@@ -1856,7 +2286,8 @@ def _serialize_grid(
         "cells": cells,
     }
     if counterfactual is not None:
-        serialized["source_correct_choice_index"] = counterfactual.source_correct_choice_index
+        if counterfactual.source_correct_choice_index is not None:
+            serialized["source_correct_choice_index"] = counterfactual.source_correct_choice_index
         serialized["recipient_correct_choice_index"] = correct_choice
         if counterfactual.source_choice_function_ids is not None:
             serialized["source_choice_function_ids"] = counterfactual.source_choice_function_ids
@@ -2163,7 +2594,11 @@ def _patch_record(
     correct_choice = record.choice_function_ids.index(record.function_id)
     source_target_index = (
         counterfactual.source_correct_choice_index
-        if counterfactual is not None and mode is not PatchingMode.ACROSS_SAMPLE
+        if (
+            counterfactual is not None
+            and mode is not PatchingMode.ACROSS_SAMPLE
+            and counterfactual.source_correct_choice_index is not None
+        )
         else None
     )
     grid, source_target_grid = _patch_grid(
@@ -2884,6 +3319,7 @@ def run_activation_example_atlas(
     modes: tuple[PatchingMode, ...],
     interface: PatchingInterface,
     *,
+    candidate_source: ActivationExampleSource = ActivationExampleSource.EXPERIMENT,
     allow_provisional_model: bool = False,
 ) -> None:
     """Measure cell-addressable activation neighbors at each selected checkpoint."""
@@ -2906,13 +3342,19 @@ def run_activation_example_atlas(
     pending = tuple(
         step
         for step in checkpoint_steps
-        if not _activation_example_output_path(root, run, interface, step).is_file()
+        if not _activation_example_output_path(
+            root,
+            run,
+            interface,
+            step,
+            candidate_source,
+        ).is_file()
     )
     skipped = len(checkpoint_steps) - len(pending)
     if skipped:
         print(
             f"[activation-examples] {run.model}/{run.condition.value} {interface.value} "
-            f"skipped {skipped} existing checkpoint artifact(s)",
+            f"{candidate_source.value} skipped {skipped} existing checkpoint artifact(s)",
             flush=True,
         )
     if not pending:
@@ -2921,7 +3363,16 @@ def run_activation_example_atlas(
     spec = get_model_spec(run.model, allow_provisional=allow_provisional_model)
     processor = load_processor(spec)
     records = _selected_records(run.seed)
-    candidate_prompts = build_activation_example_prompts(ACTIVATION_EXAMPLE_CORPUS_SEED)
+    candidate_prompts = (
+        ()
+        if candidate_source is ActivationExampleSource.FINEWEB
+        else build_activation_example_source_prompts(candidate_source)
+    )
+    fineweb_documents = (
+        load_fineweb_activation_documents(root)
+        if candidate_source is ActivationExampleSource.FINEWEB
+        else ()
+    )
     for checkpoint_step in pending:
         model = _load_checkpoint_model(root, run, spec, checkpoint_step)
         blocks = resolve_decoder_blocks(model, spec)
@@ -2930,16 +3381,49 @@ def run_activation_example_atlas(
         reference_banks: tuple[ActivationReferenceBank, ...] = ()
         try:
             candidate_ids = _candidate_ids(processor, records[0])
-            candidates = tuple(
-                _capture_activation_example(
-                    model,
-                    targets,
-                    processor,
-                    prompt,
-                    candidate_ids,
+            if candidate_source is not ActivationExampleSource.FINEWEB:
+                candidates = tuple(
+                    _capture_activation_example(
+                        model,
+                        targets,
+                        processor,
+                        prompt,
+                        candidate_ids,
+                    )
+                    for prompt in candidate_prompts
                 )
-                for prompt in candidate_prompts
-            )
+                candidate_corpus = activation_example_corpus_metadata(
+                    candidate_source,
+                    candidate_prompts,
+                )
+            else:
+                candidates = tuple(
+                    _capture_fineweb_activation_example(
+                        model,
+                        targets,
+                        processor,
+                        document,
+                        candidate_ids,
+                    )
+                    for document in fineweb_documents
+                )
+                candidate_corpus = {
+                    "seed": FINEWEB_ACTIVATION_CORPUS_SEED,
+                    "prompt_count": len(candidates),
+                    "categories": ["fineweb_pretraining"],
+                    "description": (
+                        "Deterministic random documents from the FineWeb sample-10BT "
+                        "pretraining corpus"
+                    ),
+                    "input_format": (
+                        "raw document prefix with tokenizer-native special tokens; no chat template"
+                    ),
+                    "max_tokens_per_document": FINEWEB_ACTIVATION_MAX_TOKENS,
+                    "dataset": FINEWEB_DATASET_ID,
+                    "revision": FINEWEB_DATASET_REVISION,
+                    "config": FINEWEB_DATASET_CONFIG,
+                    "split": FINEWEB_DATASET_SPLIT,
+                }
             reference_banks = _capture_activation_reference_banks(
                 model,
                 targets,
@@ -2952,7 +3436,13 @@ def run_activation_example_atlas(
                 reference_banks,
                 layer_count=spec.layer_count,
             )
-            output = _activation_example_output_path(root, run, interface, checkpoint_step)
+            output = _activation_example_output_path(
+                root,
+                run,
+                interface,
+                checkpoint_step,
+                candidate_source,
+            )
             write_json(
                 output,
                 {
@@ -2960,21 +3450,14 @@ def run_activation_example_atlas(
                     "run": run,
                     "interface": interface.value,
                     "checkpoint_step": checkpoint_step,
+                    "candidate_source": candidate_source.value,
                     "similarity": {
                         "metric": ACTIVATION_EXAMPLE_METRIC,
                         "ranking_unit": "distinct prompt using its maximum token similarity",
                         "top_k": ACTIVATION_EXAMPLE_TOP_K,
                         "reference": "selected source or recipient vector at one token and layer",
                     },
-                    "candidate_corpus": {
-                        "seed": ACTIVATION_EXAMPLE_CORPUS_SEED,
-                        "prompt_count": len(candidates),
-                        "categories": sorted({candidate.category for candidate in candidates}),
-                        "description": (
-                            "Fixed audit bank: held-out code and language choices, unrelated "
-                            "MCQs, non-MCQ letter completions, and Functions training I/O prompts"
-                        ),
-                    },
+                    "candidate_corpus": candidate_corpus,
                     "candidates": [
                         {
                             "example_id": candidate.example_id,
@@ -2983,6 +3466,11 @@ def run_activation_example_atlas(
                             "rendered_prompt": candidate.rendered_prompt,
                             "token_ids": candidate.token_ids,
                             "token_labels": candidate.token_labels,
+                            **(
+                                {"provenance": candidate.provenance}
+                                if candidate.provenance is not None
+                                else {}
+                            ),
                         }
                         for candidate in candidates
                     ],
@@ -2991,12 +3479,240 @@ def run_activation_example_atlas(
             )
             print(
                 f"[activation-examples] {run.model}/{run.condition.value} "
-                f"{interface.value} step={checkpoint_step} -> {output}",
+                f"{interface.value}/{candidate_source.value} "
+                f"step={checkpoint_step} -> {output}",
                 flush=True,
             )
         finally:
             _release_model(model)
             del candidates, reference_banks
+            gc.collect()
+
+
+def run_vocabulary_logit_lens_atlas(
+    root: Path,
+    run: RunKey,
+    checkpoint_steps: tuple[int, ...],
+    modes: tuple[PatchingMode, ...],
+    *,
+    allow_provisional_model: bool = False,
+) -> None:
+    """Measure reusable full-vocabulary residual lenses once per checkpoint."""
+
+    if not t.cuda.is_available():
+        raise RuntimeError("full-vocabulary logit-lens analysis requires CUDA")
+    if (
+        not checkpoint_steps
+        or len(set(checkpoint_steps)) != len(checkpoint_steps)
+        or any(step not in CHECKPOINT_STEPS for step in checkpoint_steps)
+    ):
+        raise ValueError("vocabulary logit-lens checkpoints must be unique and registered")
+    if modes != VOCABULARY_LOGIT_LENS_MODES:
+        raise ValueError("vocabulary logit-lens artifacts require every prompt source in order")
+
+    resume_states = {
+        step: _vocabulary_logit_lens_resume_artifact(
+            _vocabulary_logit_lens_output_path(root, run, step),
+            run,
+            step,
+            modes,
+        )
+        for step in checkpoint_steps
+    }
+    pending = tuple(step for step in checkpoint_steps if resume_states[step][1])
+    skipped = len(checkpoint_steps) - len(pending)
+    if skipped:
+        print(
+            f"[vocabulary-logit-lens] {run.model}/{run.condition.value} "
+            f"skipped {skipped} existing checkpoint artifact(s)",
+            flush=True,
+        )
+    if not pending:
+        return
+
+    spec = get_model_spec(run.model, allow_provisional=allow_provisional_model)
+    processor = load_processor(spec)
+    tokenizer = tokenizer_for(processor)
+    records = _selected_records(run.seed)
+    for checkpoint_step in pending:
+        existing_artifact, missing_modes = resume_states[checkpoint_step]
+        existing_records: dict[str, dict[str, object]] = {}
+        if existing_artifact is not None:
+            raw_records = cast(list[object], existing_artifact["records"])
+            existing_records = {
+                cast(str, cast(dict[str, object], raw_record)["function_id"]): cast(
+                    dict[str, object], raw_record
+                )
+                for raw_record in raw_records
+            }
+            token_labels = cast(
+                dict[str, str],
+                dict(cast(dict[str, object], existing_artifact["token_labels"])),
+            )
+            print(
+                f"[vocabulary-logit-lens] {run.model}/{run.condition.value} "
+                f"step={checkpoint_step} extending {len(missing_modes)} missing source(s)",
+                flush=True,
+            )
+        else:
+            token_labels = {}
+        model = _load_checkpoint_model(root, run, spec, checkpoint_step)
+        blocks = resolve_decoder_blocks(model, spec)
+        residual_targets = _resolve_patch_targets(blocks, PatchingInterface.RESID_POST)
+        serialized: list[dict[str, object]] = []
+        try:
+            _norm, _norm_parameter, output_weight, _bias = _logit_lens_readout(model)
+            vocabulary_size = int(output_weight.shape[0])
+            if existing_artifact is not None:
+                lens_metadata = cast(dict[str, object], existing_artifact["lens"])
+                if (
+                    lens_metadata.get("top_k") != VOCABULARY_LOGIT_LENS_TOP_K
+                    or lens_metadata.get("vocabulary_size") != vocabulary_size
+                ):
+                    raise ValueError(
+                        "existing vocabulary logit-lens readout dimensions disagree with model"
+                    )
+            for record in records:
+                clean_view = _prompt_patch_view(
+                    processor,
+                    record,
+                    record.messages,
+                    FUNCTION_BY_ID[record.function_id].alias,
+                    stop_at_sequence_start=True,
+                )
+                existing_record = existing_records.get(record.function_id)
+                if existing_record is None:
+                    recipient_candidate_ids = _candidate_ids(processor, record)
+                    clean_activations, _clean_probabilities = _capture(
+                        model,
+                        residual_targets,
+                        clean_view.input_ids,
+                        clean_view.attention_mask,
+                        recipient_candidate_ids,
+                    )
+                    clean_indices = tuple(
+                        range(clean_view.anchor_index, clean_view.stop_index - 1, -1)
+                    )
+                    clean_lens = _full_vocabulary_logit_lens(
+                        model,
+                        clean_activations,
+                        clean_indices,
+                    )
+                    clean_payload = _vocabulary_logit_lens_side_payload(
+                        clean_view,
+                        clean_indices,
+                        clean_lens,
+                        tokenizer,
+                        token_labels,
+                    )
+                    source_payloads: dict[str, object] = {}
+                    del clean_activations, clean_lens
+                else:
+                    clean_payload = cast(dict[str, object], existing_record["clean"])
+                    source_payloads = dict(cast(dict[str, object], existing_record["sources"]))
+                for mode in missing_modes:
+                    counterfactual = _prompt_counterfactual_spec(record, mode)
+                    source_view, recipient_view = _prompt_counterfactual_views(
+                        processor,
+                        record,
+                        mode,
+                        counterfactual,
+                    )
+                    if recipient_view.token_ids != clean_view.token_ids:
+                        raise RuntimeError(
+                            "prompt-counterfactual recipient differs from the clean lens prompt"
+                        )
+                    source_candidate_ids, _recipient_candidate_ids = _counterfactual_candidate_ids(
+                        processor,
+                        record,
+                        counterfactual,
+                    )
+                    source_activations, _source_probabilities = _capture(
+                        model,
+                        residual_targets,
+                        source_view.input_ids,
+                        source_view.attention_mask,
+                        source_candidate_ids,
+                    )
+                    positions = reverse_token_position_pairs(
+                        source_view.anchor_index,
+                        recipient_view.anchor_index,
+                        source_view.stop_index,
+                        recipient_view.stop_index,
+                    )
+                    source_indices = tuple(position.source_index for position in positions)
+                    source_lens = _full_vocabulary_logit_lens(
+                        model,
+                        source_activations,
+                        source_indices,
+                    )
+                    source_payloads[mode.value] = _vocabulary_logit_lens_side_payload(
+                        source_view,
+                        source_indices,
+                        source_lens,
+                        tokenizer,
+                        token_labels,
+                    )
+                    del source_activations, source_lens
+                serialized.append(
+                    {
+                        "function_id": record.function_id,
+                        "clean": clean_payload,
+                        "sources": source_payloads,
+                    }
+                )
+                gc.collect()
+
+            output = _vocabulary_logit_lens_output_path(root, run, checkpoint_step)
+            if existing_artifact is None:
+                output_artifact: dict[str, object] = {
+                    "model": spec,
+                    "run": run,
+                    "checkpoint_step": checkpoint_step,
+                    "lens": {
+                        "kind": "full_vocabulary_top_k",
+                        "normalization": (
+                            "softmax denominator over every model output-embedding row after "
+                            "the checkpoint's final normalization"
+                        ),
+                        "top_k": VOCABULARY_LOGIT_LENS_TOP_K,
+                        "vocabulary_size": vocabulary_size,
+                        "residual_boundary": "decoder block output before final normalization",
+                        "displayed_mass": (
+                            "sum of stored top-k probabilities; omitted vocabulary mass is "
+                            "one minus this sum"
+                        ),
+                    },
+                    "modes": tuple(mode.value for mode in modes),
+                    "token_labels": token_labels,
+                    "records": serialized,
+                }
+            else:
+                output_artifact = dict(existing_artifact)
+                output_artifact.update(
+                    {
+                        "modes": tuple(mode.value for mode in modes),
+                        "token_labels": token_labels,
+                        "records": serialized,
+                    }
+                )
+            write_json(output, output_artifact)
+            _validated_artifact, still_missing = _vocabulary_logit_lens_resume_artifact(
+                output,
+                run,
+                checkpoint_step,
+                modes,
+            )
+            if still_missing:  # pragma: no cover - atomic payload is constructed above
+                raise RuntimeError("vocabulary logit-lens write remained incomplete")
+            print(
+                f"[vocabulary-logit-lens] {run.model}/{run.condition.value} "
+                f"step={checkpoint_step} -> {output}",
+                flush=True,
+            )
+        finally:
+            _release_model(model)
+            del serialized, token_labels
             gc.collect()
 
 
@@ -3223,9 +3939,11 @@ def run_patching(
 
 
 __all__ = [
+    "VOCABULARY_LOGIT_LENS_MODES",
     "build_token_axis_metadata",
     "run_activation_example_atlas",
     "run_patching",
     "run_prompt_counterfactual_patching_matrix",
     "run_temporal_patching_matrix",
+    "run_vocabulary_logit_lens_atlas",
 ]

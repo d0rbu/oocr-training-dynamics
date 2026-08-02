@@ -137,11 +137,37 @@ irrelevant to the axis.
 The colored value remains clean-label probability. Each artifact additionally records the
 source-correct-label probability for every cell and its clean-recipient baseline, so hover details
 can distinguish transfer of the donor's particular answer letter from nonspecific corruption.
-The source/recipient residual states also carry a five-way answer-label logit lens: final norm,
-selected A–E unembedding rows, and a softmax over A–E. For a mixed-checkpoint cell, the source lens
-uses the donor's final norm and unembedding and the clean lens uses the recipient's. Hover text
-displays each side's top-p=0.9 label set. The lens is observational and unpatched; the cell
-probability still comes from the full causal recipient forward pass.
+Raw patch artifacts also retain the originally specified five-way answer-label lens: final norm,
+selected A–E unembedding rows, and a softmax over A–E. A later checkpoint-indexed sidecar supplies
+the website's corrected full-vocabulary lens. It applies final norm and the complete unembedding,
+then stores the five most probable token IDs with probabilities normalized over every output row.
+For a mixed-checkpoint cell, the source lens uses the donor's readout and the clean lens uses the
+recipient's. The displayed top-five mass is usually below one and is never renormalized. Both
+lenses are observational and unpatched; the cell probability still comes from the full causal
+recipient forward pass.
+
+## Format/content patch sources
+
+Four active post-hoc modes reuse the format/content activation-neighbor prompt definitions as
+causal donors. The registered function order assigns one of five presentations round-robin to
+each function, yielding a 4/4/4/4/3 balanced panel. The two formal-layout modes share an
+assignment, as do the two conversational modes. This keeps every donor a concrete on-manifold
+prompt rather than averaging hidden vectors across five distinct token sequences.
+
+| Source | Content relation | Presentation and answer-label contract |
+|---|---|---|
+| `same_mcq_formats` | same function question and options | alternate MCQ layout; same correct letter |
+| `unrelated_mcq_formats` | paired unrelated non-coding question | paired alternate MCQ layout; same correct letter |
+| `same_conversational_choices` | same opaque-function question and options | casually phrased five-choice question; same correct letter |
+| `unrelated_conversational_choices` | paired unrelated non-coding question | casually phrased five-choice question; same correct letter |
+
+These modes use the same reverse-aligned suffix through the first differing token and support
+independent donor and recipient checkpoints. The website colors clean-recipient `P(correct)`.
+Every active mode defines a source-correct A–E probability under the same metric. The complete
+five-presentations-per-question banks remain available separately in the observational
+nearest-example selector. Earlier `same_conversational` and `unrelated_open_ended` artifacts used
+free-form targets; they remain in their original namespaces as legacy measurements and are not
+shown as results for the corrected A–E modes.
 
 ## Across-time intervention
 
@@ -178,6 +204,9 @@ no clean-prompt same-checkpoint grid is stored. **Different function name** rema
 source and recipient checkpoint sliders. The two non-MCQ context modes do as well; their equal-step
 diagonals are measured prompt interventions rather than identities. Prompt audit columns
 consistently place the clean recipient on the left and source on the right.
+The four format/content sources also expose independent checkpoints; their per-function donor
+presentation is shown in the prompt audit, while the all-functions view averages the paired
+balanced panel.
 
 The function probe includes an **Average over all 19 functions** option. A measured mean is shown
 only when the exact selection has a measured grid for every registered function. Cells are
@@ -195,16 +224,43 @@ vectors: the clean recipient vector and the source/donor vector at that exact in
 position, layer, and checkpoint. Weight cells and all-function means do not define one such vector
 and therefore show the analysis as not applicable.
 
-Each reference searches a fixed 95-prompt audit bank at the same checkpoint as the reference. The
-candidate categories are held-out code choice, held-out language choice, unrelated MCQ, non-MCQ
-letter completion, and training I/O, with 19 prompts per category. Cosine similarity is computed
-against every tokenizer position. A candidate prompt contributes only its maximum-scoring token,
-then the six highest-scoring distinct prompts are retained. The site highlights the maximizing
-token and reports the cosine. Source and recipient banks are computed independently with their own
-checkpoint weights.
+The site offers six separately measured, size-matched 95-example candidate universes.
+**Experiment / audit set** contains held-out code choice, held-out language choice, unrelated MCQ,
+non-MCQ letter completion, and training I/O, with 19 prompts per category. **FineWeb pretraining
+sample** uses a frozen deterministic sample from `HuggingFaceFW/fineweb`, config `sample-10BT`: 19
+non-overlapping random five-row windows. Each document is tokenized directly, including
+tokenizer-native special tokens, truncated to 128 tokens, and never wrapped in a chat template.
+Dataset revision, row index, document ID, URL, crawl dump/date, language, and text SHA-256 remain
+attached as provenance.
 
-This is observational nearest-neighbor evidence. Its search universe is intentionally finite and
-displayed beside the result; “top” never means top over the model's pretraining distribution.
+Four chat corpora factor question content against response presentation. Each crosses 19 paired
+questions with five registered styles:
+
+- **Same function MCQs · varied format** rerenders the exact clean code probes without changing
+  their question, import line, option contents, option order, or answer letter.
+- **Unrelated MCQs · varied format** uses the fixed unrelated non-coding bank and the identical five
+  format renderers. Its correct letter is matched to the paired clean function probe.
+- **Same function questions · conversational A–E** keeps the exact function implementations,
+  order, and target letter but asks which possibility is right through five casual phrasings.
+- **Unrelated questions · conversational A–E** asks the same unrelated topics through five casual
+  phrasings while retaining five labeled possibilities and a clean-letter-matched target.
+
+The five MCQ layouts are bracketed labels, `Choice L:` lines, a Markdown table, numbered
+letter-pairs, and one inline candidate list. The conversational styles use the same five discourse
+roles on both sides but avoid those formal layouts; all still expose A–E possibilities. Only the
+generation prefix is captured; the assistant letter is retained for audit metadata but cannot
+contribute an activation token.
+
+Cosine similarity is computed against every tokenizer position. A candidate contributes only its
+maximum-scoring token, then the six highest-scoring distinct examples are retained. The site
+highlights the maximizing token and reports the cosine. Source and recipient banks are computed
+independently with their own checkpoint weights. Arrow keys move a selected cell across token rows
+and decoder layers, with the reference readout following the highlighted cell.
+
+This is observational nearest-neighbor evidence. Each search universe is intentionally finite and
+displayed beside the result; “top” never means top over the model's complete pretraining
+distribution. A missing corpus/checkpoint artifact is shown as unprocessed and receives no values
+from another corpus.
 
 ## Why no raw cross-model patching
 
@@ -232,9 +288,11 @@ Each artifact identifies model/run/interface/plan/donor step and stores, per fun
 
 The six final-suffix answer-label controls also store the source prompt's correct label, its
 per-cell probability and clean-recipient delta, the exact source option/question metadata, and the
-source/recipient five-way residual logit-lens distributions. Mixed-checkpoint artifacts explicitly
-record `checkpoint_relation=cross_checkpoint`; the artifact donor step and plan recipient step
-identify which readout produced each side.
+source/recipient legacy five-way residual logit-lens distributions. Mixed-checkpoint artifacts
+explicitly record `checkpoint_relation=cross_checkpoint`; the artifact donor step and plan
+recipient step identify which readout produced each side. Separate
+`vocabulary_logit_lens/sequence_end/checkpoint_step_*.json` artifacts contain the reusable clean
+and prompt-source full-vocabulary top-five readouts for all eleven active prompt counterfactuals.
 
 Global `block_weights` artifacts instead store one probability per decoder layer, the clean source
 and recipient baselines, the exact rendered prompt, and an explicit `layer_only` axis marker. They
@@ -359,6 +417,32 @@ pair-indexed, because a donor-side reference depends only on `(mode, donor check
 recipient-side reference only on `(mode, recipient checkpoint)`. One checkpoint artifact covers
 all 19 functions and every selected answer-label mode.
 
+## Observational alignment view
+
+The visualization selector separates two questions that share the same token/layer coordinates:
+
+- **Activation patching** performs the existing causal transplant and reports its resulting clean
+  answer probability or change from the unpatched recipient.
+- **Cosine similarity** and **L2 distance** run no transplant. They compare the exact source and
+  recipient vectors captured from their ordinary, unpatched forwards.
+
+The comparison runner captures `resid_post`, `attention_input`, `attention_output`, `mlp_input`,
+and `mlp_output` together in one forward per prompt/checkpoint side. It immediately selects only
+the reverse-axis token vectors required by the grid and moves those vectors to CPU; full-sequence
+hidden-state banks are not retained. Metrics and source/recipient norms are accumulated in
+float32. Every completed donor/recipient pair is written atomically under
+`representation_alignment/sequence_end/<interface>/<mode>/`, separately from causal probabilities.
+
+Cosine is dimensionless and uses `[-1, 1]`. L2 is an unnormalized distance in the chosen
+boundary's activation units. The site therefore assigns L2 a robust color scale separately for
+each model and activation boundary while preserving the raw, unclipped value in hover. Function
+means are means of per-function scalar metrics. Weight interfaces are not applicable because they
+do not expose one token-local representation under this contract.
+
+These maps are descriptive. Similar vectors can be unused by the downstream computation, and
+dissimilar vectors can be functionally equivalent. Read them beside—not as replacements for—the
+causal patching maps.
+
 ## Interpretation cautions
 
 - A probability delta is causal for this specific intervention, but it does not prove that the
@@ -375,3 +459,5 @@ all 19 functions and every selected answer-label mode.
 - A donor-state patch may introduce off-manifold combinations with recipient weights.
 - Layer cells are highly dependent. Interpret coherent bands and function-clustered uncertainty,
   not isolated hot pixels.
+- Cosine alignment is insensitive to scale; raw L2 is scale-sensitive and not commensurate across
+  boundaries or model families. Neither observational metric is a causal effect.

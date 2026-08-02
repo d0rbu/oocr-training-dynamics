@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from oocr_training_dynamics.activation_examples import ActivationExampleSource
 from oocr_training_dynamics.contracts import (
     CHECKPOINT_STEPS,
     PatchingInterface,
@@ -48,6 +49,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         help="repeat to stage checkpoints; defaults to all registered checkpoints",
     )
+    parser.add_argument(
+        "--candidate-source",
+        action="append",
+        choices=[source.value for source in ActivationExampleSource],
+        help="repeat to select candidate corpora; defaults to experiment",
+    )
     parser.add_argument("--allow-provisional-gemma", action="store_true")
     parser.add_argument("--confirm-gpu-run", action="store_true")
     return parser.parse_args()
@@ -70,16 +77,25 @@ def main() -> None:
         if args.interface
         else (PatchingInterface.RESID_POST,)
     )
+    candidate_sources = (
+        tuple(ActivationExampleSource(value) for value in args.candidate_source)
+        if args.candidate_source
+        else (ActivationExampleSource.EXPERIMENT,)
+    )
+    if len(set(candidate_sources)) != len(candidate_sources):
+        raise ValueError("candidate sources must be unique")
     run = RunKey(args.model, TrainingCondition(args.condition))
     for interface in interfaces:
-        run_activation_example_atlas(
-            root,
-            run,
-            steps,
-            modes,
-            interface,
-            allow_provisional_model=args.allow_provisional_gemma,
-        )
+        for candidate_source in candidate_sources:
+            run_activation_example_atlas(
+                root,
+                run,
+                steps,
+                modes,
+                interface,
+                candidate_source=candidate_source,
+                allow_provisional_model=args.allow_provisional_gemma,
+            )
 
 
 if __name__ == "__main__":

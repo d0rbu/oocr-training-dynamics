@@ -7,6 +7,9 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
+
+from oocr_training_dynamics.activation_examples import ActivationExampleSource
 from oocr_training_dynamics.contracts import (
     BATCH_ABLATION_SIZES,
     CHECKPOINT_STEPS,
@@ -15,13 +18,19 @@ from oocr_training_dynamics.contracts import (
     LORA_RANKS,
     PatchingInterface,
     PatchingMode,
+    RunKey,
     TrainingCondition,
+    training_spec_for_run,
 )
 from oocr_training_dynamics.data import FUNCTIONS
 from oocr_training_dynamics.models import ModelKey
 from scripts.export_site import (
     _compact_activation_neighbor_grid,
     _compact_patch_record,
+    _compact_representation_alignment_record,
+    _compact_vocabulary_logit_lens_side,
+    _export_representation_alignments,
+    _real_letter_propensity_curve,
     _token_axes,
 )
 
@@ -37,9 +46,15 @@ def test_committed_site_payload_discloses_measurement_status() -> None:
     }
     assert 0 <= payload["real_runs"] <= 9
     assert payload["real_patch_files"] >= 0
+    assert payload.get("real_representation_alignment_files", 0) >= 0
+    assert isinstance(payload.get("representation_alignment_manifest", {}), dict)
+    assert isinstance(payload.get("representation_alignment_scales", {}), dict)
     assert payload.get("real_activation_example_files", 0) >= 0
     assert payload.get("activation_example_chunks", 0) >= 0
     assert isinstance(payload.get("activation_example_manifest", {}), dict)
+    assert payload.get("real_vocabulary_logit_lens_files", 0) >= 0
+    assert payload.get("vocabulary_logit_lens_chunks", 0) >= 0
+    assert isinstance(payload.get("vocabulary_logit_lens_manifest", {}), dict)
     if payload["status"] == "synthetic_preview":
         assert payload["real_runs"] == 0
         assert payload["real_patch_files"] == 0
@@ -161,6 +176,76 @@ def test_site_rank_ablation_has_no_synthetic_nonbaseline_curves() -> None:
     assert measured == ablation["measured_runs"]
 
 
+def test_letter_propensity_export_keeps_missing_checkpoints_unprocessed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = RunKey("olmo3-7b", TrainingCondition.CORRECT)
+    expected_steps = training_spec_for_run(run).checkpoint_steps
+    measured_steps = (expected_steps[0], expected_steps[-1])
+    for step in measured_steps:
+        (tmp_path / f"{step}.json").touch()
+
+    monkeypatch.setattr(
+        "scripts.export_site.letter_propensity_path",
+        lambda _root, _run, step: tmp_path / f"{step}.json",
+    )
+    monkeypatch.setattr(
+        "scripts.export_site.load_letter_propensity_artifact",
+        lambda _root, _run, step: {
+            "mean_letter_probability": 0.001 + step / 1_000_000,
+            "mean_probability_by_label": dict.fromkeys("ABCDE", 0.0002 + step / 5_000_000),
+            "position_probability_stddev": 0.002,
+            "token_count": 10_000,
+            "document_count": 95,
+        },
+    )
+
+    result = _real_letter_propensity_curve(tmp_path, run)
+
+    assert result is not None
+    rows, source = result
+    assert source == "measured_partial"
+    assert [row["step"] for row in rows] == list(measured_steps)
+    assert [row["checkpoint_index"] for row in rows] == [0, len(expected_steps) - 1]
+    assert all(row["expected_checkpoint_count"] == len(expected_steps) for row in rows)
+
+
+def test_site_letter_propensity_contains_only_measured_rows() -> None:
+    root = Path(__file__).resolve().parents[1]
+    payload = json.loads((root / "site" / "data" / "experiment.json").read_text())
+    contract = payload["letter_propensity"]
+
+    assert contract["answer_labels"] == list("ABCDE")
+    assert "complete model output vocabulary" in contract["normalization"]
+    assert "token-weighted" in contract["aggregation"]
+    assert contract["corpus"]["document_count"] == 95
+    observed_runs = set()
+    for axis in ("batch_ablation", "rank_ablation"):
+        curves_by_model = payload[axis]["letter_propensity_curves"]
+        sources_by_model = payload[axis]["letter_propensity_sources"]
+        for model in ModelKey:
+            assert set(curves_by_model[model.value]) == {
+                condition.value for condition in TrainingCondition
+            }
+            for condition in TrainingCondition:
+                curves = curves_by_model[model.value][condition.value]
+                sources = sources_by_model[model.value][condition.value]
+                assert set(curves) == set(sources)
+                for run_key, rows in curves.items():
+                    assert sources[run_key] in {"measured_complete", "measured_partial"}
+                    assert rows
+                    assert all(0 <= row["mean_letter_probability"] <= 1 for row in rows)
+                    assert all(
+                        set(row["mean_probability_by_label"]) == set("ABCDE") for row in rows
+                    )
+                    assert [row["checkpoint_index"] for row in rows] == sorted(
+                        row["checkpoint_index"] for row in rows
+                    )
+                    observed_runs.add((model.value, condition.value, axis, run_key))
+    assert payload["real_letter_propensity_runs"] <= len(observed_runs)
+
+
 def test_site_token_axes_are_exact_model_tokenizer_coordinates() -> None:
     axes = _token_axes()
 
@@ -190,14 +275,29 @@ def test_site_token_axes_are_exact_model_tokenizer_coordinates() -> None:
                     PatchingMode.UNRELATED_QUESTION_SAME_LETTER.value,
                     PatchingMode.LETTER_CONTEXT_SAME.value,
                     PatchingMode.LETTER_CONTEXT_DIFFERENT.value,
+                    PatchingMode.UNRELATED_MCQ_FORMATS.value,
+                    PatchingMode.UNRELATED_OPEN_ENDED.value,
+                    PatchingMode.UNRELATED_CONVERSATIONAL_CHOICES.value,
                 }:
                     assert "from functions import" not in axis["source_rendered_prompt"]
-                    if mode.startswith("unrelated_question"):
+                    if (
+                        mode.startswith("unrelated_question")
+                        or mode == PatchingMode.UNRELATED_MCQ_FORMATS.value
+                    ):
                         assert axis["source_question"] in axis["source_rendered_prompt"]
-                        assert axis["source_format"] == "unrelated_mcq"
-                    else:
+                        assert axis["source_format"].startswith("unrelated_mcq")
+                    elif mode in {
+                        PatchingMode.LETTER_CONTEXT_SAME.value,
+                        PatchingMode.LETTER_CONTEXT_DIFFERENT.value,
+                    }:
                         assert axis["source_context"] in axis["source_rendered_prompt"]
                         assert axis["source_format"] == "non_mcq_text_completion"
+                    elif mode == PatchingMode.UNRELATED_OPEN_ENDED.value:
+                        assert axis["source_question"] in axis["source_rendered_prompt"]
+                        assert axis["source_format"].startswith("unrelated_open_response")
+                    else:
+                        assert axis["source_question"] in axis["source_rendered_prompt"]
+                        assert axis["source_format"].startswith("unrelated_conversational_choices")
                 else:
                     assert "from functions import" in axis["source_rendered_prompt"]
                 if mode in {
@@ -215,6 +315,9 @@ def test_site_token_axes_are_exact_model_tokenizer_coordinates() -> None:
                         PatchingMode.UNRELATED_QUESTION_SAME_LETTER.value,
                         PatchingMode.LETTER_CONTEXT_SAME.value,
                         PatchingMode.LETTER_CONTEXT_DIFFERENT.value,
+                        PatchingMode.UNRELATED_MCQ_FORMATS.value,
+                        PatchingMode.UNRELATED_OPEN_ENDED.value,
+                        PatchingMode.UNRELATED_CONVERSATIONAL_CHOICES.value,
                     }:
                         assert axis["source_function_id"] == axis["recipient_function_id"]
                 positions = cast(list[dict[str, Any]], axis["positions"])
@@ -242,12 +345,22 @@ def test_site_token_axes_are_exact_model_tokenizer_coordinates() -> None:
                     if mode in {
                         PatchingMode.UNRELATED_QUESTION_SAME_LETTER.value,
                         PatchingMode.LETTER_CONTEXT_SAME.value,
+                        PatchingMode.SAME_MCQ_FORMATS.value,
+                        PatchingMode.UNRELATED_MCQ_FORMATS.value,
+                        PatchingMode.SAME_CONVERSATIONAL_CHOICES.value,
+                        PatchingMode.UNRELATED_CONVERSATIONAL_CHOICES.value,
                     }:
                         assert axis["source_label_relation"] == "same_as_recipient"
                         assert (
                             axis["source_correct_choice_index"]
                             == axis["recipient_correct_choice_index"]
                         )
+                    elif mode in {
+                        PatchingMode.SAME_CONVERSATIONAL.value,
+                        PatchingMode.UNRELATED_OPEN_ENDED.value,
+                    }:
+                        assert axis.get("source_label_relation") is None
+                        assert axis["source_correct_choice_index"] is None
                     else:
                         assert axis.get("source_label_relation") in {
                             None,
@@ -279,16 +392,24 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert "one_minus_correct" not in javascript
     for interface in PatchingInterface:
         assert f'<option value="{interface.value}">' in html
-    assert 'data-patch-mode="checkpoint"' in html
-    assert 'data-patch-mode="across_sample"' in html
-    assert 'data-patch-mode="cyclic_choices"' in html
-    assert 'data-patch-mode="deranged_choices"' in html
-    assert 'data-patch-mode="unrelated_question"' in html
-    assert 'data-patch-mode="unrelated_question_same_letter"' in html
-    assert 'data-patch-mode="letter_context_same"' in html
-    assert 'data-patch-mode="letter_context_different"' in html
-    assert 'data-patch-mode="later_checkpoint"' not in html
-    assert 'data-patch-mode="across_time"' not in html
+    assert 'id="patch-mode-select"' in html
+    assert '<option value="checkpoint">' in html
+    assert '<option value="across_sample" selected>' in html
+    assert '<option value="cyclic_choices">' in html
+    assert '<option value="deranged_choices">' in html
+    assert '<option value="unrelated_question">' in html
+    assert '<option value="unrelated_question_same_letter">' in html
+    assert '<option value="letter_context_same">' in html
+    assert '<option value="letter_context_different">' in html
+    assert '<option value="same_mcq_formats">' in html
+    assert '<option value="unrelated_mcq_formats">' in html
+    assert '<option value="same_conversational_choices">' in html
+    assert '<option value="unrelated_conversational_choices">' in html
+    assert '<option value="same_conversational">' not in html
+    assert '<option value="unrelated_open_ended">' not in html
+    assert '<option value="later_checkpoint">' not in html
+    assert '<option value="across_time">' not in html
+    assert 'id="patch-mode-controls"' not in html
     assert 'const ALL_FUNCTIONS_ID = "__all__"' in javascript
     assert "Average over all" in javascript
     assert 'id="curve-function-select"' in html
@@ -298,8 +419,12 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert 'id="curve-rank-select"' in html
     assert "function buildCurveBatchSlider()" in javascript
     assert "function availableBatchSizes()" in javascript
-    assert 'href="styles.css?v=20260722b"' in html
-    assert 'src="app.js?v=20260722b"' in html
+    assert 'href="styles.css?v=20260801b"' in html
+    assert 'src="app.js?v=20260801b"' in html
+    assert 'id="letter-propensity-chart"' in html
+    assert 'id="letter-propensity-status"' in html
+    assert 'id="letter-propensity-value"' in html
+    assert "General letter-answer propensity" in html
     for mode in (
         "cyclic_choices",
         "deranged_choices",
@@ -307,9 +432,21 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
         "unrelated_question_same_letter",
         "letter_context_same",
         "letter_context_different",
+        "same_mcq_formats",
+        "unrelated_mcq_formats",
+        "same_conversational",
+        "unrelated_open_ended",
+        "same_conversational_choices",
+        "unrelated_conversational_choices",
     ):
         assert f'"{mode}"' in javascript
-    assert 'const DATA_URL = "data/experiment.json?v=20260722b"' in javascript
+    assert 'const DATA_URL = "data/experiment.json?v=20260801b"' in javascript
+    assert 'const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260801b"' in javascript
+    assert "function renderLetterPropensity()" in javascript
+    assert "function letterPropensityRows()" in javascript
+    assert "missing checkpoints are not connected" in javascript
+    assert "patchMode.value = state.patchMode" in javascript
+    assert "state.patchMode = patchMode.value" in javascript
     assert "function buildCurveRankSelect()" in javascript
     assert "function normalizeCurveAxisSelections()" in javascript
     assert "function scaledExamplesFraction(" in javascript
@@ -325,18 +462,51 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert "function allPatchReferences(" in javascript
     assert "function scheduleFullPatchPreload()" in javascript
     assert "function compactPatchChunk(records)" in javascript
+    assert "function compactRepresentationAlignmentChunk(records)" in javascript
+    assert "function measuredRepresentationAlignmentForFunction(functionId)" in javascript
+    assert "function representationAlignmentScale()" in javascript
     assert "async function refreshPatchManifest()" in javascript
     assert "PATCH_PRELOAD_CONCURRENCY = 4" in javascript
     assert "PATCH_MANIFEST_POLL_MS = 30000" in javascript
     assert "new Float64Array(" in javascript
     assert "unpatched recipient baseline" in javascript
     assert "unpatched donor/source baseline" in javascript
-    assert "answer-label logit lens" in javascript
+    assert "full-vocabulary residual logit lens" in javascript
+    assert "normalized over all" in javascript
+    assert "no A–E-only fallback is shown" in javascript
+    assert "function compactVocabularyLensChunk(" in javascript
+    assert "function scheduleVocabularyLensLoads()" in javascript
     assert "function renderActivationExamples(" in javascript
     assert "function renderActivationExampleList(" in javascript
+    assert "function moveSelectedPatchCell(" in javascript
+    assert "function focusSelectedPatchCell(" in javascript
+    assert "ArrowLeft" in javascript
+    assert "ArrowRight" in javascript
+    assert "ArrowUp" in javascript
+    assert "ArrowDown" in javascript
     assert 'id="activation-neighbor-title"' in html
+    assert 'id="activation-example-source-select"' in html
+    visible_sources = {
+        ActivationExampleSource.EXPERIMENT,
+        ActivationExampleSource.FINEWEB,
+        ActivationExampleSource.SAME_MCQ_FORMATS,
+        ActivationExampleSource.UNRELATED_MCQ_FORMATS,
+        ActivationExampleSource.SAME_CONVERSATIONAL_CHOICES,
+        ActivationExampleSource.UNRELATED_CONVERSATIONAL_CHOICES,
+    }
+    for source in visible_sources:
+        assert f'value="{source.value}"' in html
+        assert f"{source.value}:" in javascript
+    for legacy_source in {
+        ActivationExampleSource.SAME_CONVERSATIONAL,
+        ActivationExampleSource.UNRELATED_OPEN_ENDED,
+    }:
+        assert f'value="{legacy_source.value}"' not in html
+        assert f"{legacy_source.value}:" in javascript
+    assert "ACTIVATION_EXAMPLE_SOURCE_DESCRIPTIONS" in javascript
     assert 'id="recipient-neighbor-examples"' in html
     assert 'id="source-neighbor-examples"' in html
+    assert html.index('id="patch-heatmap"') < html.index('id="activation-neighbor-title"')
     recipient_prompt = html.index('<pre id="recipient-rendered-prompt"')
     source_prompt = html.index('<pre id="source-rendered-prompt"')
     assert recipient_prompt < source_prompt
@@ -351,6 +521,13 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert "entire decoder block" in javascript
     assert 'value="token_weights"' in html
     assert "Weights · selected token" in html
+    assert 'id="patch-visualization-select"' in html
+    assert '<option value="activation_patching" selected>' in html
+    assert '<option value="cosine_similarity">' in html
+    assert '<option value="l2_distance">' in html
+    assert 'patchVisualization: "activation_patching"' in javascript
+    assert "Observational comparison only" in javascript
+    assert "vectors are not averaged before scoring" in javascript
 
 
 def test_measured_site_patches_use_compact_complete_grids() -> None:
@@ -360,6 +537,18 @@ def test_measured_site_patches_use_compact_complete_grids() -> None:
 
     assert patch_snapshot["real_patch_files"] == payload["real_patch_files"]
     assert patch_snapshot["patch_manifest"] == payload["patch_manifest"]
+    assert patch_snapshot.get("real_representation_alignment_files", 0) == payload.get(
+        "real_representation_alignment_files",
+        0,
+    )
+    assert patch_snapshot.get("representation_alignment_manifest", {}) == payload.get(
+        "representation_alignment_manifest",
+        {},
+    )
+    assert patch_snapshot.get("representation_alignment_scales", {}) == payload.get(
+        "representation_alignment_scales",
+        {},
+    )
     assert patch_snapshot.get("real_activation_example_files", 0) == payload.get(
         "real_activation_example_files",
         0,
@@ -405,6 +594,39 @@ def test_measured_site_patches_use_compact_complete_grids() -> None:
             assert layer_count > 0
             assert all(len(row) == layer_count for row in record["probabilities"])
             assert all(0.0 <= value <= 1.0 for row in record["probabilities"] for value in row)
+
+    alignment_references = [
+        reference
+        for model in payload.get("representation_alignment_manifest", {}).values()
+        for condition in model.values()
+        for interface in condition.values()
+        for mode in interface.values()
+        for recipient in mode.values()
+        for reference in recipient.values()
+    ]
+    assert len(alignment_references) == payload.get(
+        "real_representation_alignment_files",
+        0,
+    )
+    for reference in alignment_references:
+        assert reference["kind"] == "representation_alignment"
+        chunk_path = root / "site" / reference["url"]
+        content = chunk_path.read_bytes()
+        assert len(content) == reference["bytes"]
+        assert hashlib.sha256(content).hexdigest() == reference["sha256"]
+        by_function = json.loads(content)
+        assert set(by_function) == {function.function_id for function in FUNCTIONS}
+        for record in by_function.values():
+            assert "cells" not in record
+            shape = (len(record["token_positions"]), len(record["cosine_similarities"][0]))
+            for key in (
+                "cosine_similarities",
+                "l2_distances",
+                "source_norms",
+                "recipient_norms",
+            ):
+                assert len(record[key]) == shape[0]
+                assert all(len(row) == shape[1] for row in record[key])
 
 
 def test_weight_patch_compaction_preserves_a_real_layer_only_axis() -> None:
@@ -571,10 +793,14 @@ def test_activation_neighbor_compaction_preserves_ranked_distinct_examples() -> 
     assert layers == 2
     assert compact == [[[[0, 1, 0.9], [1, 0, 0.7]], [[1, 0, 0.8], [0, 0, 0.6]]]]
 
-    duplicate = [[[
-        {"example_index": 0, "token_index": 0, "cosine_similarity": 0.9},
-        {"example_index": 0, "token_index": 1, "cosine_similarity": 0.8},
-    ]]]
+    duplicate = [
+        [
+            [
+                {"example_index": 0, "token_index": 0, "cosine_similarity": 0.9},
+                {"example_index": 0, "token_index": 1, "cosine_similarity": 0.8},
+            ]
+        ]
+    ]
     try:
         _compact_activation_neighbor_grid(
             duplicate,
@@ -587,3 +813,165 @@ def test_activation_neighbor_compaction_preserves_ranked_distinct_examples() -> 
         assert "repeats" in str(error)
     else:  # pragma: no cover
         raise AssertionError("duplicate activation examples must fail loudly")
+
+
+def test_full_vocabulary_logit_lens_compaction_preserves_sparse_probabilities() -> None:
+    side = {
+        "position_count": 1,
+        "token_indices": [11],
+        "token_ids": [42],
+        "top_tokens": [
+            [
+                [[4, 0.4], [2, 0.2]],
+                [[3, 0.3], [1, 0.1]],
+            ]
+        ],
+    }
+
+    compact, layers, used_ids = _compact_vocabulary_logit_lens_side(
+        side,
+        vocabulary_size=7,
+        top_k=2,
+        token_labels={"1": "one", "2": "two", "3": "three", "4": "four"},
+        context="vocabulary lens fixture",
+    )
+
+    assert layers == 2
+    assert used_ids == {1, 2, 3, 4}
+    assert compact == side
+
+
+def test_full_vocabulary_logit_lens_compaction_rejects_bad_top_k() -> None:
+    base = {
+        "position_count": 1,
+        "token_indices": [11],
+        "token_ids": [42],
+        "top_tokens": [[[[4, 0.4], [2, 0.2]]]],
+    }
+    labels = {"2": "two", "4": "four"}
+
+    duplicate = {**base, "top_tokens": [[[[4, 0.4], [4, 0.2]]]]}
+    with pytest.raises(ValueError, match="repeats"):
+        _compact_vocabulary_logit_lens_side(
+            duplicate,
+            vocabulary_size=7,
+            top_k=2,
+            token_labels=labels,
+            context="duplicate vocabulary lens fixture",
+        )
+
+    ascending = {**base, "top_tokens": [[[[2, 0.2], [4, 0.4]]]]}
+    with pytest.raises(ValueError, match="descending"):
+        _compact_vocabulary_logit_lens_side(
+            ascending,
+            vocabulary_size=7,
+            top_k=2,
+            token_labels=labels,
+            context="ascending vocabulary lens fixture",
+        )
+
+
+def _alignment_record(function_id: str) -> dict[str, object]:
+    cells: list[dict[str, object]] = []
+    for token in range(2):
+        for layer in range(2):
+            cells.append(
+                {
+                    "layer": layer,
+                    "token_reverse_index": token,
+                    "source_token_index": 3 - token,
+                    "recipient_token_index": 3 - token,
+                    "source_token_id": 100 + token,
+                    "recipient_token_id": 100 + token,
+                    "source_token": f"source-{token}",
+                    "recipient_token": f"recipient-{token}",
+                    "cosine_similarity": 1.0 - 0.1 * (token + layer),
+                    "l2_distance": float(token + layer),
+                    "source_norm": 2.0 + token + layer,
+                    "recipient_norm": 3.0 + token + layer,
+                }
+            )
+    return {
+        "function_id": function_id,
+        "source_function_id": function_id,
+        "recipient_function_id": function_id,
+        "recipient_choice_function_ids": [function_id],
+        "recipient_correct_choice_index": 0,
+        "token_axis": {"order": "reverse_indexed", "positions": 2},
+        "cells": cells,
+    }
+
+
+def test_representation_alignment_compaction_preserves_metrics_and_norms() -> None:
+    compact = _compact_representation_alignment_record(
+        _alignment_record("identity"),
+        context="alignment",
+    )
+
+    assert "cells" not in compact
+    assert compact["cosine_similarities"] == [[1.0, 0.9], [0.9, 0.8]]
+    assert compact["l2_distances"] == [[0.0, 1.0], [1.0, 2.0]]
+    assert compact["source_norms"] == [[2.0, 3.0], [3.0, 4.0]]
+    assert compact["recipient_norms"] == [[3.0, 4.0], [4.0, 5.0]]
+    assert len(cast(list[object], compact["token_positions"])) == 2
+
+
+def test_representation_alignment_export_uses_separate_manifest_and_l2_scale(
+    tmp_path: Path,
+) -> None:
+    artifact_path = (
+        tmp_path
+        / "artifacts/runs/olmo3-7b/correct/seed_20260715"
+        / "representation_alignment/sequence_end/mlp_output/across_sample"
+        / "recipient_step_000096/donor_step_000096.json"
+    )
+    artifact_path.parent.mkdir(parents=True)
+    artifact_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run": {"model": "olmo3-7b", "condition": "correct"},
+                "plan": {
+                    "mode": "across_sample",
+                    "recipient_step": 96,
+                    "donor_steps": [96],
+                    "interface": "mlp_output",
+                    "patch_position": "reverse_from_sequence_end",
+                },
+                "donor_step": 96,
+                "measurement": {
+                    "kind": "unpatched_representation_alignment",
+                    "causal_intervention": False,
+                    "metrics": ["cosine_similarity", "l2_distance"],
+                    "accumulation_dtype": "float32",
+                    "summary": {
+                        "cosine_similarity": {"p95": 1.0, "max": 1.0},
+                        "l2_distance": {"p95": 4.5, "max": 7.0},
+                    },
+                },
+                "records": [_alignment_record(function.function_id) for function in FUNCTIONS],
+            }
+        )
+    )
+
+    manifest, count, scales = _export_representation_alignments(tmp_path)
+
+    assert count == 1
+    typed_manifest = cast(dict[str, Any], manifest)
+    typed_scales = cast(dict[str, Any], scales)
+    reference = typed_manifest["olmo3-7b"]["correct"]["mlp_output"]["across_sample"]["96"][
+        "96"
+    ]
+    assert reference["kind"] == "representation_alignment"
+    assert (tmp_path / "site" / reference["url"]).is_file()
+    assert typed_scales["olmo3-7b"]["mlp_output"]["cosine_similarity"] == {
+        "min": -1.0,
+        "max": 1.0,
+        "basis": "theoretical_range",
+    }
+    assert typed_scales["olmo3-7b"]["mlp_output"]["l2_distance"] == {
+        "min": 0.0,
+        "max": 4.5,
+        "observed_max": 7.0,
+        "basis": "maximum_artifact_p95_for_model_and_boundary",
+    }

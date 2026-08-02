@@ -6,10 +6,21 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
-from oocr_training_dynamics.activation_examples import ACTIVATION_EXAMPLE_METRIC
+from oocr_training_dynamics.activation_examples import (
+    ACTIVATION_EXAMPLE_METRIC,
+    FINEWEB_ACTIVATION_CORPUS_SEED,
+    FINEWEB_ACTIVATION_DOCUMENT_COUNT,
+    FINEWEB_ACTIVATION_MAX_TOKENS,
+    FINEWEB_DATASET_CONFIG,
+    FINEWEB_DATASET_ID,
+    FINEWEB_DATASET_REVISION,
+    FINEWEB_DATASET_SPLIT,
+    ActivationExampleSource,
+)
 from oocr_training_dynamics.artifacts import read_json, run_dir, write_json
 from oocr_training_dynamics.contracts import (
     BATCH_ABLATION_SIZES,
@@ -26,14 +37,34 @@ from oocr_training_dynamics.contracts import (
     training_spec_for_run,
 )
 from oocr_training_dynamics.data import FUNCTIONS, build_reflection_records
+from oocr_training_dynamics.letter_propensity import (
+    LETTER_PROPENSITY_AGGREGATION,
+    LETTER_PROPENSITY_LABELS,
+    LETTER_PROPENSITY_METRIC,
+    LETTER_PROPENSITY_NORMALIZATION,
+    LETTER_PROPENSITY_POSITION_POLICY,
+    letter_propensity_path,
+    load_letter_propensity_artifact,
+)
 from oocr_training_dynamics.models import MODEL_SPECS, ModelKey
 from oocr_training_dynamics.patching import PATCH_POSITION, WEIGHT_PATCH_SCOPE
+from oocr_training_dynamics.representation_alignment import (
+    REPRESENTATION_ALIGNMENT_ACCUMULATION_DTYPE,
+    REPRESENTATION_ALIGNMENT_INTERFACES,
+    REPRESENTATION_ALIGNMENT_KIND,
+    REPRESENTATION_ALIGNMENT_METRICS,
+    REPRESENTATION_ALIGNMENT_SCHEMA_VERSION,
+)
 from oocr_training_dynamics.runtime_models import load_processor
-from oocr_training_dynamics.runtime_patching import build_token_axis_metadata
+from oocr_training_dynamics.runtime_patching import (
+    VOCABULARY_LOGIT_LENS_MODES,
+    build_token_axis_metadata,
+)
 
 CurveRow = dict[str, float | int]
 FunctionCurves = dict[str, list[CurveRow]]
 PatchRecord = dict[str, object]
+LetterPropensityRow = dict[str, object]
 
 
 def _mapping(value: object, *, context: str) -> dict[str, object]:
@@ -232,6 +263,57 @@ def _real_curves(root: Path, run: RunKey) -> tuple[list[CurveRow], FunctionCurve
                 )
             )
     return rows, function_rows
+
+
+def _real_letter_propensity_curve(
+    root: Path,
+    run: RunKey,
+) -> tuple[list[LetterPropensityRow], str] | None:
+    """Export only validated checkpoint measurements; never fill or interpolate gaps."""
+
+    expected_steps = training_spec_for_run(run).checkpoint_steps
+    rows: list[LetterPropensityRow] = []
+    for checkpoint_index, step in enumerate(expected_steps):
+        if not letter_propensity_path(root, run, step).is_file():
+            continue
+        artifact = load_letter_propensity_artifact(root, run, step)
+        per_label = artifact["mean_probability_by_label"]
+        if not isinstance(per_label, dict):  # pragma: no cover - validator owns this invariant
+            raise TypeError("validated letter-propensity label means must be an object")
+        label_mapping = cast(dict[str, object], per_label)
+        context = f"letter propensity {run.model}/{run.condition.value}/step={step}"
+        rows.append(
+            {
+                "step": step,
+                "examples_seen": step * run.effective_batch_size,
+                "checkpoint_index": checkpoint_index,
+                "expected_checkpoint_count": len(expected_steps),
+                "mean_letter_probability": _number(
+                    artifact,
+                    "mean_letter_probability",
+                    context=context,
+                ),
+                "mean_probability_by_label": {
+                    label: _number(
+                        label_mapping,
+                        label,
+                        context=f"{context}.mean_probability_by_label",
+                    )
+                    for label in LETTER_PROPENSITY_LABELS
+                },
+                "position_probability_stddev": _number(
+                    artifact,
+                    "position_probability_stddev",
+                    context=context,
+                ),
+                "token_count": int(_number(artifact, "token_count", context=context)),
+                "document_count": int(_number(artifact, "document_count", context=context)),
+            }
+        )
+    if not rows:
+        return None
+    source = "measured_complete" if len(rows) == len(expected_steps) else "measured_partial"
+    return rows, source
 
 
 def _compact_patch_record(record: PatchRecord, *, context: str) -> PatchRecord:
@@ -505,6 +587,229 @@ def _export_real_patches(root: Path) -> tuple[dict[str, object], int]:
     return manifest, file_count
 
 
+def _compact_representation_alignment_record(
+    record: PatchRecord,
+    *,
+    context: str,
+) -> PatchRecord:
+    """Compact one complete observational token-by-layer alignment record."""
+
+    cells = record.get("cells")
+    if not isinstance(cells, list) or not cells:
+        raise TypeError(f"{context}.cells must be a non-empty array")
+    mapped_cells = [_mapping(cell, context=f"{context}.cells[]") for cell in cells]
+    required = (
+        "function_id",
+        "source_function_id",
+        "recipient_function_id",
+        "token_axis",
+    )
+    if any(key not in record for key in required):
+        raise KeyError(f"{context} lacks compact alignment metadata")
+    layer_count = (
+        max(int(_number(cell, "layer", context=f"{context}.cells[]")) for cell in mapped_cells)
+        + 1
+    )
+    token_count = (
+        max(
+            int(_number(cell, "token_reverse_index", context=f"{context}.cells[]"))
+            for cell in mapped_cells
+        )
+        + 1
+    )
+    matrices: dict[str, list[list[float | None]]] = {
+        metric: [[None] * layer_count for _ in range(token_count)]
+        for metric in (*REPRESENTATION_ALIGNMENT_METRICS, "source_norm", "recipient_norm")
+    }
+    token_positions: list[PatchRecord | None] = [None] * token_count
+    for cell in mapped_cells:
+        layer = int(_number(cell, "layer", context=f"{context}.cells[]"))
+        token = int(_number(cell, "token_reverse_index", context=f"{context}.cells[]"))
+        for metric, matrix in matrices.items():
+            value = _number(cell, metric, context=f"{context}.cells[]")
+            if not math.isfinite(value):
+                raise ValueError(f"{context} contains a non-finite {metric}")
+            if metric == "cosine_similarity" and not -1.0 <= value <= 1.0:
+                raise ValueError(f"{context} contains an out-of-range cosine")
+            if metric != "cosine_similarity" and value < 0.0:
+                raise ValueError(f"{context} contains a negative norm or distance")
+            if metric in {"source_norm", "recipient_norm"} and value == 0.0:
+                raise ValueError(f"{context} contains a zero activation norm")
+            if matrix[token][layer] is not None:
+                raise ValueError(f"{context} contains a duplicate layer/token cell")
+            matrix[token][layer] = value
+        position = {
+            "reverse_index": token,
+            "source_index": int(
+                _number(cell, "source_token_index", context=f"{context}.cells[]")
+            ),
+            "recipient_index": int(
+                _number(cell, "recipient_token_index", context=f"{context}.cells[]")
+            ),
+            "source_token_id": int(
+                _number(cell, "source_token_id", context=f"{context}.cells[]")
+            ),
+            "recipient_token_id": int(
+                _number(cell, "recipient_token_id", context=f"{context}.cells[]")
+            ),
+            "source_token": cell.get("source_token"),
+            "recipient_token": cell.get("recipient_token"),
+        }
+        if not isinstance(position["source_token"], str) or not isinstance(
+            position["recipient_token"], str
+        ):
+            raise TypeError(f"{context} contains a non-string token label")
+        if token_positions[token] is None:
+            token_positions[token] = position
+        elif token_positions[token] != position:
+            raise ValueError(f"{context} repeats inconsistent token metadata")
+    if any(value is None for matrix in matrices.values() for row in matrix for value in row):
+        raise ValueError(f"{context} contains an incomplete alignment grid")
+    if any(position is None for position in token_positions):
+        raise ValueError(f"{context} contains an incomplete token axis")
+    compact: PatchRecord = {
+        **{key: record[key] for key in required},
+        "token_positions": token_positions,
+        "cosine_similarities": matrices["cosine_similarity"],
+        "l2_distances": matrices["l2_distance"],
+        "source_norms": matrices["source_norm"],
+        "recipient_norms": matrices["recipient_norm"],
+    }
+    optional_metadata = (
+        "recipient_choice_function_ids",
+        "recipient_correct_choice_index",
+        "source_correct_choice_index",
+        "source_choice_function_ids",
+        "source_choice_texts",
+        "source_question_id",
+        "source_question",
+        "source_format",
+        "source_label_relation",
+        "source_context_id",
+        "source_context",
+    )
+    for key in optional_metadata:
+        if key in record:
+            compact[key] = record[key]
+    return compact
+
+
+def _export_representation_alignments(
+    root: Path,
+) -> tuple[dict[str, object], int, dict[str, object]]:
+    """Export measured alignment sidecars and robust boundary-specific L2 scales."""
+
+    manifest: dict[str, object] = {}
+    scale_observations: dict[tuple[str, str], dict[str, list[float]]] = {}
+    file_count = 0
+    pattern = "artifacts/runs/*/*/seed_*/representation_alignment/**/donor_*.json"
+    valid_models = {key.value for key in ModelKey}
+    valid_conditions = {item.value for item in TrainingCondition}
+    valid_modes = {item.value for item in PatchingMode}
+    valid_interfaces = {item.value for item in REPRESENTATION_ALIGNMENT_INTERFACES}
+    expected_function_ids = {function.function_id for function in FUNCTIONS}
+    for path in sorted(root.glob(pattern)):
+        artifact = _mapping(read_json(path), context=str(path))
+        run = _mapping(artifact.get("run"), context=f"{path}.run")
+        plan = _mapping(artifact.get("plan"), context=f"{path}.plan")
+        measurement = _mapping(artifact.get("measurement"), context=f"{path}.measurement")
+        model = run.get("model")
+        condition = run.get("condition")
+        interface = plan.get("interface")
+        mode = plan.get("mode")
+        records = artifact.get("records")
+        if artifact.get("schema_version") != REPRESENTATION_ALIGNMENT_SCHEMA_VERSION:
+            raise ValueError(f"{path} has an unsupported representation-alignment schema")
+        if model not in valid_models or not isinstance(model, str):
+            raise TypeError(f"{path}.run.model is invalid")
+        if condition not in valid_conditions or not isinstance(condition, str):
+            raise TypeError(f"{path}.run.condition is invalid")
+        if mode not in valid_modes or not isinstance(mode, str):
+            raise TypeError(f"{path}.plan.mode is invalid")
+        if interface not in valid_interfaces or not isinstance(interface, str):
+            raise TypeError(f"{path}.plan.interface is not an activation boundary")
+        if plan.get("patch_position") != PATCH_POSITION:
+            raise ValueError(f"{path}.plan.patch_position is invalid")
+        if (
+            measurement.get("kind") != REPRESENTATION_ALIGNMENT_KIND
+            or measurement.get("causal_intervention") is not False
+            or measurement.get("metrics") != list(REPRESENTATION_ALIGNMENT_METRICS)
+            or measurement.get("accumulation_dtype")
+            != REPRESENTATION_ALIGNMENT_ACCUMULATION_DTYPE
+        ):
+            raise ValueError(f"{path}.measurement does not match the alignment contract")
+        if not isinstance(records, list):
+            raise TypeError(f"{path}.records must be an array")
+        recipient_step = int(_number(plan, "recipient_step", context=f"{path}.plan"))
+        donor_step = int(_number(artifact, "donor_step", context=str(path)))
+        by_function: dict[str, PatchRecord] = {}
+        for raw_record in records:
+            record = _mapping(raw_record, context=f"{path}.records[]")
+            function_id = record.get("function_id")
+            if not isinstance(function_id, str) or function_id in by_function:
+                raise ValueError(f"{path} has a missing or duplicate function_id")
+            by_function[function_id] = _compact_representation_alignment_record(
+                record,
+                context=f"{path}.records[{function_id}]",
+            )
+        if set(by_function) != expected_function_ids:
+            raise ValueError(
+                f"{path} must contain exactly the {len(expected_function_ids)} registered functions"
+            )
+        relative_path = (
+            Path("data")
+            / "representation-alignment"
+            / model
+            / condition
+            / interface
+            / mode
+            / f"recipient_step_{recipient_step:06d}"
+            / f"donor_step_{donor_step:06d}.json"
+        )
+        digest, byte_count = _write_compact_json(root / "site" / relative_path, by_function)
+        model_bucket = cast(dict[str, object], manifest.setdefault(model, {}))
+        condition_bucket = cast(dict[str, object], model_bucket.setdefault(condition, {}))
+        interface_bucket = cast(dict[str, object], condition_bucket.setdefault(interface, {}))
+        mode_bucket = cast(dict[str, object], interface_bucket.setdefault(mode, {}))
+        recipient_bucket = cast(dict[str, object], mode_bucket.setdefault(str(recipient_step), {}))
+        recipient_bucket[str(donor_step)] = {
+            "bytes": byte_count,
+            "kind": "representation_alignment",
+            "sha256": digest,
+            "url": relative_path.as_posix(),
+        }
+        summary = _mapping(measurement.get("summary"), context=f"{path}.measurement.summary")
+        l2_summary = _mapping(summary.get("l2_distance"), context=f"{path}.l2_summary")
+        observations = scale_observations.setdefault(
+            (model, interface),
+            {"p95": [], "max": []},
+        )
+        observations["p95"].append(_number(l2_summary, "p95", context=f"{path}.l2_summary"))
+        observations["max"].append(_number(l2_summary, "max", context=f"{path}.l2_summary"))
+        file_count += 1
+    scales: dict[str, object] = {}
+    for (model, interface), observations in sorted(scale_observations.items()):
+        model_bucket = cast(dict[str, object], scales.setdefault(model, {}))
+        robust_max = max(observations["p95"])
+        observed_max = max(observations["max"])
+        if not math.isfinite(robust_max) or robust_max <= 0.0:
+            raise ValueError(f"{model}/{interface} has no positive finite L2 display scale")
+        model_bucket[interface] = {
+            "cosine_similarity": {
+                "min": -1.0,
+                "max": 1.0,
+                "basis": "theoretical_range",
+            },
+            "l2_distance": {
+                "min": 0.0,
+                "max": robust_max,
+                "observed_max": observed_max,
+                "basis": "maximum_artifact_p95_for_model_and_boundary",
+            },
+        }
+    return manifest, file_count, scales
+
+
 def _compact_activation_neighbor_grid(
     value: object,
     candidates: list[dict[str, object]],
@@ -565,7 +870,7 @@ def _export_activation_examples(
     manifest: dict[str, object] = {}
     raw_file_count = 0
     chunk_count = 0
-    pattern = "artifacts/runs/*/*/seed_*/activation_examples/sequence_end/*/checkpoint_*.json"
+    pattern = "artifacts/runs/*/*/seed_*/activation_examples/sequence_end/*/**/checkpoint_*.json"
     expected_function_ids = {function.function_id for function in FUNCTIONS}
     for path in sorted(root.glob(pattern)):
         artifact = _mapping(read_json(path), context=str(path))
@@ -573,6 +878,13 @@ def _export_activation_examples(
         model = run.get("model")
         condition = run.get("condition")
         interface = artifact.get("interface")
+        raw_candidate_source = artifact.get(
+            "candidate_source",
+            ActivationExampleSource.EXPERIMENT.value,
+        )
+        if not isinstance(raw_candidate_source, str):
+            raise TypeError(f"{path}.candidate_source must be a string")
+        candidate_source = ActivationExampleSource(raw_candidate_source)
         checkpoint_step = int(_number(artifact, "checkpoint_step", context=str(path)))
         if not isinstance(model, str) or model not in {key.value for key in ModelKey}:
             raise TypeError(f"{path}.run.model is invalid")
@@ -623,23 +935,53 @@ def _export_activation_examples(
                 or not all(isinstance(value, str) for value in token_labels)
             ):
                 raise ValueError(f"{path}.candidates[{index}] has an invalid token axis")
-            candidates.append({key: candidate[key] for key in required})
+            compact_candidate = {key: candidate[key] for key in required}
+            provenance = candidate.get("provenance")
+            if provenance is not None:
+                compact_provenance = _mapping(
+                    provenance,
+                    context=f"{path}.candidates[{index}].provenance",
+                )
+                provenance_required = (
+                    "dataset",
+                    "config",
+                    "revision",
+                    "split",
+                    "row_index",
+                    "document_id",
+                    "url",
+                    "dump",
+                    "date",
+                    "language",
+                    "text_sha256",
+                )
+                if any(key not in compact_provenance for key in provenance_required):
+                    raise KeyError(f"{path}.candidates[{index}].provenance lacks required metadata")
+                if not isinstance(compact_provenance["row_index"], int) or not all(
+                    isinstance(compact_provenance[key], str)
+                    for key in provenance_required
+                    if key != "row_index"
+                ):
+                    raise TypeError(f"{path}.candidates[{index}].provenance has invalid metadata")
+                compact_candidate["provenance"] = {
+                    key: compact_provenance[key] for key in provenance_required
+                }
+            elif candidate_source is ActivationExampleSource.FINEWEB:
+                raise KeyError(f"{path}.candidates[{index}] lacks FineWeb provenance")
+            candidates.append(compact_candidate)
         if len({candidate["example_id"] for candidate in candidates}) != len(candidates):
             raise ValueError(f"{path} contains duplicate activation-example IDs")
 
-        relative_base = (
-            Path("data")
-            / "activation-examples"
-            / model
-            / condition
-            / interface
-            / f"checkpoint_step_{checkpoint_step:06d}"
-        )
+        relative_base = Path("data") / "activation-examples" / model / condition / interface
+        if candidate_source is not ActivationExampleSource.EXPERIMENT:
+            relative_base /= candidate_source.value
+        relative_base /= f"checkpoint_step_{checkpoint_step:06d}"
         catalog_path = relative_base / "candidates.json"
         catalog_digest, catalog_bytes = _write_compact_json(
             root / "site" / catalog_path,
             {
                 "checkpoint_step": checkpoint_step,
+                "candidate_source": candidate_source.value,
                 "candidate_corpus": artifact.get("candidate_corpus"),
                 "candidates": candidates,
             },
@@ -691,6 +1033,7 @@ def _export_activation_examples(
                 root / "site" / relative_path,
                 {
                     "checkpoint_step": checkpoint_step,
+                    "candidate_source": candidate_source.value,
                     "mode": mode,
                     "function_id": function_id,
                     "metric": ACTIVATION_EXAMPLE_METRIC,
@@ -704,7 +1047,11 @@ def _export_activation_examples(
             model_bucket = cast(dict[str, object], manifest.setdefault(model, {}))
             condition_bucket = cast(dict[str, object], model_bucket.setdefault(condition, {}))
             interface_bucket = cast(dict[str, object], condition_bucket.setdefault(interface, {}))
-            mode_bucket = cast(dict[str, object], interface_bucket.setdefault(mode, {}))
+            source_bucket = cast(
+                dict[str, object],
+                interface_bucket.setdefault(candidate_source.value, {}),
+            )
+            mode_bucket = cast(dict[str, object], source_bucket.setdefault(mode, {}))
             step_bucket = cast(dict[str, object], mode_bucket.setdefault(str(checkpoint_step), {}))
             step_bucket[function_id] = {
                 "neighbors": {
@@ -719,6 +1066,245 @@ def _export_activation_examples(
             functions = {function_id for seen_mode, function_id in seen if seen_mode == mode}
             if functions != expected_function_ids:
                 raise ValueError(f"{path} mode {mode} must contain all registered functions")
+        raw_file_count += 1
+    return manifest, raw_file_count, chunk_count
+
+
+def _compact_vocabulary_logit_lens_side(
+    value: object,
+    *,
+    vocabulary_size: int,
+    top_k: int,
+    token_labels: Mapping[str, object],
+    context: str,
+) -> tuple[dict[str, object], int, set[int]]:
+    side = _mapping(value, context=context)
+    position_count = int(_number(side, "position_count", context=context))
+    token_indices = side.get("token_indices")
+    token_ids = side.get("token_ids")
+    raw_grid = side.get("top_tokens")
+    if position_count <= 0:
+        raise ValueError(f"{context}.position_count must be positive")
+    if (
+        not isinstance(token_indices, list)
+        or len(token_indices) != position_count
+        or not all(isinstance(value, int) for value in token_indices)
+    ):
+        raise ValueError(f"{context}.token_indices must be a reverse-contiguous axis")
+    typed_token_indices = cast(list[int], token_indices)
+    if typed_token_indices != list(range(typed_token_indices[0], typed_token_indices[-1] - 1, -1)):
+        raise ValueError(f"{context}.token_indices must be a reverse-contiguous axis")
+    if (
+        not isinstance(token_ids, list)
+        or len(token_ids) != position_count
+        or not all(isinstance(value, int) and value >= 0 for value in token_ids)
+    ):
+        raise ValueError(f"{context}.token_ids must match the token axis")
+    if not isinstance(raw_grid, list) or len(raw_grid) != position_count:
+        raise ValueError(f"{context}.top_tokens must match the token axis")
+
+    layer_count: int | None = None
+    used_token_ids: set[int] = set()
+    compact_grid: list[list[list[list[float | int]]]] = []
+    for token_index, raw_layers in enumerate(raw_grid):
+        if not isinstance(raw_layers, list) or not raw_layers:
+            raise ValueError(f"{context}.top_tokens[{token_index}] must contain layer rows")
+        if layer_count is None:
+            layer_count = len(raw_layers)
+        elif len(raw_layers) != layer_count:
+            raise ValueError(f"{context}.top_tokens has an inconsistent layer count")
+        compact_layers: list[list[list[float | int]]] = []
+        for layer, raw_tokens in enumerate(raw_layers):
+            if not isinstance(raw_tokens, list) or len(raw_tokens) != top_k:
+                raise ValueError(
+                    f"{context}.top_tokens[{token_index}][{layer}] must contain top-k tokens"
+                )
+            compact_tokens: list[list[float | int]] = []
+            seen: set[int] = set()
+            previous_probability = math.inf
+            displayed_mass = 0.0
+            for raw_token in raw_tokens:
+                if (
+                    not isinstance(raw_token, list)
+                    or len(raw_token) != 2
+                    or not isinstance(raw_token[0], int)
+                    or not isinstance(raw_token[1], int | float)
+                ):
+                    raise TypeError(f"{context} contains a malformed top-token entry")
+                output_token_id = raw_token[0]
+                probability = float(raw_token[1])
+                if not 0 <= output_token_id < vocabulary_size:
+                    raise ValueError(f"{context} references a token outside the output vocabulary")
+                if output_token_id in seen:
+                    raise ValueError(f"{context} repeats one token in a top-k list")
+                if not math.isfinite(probability) or not 0.0 <= probability <= 1.0:
+                    raise ValueError(f"{context} contains an invalid full-vocabulary probability")
+                if probability > previous_probability + 1e-8:
+                    raise ValueError(f"{context} top-k probabilities are not descending")
+                label = token_labels.get(str(output_token_id))
+                if not isinstance(label, str) or not label:
+                    raise ValueError(f"{context} lacks a decoded label for token {output_token_id}")
+                seen.add(output_token_id)
+                used_token_ids.add(output_token_id)
+                previous_probability = probability
+                displayed_mass += probability
+                compact_tokens.append([output_token_id, probability])
+            if displayed_mass > 1.00001:
+                raise ValueError(f"{context} top-k displayed probability mass exceeds one")
+            compact_layers.append(compact_tokens)
+        compact_grid.append(compact_layers)
+    if layer_count is None:  # pragma: no cover - non-empty rows are required above
+        raise AssertionError("vocabulary logit-lens side unexpectedly has no layers")
+    return (
+        {
+            "position_count": position_count,
+            "token_indices": typed_token_indices,
+            "token_ids": token_ids,
+            "top_tokens": compact_grid,
+        },
+        layer_count,
+        used_token_ids,
+    )
+
+
+def _export_vocabulary_logit_lenses(
+    root: Path,
+) -> tuple[dict[str, object], int, int]:
+    manifest: dict[str, object] = {}
+    raw_file_count = 0
+    chunk_count = 0
+    pattern = "artifacts/runs/*/*/seed_*/vocabulary_logit_lens/sequence_end/checkpoint_*.json"
+    expected_function_ids = {function.function_id for function in FUNCTIONS}
+    expected_modes = tuple(mode.value for mode in VOCABULARY_LOGIT_LENS_MODES)
+    for path in sorted(root.glob(pattern)):
+        artifact = _mapping(read_json(path), context=str(path))
+        run = _mapping(artifact.get("run"), context=f"{path}.run")
+        model = run.get("model")
+        condition = run.get("condition")
+        checkpoint_step = int(_number(artifact, "checkpoint_step", context=str(path)))
+        if not isinstance(model, str) or model not in {key.value for key in ModelKey}:
+            raise TypeError(f"{path}.run.model is invalid")
+        if not isinstance(condition, str) or condition not in {
+            item.value for item in TrainingCondition
+        }:
+            raise TypeError(f"{path}.run.condition is invalid")
+        if checkpoint_step not in CHECKPOINT_STEPS:
+            raise ValueError(f"{path} uses an unregistered checkpoint")
+        raw_modes = artifact.get("modes")
+        if (
+            not isinstance(raw_modes, list)
+            or not raw_modes
+            or any(not isinstance(mode, str) for mode in raw_modes)
+        ):
+            raise TypeError(f"{path}.modes must be a non-empty string array")
+        observed_modes = tuple(cast(list[str], raw_modes))
+        observed_set = set(observed_modes)
+        if len(observed_set) != len(observed_modes) or observed_modes != tuple(
+            mode for mode in expected_modes if mode in observed_set
+        ):
+            raise ValueError(f"{path} prompt-source lenses are unknown or out of order")
+        lens = _mapping(artifact.get("lens"), context=f"{path}.lens")
+        if lens.get("kind") != "full_vocabulary_top_k":
+            raise ValueError(f"{path} has unsupported vocabulary logit-lens semantics")
+        normalization = lens.get("normalization")
+        residual_boundary = lens.get("residual_boundary")
+        if (
+            not isinstance(normalization, str)
+            or "every model output-embedding row" not in normalization
+        ):
+            raise ValueError(f"{path} does not declare full-vocabulary normalization")
+        if not isinstance(residual_boundary, str):
+            raise TypeError(f"{path}.lens.residual_boundary must be a string")
+        top_k = int(_number(lens, "top_k", context=f"{path}.lens"))
+        vocabulary_size = int(_number(lens, "vocabulary_size", context=f"{path}.lens"))
+        if top_k <= 0 or vocabulary_size <= top_k:
+            raise ValueError(f"{path} has invalid top-k/vocabulary-size metadata")
+        raw_token_labels = artifact.get("token_labels")
+        if not isinstance(raw_token_labels, dict) or not all(
+            isinstance(key, str) and isinstance(value, str) and value
+            for key, value in raw_token_labels.items()
+        ):
+            raise TypeError(f"{path}.token_labels must map token IDs to decoded strings")
+        token_labels = cast(dict[str, object], raw_token_labels)
+        raw_records = artifact.get("records")
+        if not isinstance(raw_records, list):
+            raise TypeError(f"{path}.records must be an array")
+        seen_functions: set[str] = set()
+        for raw_record in raw_records:
+            record = _mapping(raw_record, context=f"{path}.records[]")
+            function_id = record.get("function_id")
+            if not isinstance(function_id, str) or function_id in seen_functions:
+                raise ValueError(f"{path} has a missing or duplicate function ID")
+            seen_functions.add(function_id)
+            clean, layer_count, used_ids = _compact_vocabulary_logit_lens_side(
+                record.get("clean"),
+                vocabulary_size=vocabulary_size,
+                top_k=top_k,
+                token_labels=token_labels,
+                context=f"{path}.records[{function_id}].clean",
+            )
+            if layer_count != MODEL_SPECS[ModelKey(model)].layer_count:
+                raise ValueError(f"{path} vocabulary logit lens has the wrong decoder layer count")
+            raw_sources = _mapping(
+                record.get("sources"),
+                context=f"{path}.records[{function_id}].sources",
+            )
+            if set(raw_sources) != observed_set:
+                raise ValueError(
+                    f"{path} function {function_id} disagrees with its declared prompt sources"
+                )
+            sources: dict[str, object] = {}
+            for mode in observed_modes:
+                source, source_layers, source_ids = _compact_vocabulary_logit_lens_side(
+                    raw_sources[mode],
+                    vocabulary_size=vocabulary_size,
+                    top_k=top_k,
+                    token_labels=token_labels,
+                    context=f"{path}.records[{function_id}].sources[{mode}]",
+                )
+                if source_layers != layer_count:
+                    raise ValueError(f"{path} source and clean logit-lens layers differ")
+                sources[mode] = source
+                used_ids.update(source_ids)
+            relative_path = (
+                Path("data")
+                / "vocabulary-logit-lens"
+                / model
+                / condition
+                / f"checkpoint_step_{checkpoint_step:06d}"
+                / f"{function_id}.json"
+            )
+            digest, byte_count = _write_compact_json(
+                root / "site" / relative_path,
+                {
+                    "checkpoint_step": checkpoint_step,
+                    "function_id": function_id,
+                    "kind": "full_vocabulary_top_k",
+                    "normalization": normalization,
+                    "residual_boundary": residual_boundary,
+                    "top_k": top_k,
+                    "vocabulary_size": vocabulary_size,
+                    "layer_count": layer_count,
+                    "token_labels": {
+                        str(token_id): token_labels[str(token_id)] for token_id in sorted(used_ids)
+                    },
+                    "clean": clean,
+                    "sources": sources,
+                },
+            )
+            model_bucket = cast(dict[str, object], manifest.setdefault(model, {}))
+            condition_bucket = cast(dict[str, object], model_bucket.setdefault(condition, {}))
+            step_bucket = cast(
+                dict[str, object], condition_bucket.setdefault(str(checkpoint_step), {})
+            )
+            step_bucket[function_id] = {
+                "bytes": byte_count,
+                "sha256": digest,
+                "url": relative_path.as_posix(),
+            }
+            chunk_count += 1
+        if seen_functions != expected_function_ids:
+            raise ValueError(f"{path} must contain exactly the registered function set")
         raw_file_count += 1
     return manifest, raw_file_count, chunk_count
 
@@ -861,20 +1447,90 @@ def main() -> None:
                     else "measured_partial"
                 )
                 measured_rank_runs += 1
+
+    batch_letter_propensity_curves: dict[str, dict[str, dict[str, list[LetterPropensityRow]]]] = {}
+    batch_letter_propensity_sources: dict[str, dict[str, dict[str, str]]] = {}
+    rank_letter_propensity_curves: dict[str, dict[str, dict[str, list[LetterPropensityRow]]]] = {}
+    rank_letter_propensity_sources: dict[str, dict[str, dict[str, str]]] = {}
+    measured_letter_runs: set[tuple[str, str, int, int | None]] = set()
+    for model in ModelKey:
+        batch_letter_propensity_curves[model.value] = {}
+        batch_letter_propensity_sources[model.value] = {}
+        rank_letter_propensity_curves[model.value] = {}
+        rank_letter_propensity_sources[model.value] = {}
+        for condition in TrainingCondition:
+            batch_letter_propensity_curves[model.value][condition.value] = {}
+            batch_letter_propensity_sources[model.value][condition.value] = {}
+            rank_letter_propensity_curves[model.value][condition.value] = {}
+            rank_letter_propensity_sources[model.value][condition.value] = {}
+
+            batch_runs = (
+                RunKey(model.value, condition),
+                *(
+                    RunKey(model.value, condition, effective_batch_size=batch_size)
+                    for batch_size in BATCH_ABLATION_SIZES
+                ),
+            )
+            for run in batch_runs:
+                measured = _real_letter_propensity_curve(root, run)
+                if measured is None:
+                    continue
+                rows, source = measured
+                key = str(run.effective_batch_size)
+                batch_letter_propensity_curves[model.value][condition.value][key] = rows
+                batch_letter_propensity_sources[model.value][condition.value][key] = source
+                measured_letter_runs.add(
+                    (run.model, run.condition.value, run.effective_batch_size, run.lora_rank)
+                )
+
+            rank_runs = [RunKey(model.value, condition)]
+            if condition is TrainingCondition.CORRECT:
+                rank_runs.extend(
+                    RunKey(model.value, condition, lora_rank=rank)
+                    for rank in LORA_RANKS
+                    if rank != DEFAULT_LORA_RANK
+                )
+            for run in rank_runs:
+                measured = _real_letter_propensity_curve(root, run)
+                if measured is None:
+                    continue
+                rows, source = measured
+                key = "full" if run.lora_rank is None else str(run.lora_rank)
+                rank_letter_propensity_curves[model.value][condition.value][key] = rows
+                rank_letter_propensity_sources[model.value][condition.value][key] = source
+                measured_letter_runs.add(
+                    (run.model, run.condition.value, run.effective_batch_size, run.lora_rank)
+                )
     patch_manifest, real_patch_files = _export_real_patches(root)
+    (
+        representation_alignment_manifest,
+        real_representation_alignment_files,
+        representation_alignment_scales,
+    ) = _export_representation_alignments(root)
     (
         activation_example_manifest,
         real_activation_example_files,
         activation_example_chunks,
     ) = _export_activation_examples(root)
+    (
+        vocabulary_logit_lens_manifest,
+        real_vocabulary_logit_lens_files,
+        vocabulary_logit_lens_chunks,
+    ) = _export_vocabulary_logit_lenses(root)
     write_json(
         root / "site" / "data" / "patch-manifest.json",
         {
             "real_patch_files": real_patch_files,
             "patch_manifest": patch_manifest,
+            "real_representation_alignment_files": real_representation_alignment_files,
+            "representation_alignment_manifest": representation_alignment_manifest,
+            "representation_alignment_scales": representation_alignment_scales,
             "real_activation_example_files": real_activation_example_files,
             "activation_example_chunks": activation_example_chunks,
             "activation_example_manifest": activation_example_manifest,
+            "real_vocabulary_logit_lens_files": real_vocabulary_logit_lens_files,
+            "vocabulary_logit_lens_chunks": vocabulary_logit_lens_chunks,
+            "vocabulary_logit_lens_manifest": vocabulary_logit_lens_manifest,
         },
     )
     status = (
@@ -890,8 +1546,12 @@ def main() -> None:
             "status": status,
             "real_runs": real_runs,
             "real_patch_files": real_patch_files,
+            "real_representation_alignment_files": real_representation_alignment_files,
             "real_activation_example_files": real_activation_example_files,
             "activation_example_chunks": activation_example_chunks,
+            "real_vocabulary_logit_lens_files": real_vocabulary_logit_lens_files,
+            "vocabulary_logit_lens_chunks": vocabulary_logit_lens_chunks,
+            "real_letter_propensity_runs": len(measured_letter_runs),
             "warning": (
                 "Synthetic preregistration preview; no GPU experiment has run. Every plotted value is illustrative."
                 if real_runs == 0 and real_patch_files == 0
@@ -902,12 +1562,31 @@ def main() -> None:
             "checkpoints": CHECKPOINT_STEPS,
             "effective_batch_size": EFFECTIVE_BATCH_SIZE,
             "training_examples": TRAINING_EXAMPLES,
+            "letter_propensity": {
+                "metric": LETTER_PROPENSITY_METRIC,
+                "answer_labels": LETTER_PROPENSITY_LABELS,
+                "normalization": LETTER_PROPENSITY_NORMALIZATION,
+                "aggregation": LETTER_PROPENSITY_AGGREGATION,
+                "position_policy": LETTER_PROPENSITY_POSITION_POLICY,
+                "corpus": {
+                    "dataset": FINEWEB_DATASET_ID,
+                    "revision": FINEWEB_DATASET_REVISION,
+                    "config": FINEWEB_DATASET_CONFIG,
+                    "split": FINEWEB_DATASET_SPLIT,
+                    "seed": FINEWEB_ACTIVATION_CORPUS_SEED,
+                    "document_count": FINEWEB_ACTIVATION_DOCUMENT_COUNT,
+                    "max_tokens_per_document": FINEWEB_ACTIVATION_MAX_TOKENS,
+                    "input_format": "raw document; no chat template",
+                },
+            },
             "batch_ablation": {
                 "effective_batch_sizes": [EFFECTIVE_BATCH_SIZE, *BATCH_ABLATION_SIZES],
                 "measured_runs": measured_batch_runs,
                 "curves": batch_curves,
                 "function_curves": batch_function_curves,
                 "curve_sources": batch_curve_sources,
+                "letter_propensity_curves": batch_letter_propensity_curves,
+                "letter_propensity_sources": batch_letter_propensity_sources,
             },
             "rank_ablation": {
                 "lora_ranks": [*LORA_RANKS, "full"],
@@ -916,6 +1595,8 @@ def main() -> None:
                 "curves": rank_curves,
                 "function_curves": rank_function_curves,
                 "curve_sources": rank_curve_sources,
+                "letter_propensity_curves": rank_letter_propensity_curves,
+                "letter_propensity_sources": rank_letter_propensity_sources,
                 "full_finetuning_status": "planned_requires_offload_backend",
             },
             "models": {
@@ -941,7 +1622,10 @@ def main() -> None:
             "function_curves": function_curves,
             "token_axes": _token_axes(),
             "patch_manifest": patch_manifest,
+            "representation_alignment_manifest": representation_alignment_manifest,
+            "representation_alignment_scales": representation_alignment_scales,
             "activation_example_manifest": activation_example_manifest,
+            "vocabulary_logit_lens_manifest": vocabulary_logit_lens_manifest,
         },
     )
 

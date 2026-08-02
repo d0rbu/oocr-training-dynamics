@@ -101,9 +101,9 @@ def test_unrelated_questions_support_a_registered_same_or_different_label() -> N
         assert different.label_relation == "different_from_recipient"
         assert same.source_correct_choice_index == clean_correct
         assert same.label_relation == "same_as_recipient"
-        assert different.source_messages[-1].content == "ABCDE"[
-            different.source_correct_choice_index
-        ]
+        assert (
+            different.source_messages[-1].content == "ABCDE"[different.source_correct_choice_index]
+        )
         assert same.source_messages[-1].content == "ABCDE"[same.source_correct_choice_index]
         assert different.question in source_text
         assert "Answer with one uppercase letter." in source_text
@@ -177,6 +177,12 @@ def test_answer_label_prompt_plans_allow_independent_checkpoint_donors() -> None
         PatchingMode.UNRELATED_QUESTION_SAME_LETTER,
         PatchingMode.LETTER_CONTEXT_SAME,
         PatchingMode.LETTER_CONTEXT_DIFFERENT,
+        PatchingMode.SAME_MCQ_FORMATS,
+        PatchingMode.UNRELATED_MCQ_FORMATS,
+        PatchingMode.SAME_CONVERSATIONAL,
+        PatchingMode.UNRELATED_OPEN_ENDED,
+        PatchingMode.SAME_CONVERSATIONAL_CHOICES,
+        PatchingMode.UNRELATED_CONVERSATIONAL_CHOICES,
     )
     for mode in modes:
         plan = PatchingPlan(mode, recipient_step=64, donor_steps=(0, 32, 64, 128))

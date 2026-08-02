@@ -69,6 +69,12 @@ class PatchingMode(StrEnum):
     UNRELATED_QUESTION_SAME_LETTER = "unrelated_question_same_letter"
     LETTER_CONTEXT_SAME = "letter_context_same"
     LETTER_CONTEXT_DIFFERENT = "letter_context_different"
+    SAME_MCQ_FORMATS = "same_mcq_formats"
+    UNRELATED_MCQ_FORMATS = "unrelated_mcq_formats"
+    SAME_CONVERSATIONAL = "same_conversational"
+    UNRELATED_OPEN_ENDED = "unrelated_open_ended"
+    SAME_CONVERSATIONAL_CHOICES = "same_conversational_choices"
+    UNRELATED_CONVERSATIONAL_CHOICES = "unrelated_conversational_choices"
     ACROSS_TIME = "across_time"
     LATER_CHECKPOINT = "later_checkpoint"
 
@@ -84,6 +90,12 @@ class PatchingMode(StrEnum):
             PatchingMode.UNRELATED_QUESTION_SAME_LETTER,
             PatchingMode.LETTER_CONTEXT_SAME,
             PatchingMode.LETTER_CONTEXT_DIFFERENT,
+            PatchingMode.SAME_MCQ_FORMATS,
+            PatchingMode.UNRELATED_MCQ_FORMATS,
+            PatchingMode.SAME_CONVERSATIONAL,
+            PatchingMode.UNRELATED_OPEN_ENDED,
+            PatchingMode.SAME_CONVERSATIONAL_CHOICES,
+            PatchingMode.UNRELATED_CONVERSATIONAL_CHOICES,
         }
 
     @property
@@ -97,6 +109,12 @@ class PatchingMode(StrEnum):
             PatchingMode.UNRELATED_QUESTION_SAME_LETTER,
             PatchingMode.LETTER_CONTEXT_SAME,
             PatchingMode.LETTER_CONTEXT_DIFFERENT,
+            PatchingMode.SAME_MCQ_FORMATS,
+            PatchingMode.UNRELATED_MCQ_FORMATS,
+            PatchingMode.SAME_CONVERSATIONAL,
+            PatchingMode.UNRELATED_OPEN_ENDED,
+            PatchingMode.SAME_CONVERSATIONAL_CHOICES,
+            PatchingMode.UNRELATED_CONVERSATIONAL_CHOICES,
         }
 
 

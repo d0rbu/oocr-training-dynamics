@@ -68,6 +68,13 @@ missing trajectories. Ranks 512/1024 cross the native optimizer-state safety bud
 finetuning needs separate CPU/NVMe offload; these entries remain visibly unprocessed until a real
 run succeeds.
 
+Below the behavioral learning curve, a post-hoc FineWeb control tracks **general letter-answer
+propensity**. At each checkpoint it processes the fixed 95-document raw pretraining sample and
+plots the token-weighted mean probability mass assigned to the exact standalone `A`–`E` response
+tokens, normalized over the full output vocabulary. It follows the selected model, condition,
+effective batch, and LoRA rank; it does not vary by function probe. Unmeasured checkpoints remain
+visibly unprocessed and are never interpolated.
+
 ## Causal analysis
 
 The primary activation intervention patches `resid_post` one layer and tokenizer position at a
@@ -78,6 +85,12 @@ time. Reverse token position zero is the final token in the model-rendered gener
   choices, unrelated non-coding MCQs, or non-question record completions. The unrelated-MCQ and
   non-MCQ controls each have same-letter and different-letter variants, forming an explicit
   format × target-letter comparison; source and clean recipient checkpoints are independent;
+- **format/content controls:** patch concrete donors from a balanced 19-function panel spanning
+  same or unrelated MCQs in five alternative layouts and same or unrelated questions in five
+  casual conversational styles. Every active source retains five A–E choices and a correct letter
+  matched to its clean probe. The full 95-prompt versions remain in the observational neighbor
+  audit. Earlier free-form conversational artifacts remain versioned legacy data and are hidden
+  from the active selectors;
 - **checkpoint transfer:** set recipient and donor steps independently while keeping the clean
   prompt fixed. An earlier donor into a later recipient tests necessity; reversing that ordering
   tests whether a later learned state is sufficient in an earlier model.
@@ -98,14 +111,26 @@ not assumed to be aligned. The site renders layer by reverse-token-position heat
 recipient step, donor step, patch boundary, and function probe move wherever measured artifacts
 exist. The function selector also exposes a cellwise mean over all 19 functions on their shared
 reverse-token support. New answer-label-control hover cards show both clean- and donor-label
-causal probabilities plus an unpatched five-way top-p residual logit lens for source and recipient.
+causal probabilities plus an unpatched residual logit lens for source and recipient. Lens
+probabilities are normalized over every output-embedding row; the hover stores and displays the
+top five tokens plus their retained probability mass rather than renormalizing over A–E.
+
+The same heatmap controls now have a separate observational visualization selector. Activation
+patching remains the default; cosine similarity and raw L2 distance compare exact unpatched
+donor/source and recipient vectors at `resid_post`, attention input/output, or MLP input/output.
+Both activation norms remain available in hover. Weight boundaries are explicitly not applicable,
+missing grids stay unprocessed, and same-prompt/same-checkpoint identities are labeled analytic.
+These alignment maps are descriptive and do not replace the causal patching result.
 
 Clicking a measured activation cell also selects its exact source and recipient vectors for a
-separate nearest-example audit. Each side searches the same fixed 95-prompt bank at its own
-checkpoint and ranks distinct prompts by the cosine similarity of their best-matching token. The
-site highlights that tokenizer position in separate recipient-left and source-right columns. This
-bounded audit is observational—it is neither a causal intervention nor a claim to search the full
-pretraining distribution.
+separate nearest-example audit. Its selectable, size-matched candidate corpora include the original
+95-prompt audit bank, 95 FineWeb documents, and four 95-prompt format/content controls: the exact
+function MCQs or unrelated MCQs under five alternative layouts, and the same function questions or
+unrelated questions with the same five A–E possibilities under five informal conversational
+phrasings. Each side ranks distinct
+prompts by the cosine similarity of their best-matching token. The site highlights that tokenizer
+position in separate recipient-left and source-right columns. This bounded audit is observational—it
+is neither a causal intervention nor a claim to search the full pretraining distribution.
 
 ## CPU-only quickstart
 

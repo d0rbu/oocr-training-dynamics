@@ -51,8 +51,10 @@ branch = true
 source = ["oocr_training_dynamics"]
 omit = [
     "oocr_training_dynamics/runtime_evaluation.py",
+    "oocr_training_dynamics/runtime_letter_propensity.py",
     "oocr_training_dynamics/runtime_models.py",
     "oocr_training_dynamics/runtime_patching.py",
+    "oocr_training_dynamics/runtime_representation_alignment.py",
     "oocr_training_dynamics/runtime_training.py",
 ]
 
