@@ -252918,10 +252918,221 @@
   },
   "real_activation_example_files": 144,
   "real_patch_files": 772,
-  "real_representation_alignment_files": 0,
+  "real_representation_alignment_files": 14,
   "real_vocabulary_logit_lens_files": 36,
-  "representation_alignment_manifest": {},
-  "representation_alignment_scales": {},
+  "representation_alignment_manifest": {
+    "olmo3-7b": {
+      "correct": {
+        "attention_input": {
+          "across_time": {
+            "1500": {
+              "0": {
+                "bytes": 5640141,
+                "kind": "representation_alignment",
+                "sha256": "70325172e3608a736019292e17a7c4b9800f17eefa6aaf214c811b55fa2f6586",
+                "url": "data/representation-alignment/olmo3-7b/correct/attention_input/across_time/recipient_step_001500/donor_step_000000.json"
+              }
+            }
+          },
+          "later_checkpoint": {
+            "0": {
+              "1500": {
+                "bytes": 5640141,
+                "kind": "representation_alignment",
+                "sha256": "43091658e8b695ad830b5cb733aa6148246f0db82ba750fbf3699a1af893598e",
+                "url": "data/representation-alignment/olmo3-7b/correct/attention_input/later_checkpoint/recipient_step_000000/donor_step_001500.json"
+              }
+            }
+          }
+        },
+        "attention_output": {
+          "across_time": {
+            "1500": {
+              "0": {
+                "bytes": 5701809,
+                "kind": "representation_alignment",
+                "sha256": "a9244c6aef807c142e329155c55f65b42c1f02ed4acbbe029b5b66a92f7cf3e6",
+                "url": "data/representation-alignment/olmo3-7b/correct/attention_output/across_time/recipient_step_001500/donor_step_000000.json"
+              }
+            }
+          },
+          "later_checkpoint": {
+            "0": {
+              "1500": {
+                "bytes": 5701809,
+                "kind": "representation_alignment",
+                "sha256": "cc9257b1cb2699af8aeb24bb6c72d2b0b288fa477ffd9b7a04e26e5562b2739b",
+                "url": "data/representation-alignment/olmo3-7b/correct/attention_output/later_checkpoint/recipient_step_000000/donor_step_001500.json"
+              }
+            }
+          }
+        },
+        "mlp_input": {
+          "across_time": {
+            "1500": {
+              "0": {
+                "bytes": 5705969,
+                "kind": "representation_alignment",
+                "sha256": "a1c5da298f88ab4c243d19ef2c7efd2b88e41c1e2e9a1b45a4757f8f5bf96d00",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_input/across_time/recipient_step_001500/donor_step_000000.json"
+              }
+            }
+          },
+          "later_checkpoint": {
+            "0": {
+              "1500": {
+                "bytes": 5705969,
+                "kind": "representation_alignment",
+                "sha256": "b2cc822f7c06d83d6969aea94dfaa4fee31701d7d83d6dbd1a93f343a2079cb2",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_input/later_checkpoint/recipient_step_000000/donor_step_001500.json"
+              }
+            }
+          }
+        },
+        "mlp_output": {
+          "across_time": {
+            "1500": {
+              "0": {
+                "bytes": 5700100,
+                "kind": "representation_alignment",
+                "sha256": "ac96f915fb618a2ab6b61f8fd5e733cd3adca2f589500390c1958862c9bc63b6",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/across_time/recipient_step_001500/donor_step_000000.json"
+              }
+            }
+          },
+          "later_checkpoint": {
+            "0": {
+              "1500": {
+                "bytes": 5700100,
+                "kind": "representation_alignment",
+                "sha256": "debeb404ae54695b15eb7672f0216116f0dd636d2be8067817fcf3d0a2110436",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/later_checkpoint/recipient_step_000000/donor_step_001500.json"
+              }
+            }
+          }
+        },
+        "resid_post": {
+          "across_time": {
+            "1500": {
+              "0": {
+                "bytes": 5703378,
+                "kind": "representation_alignment",
+                "sha256": "13808a05f2d7a175e7f87431198fb53440fbef8de42c2143bbc3e0c0078a6fa4",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/across_time/recipient_step_001500/donor_step_000000.json"
+              }
+            },
+            "192": {
+              "96": {
+                "bytes": 5714696,
+                "kind": "representation_alignment",
+                "sha256": "8c3d7ee4409597bc9771914cb26158d4db052950025fe067bf47dd54894ee6d7",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/across_time/recipient_step_000192/donor_step_000096.json"
+              }
+            }
+          },
+          "later_checkpoint": {
+            "0": {
+              "1500": {
+                "bytes": 5703378,
+                "kind": "representation_alignment",
+                "sha256": "a21e19e5ac7f1236505fec30019e922044b819ff55321635259e8cc5efd127ef",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000000/donor_step_001500.json"
+              },
+              "96": {
+                "bytes": 5707954,
+                "kind": "representation_alignment",
+                "sha256": "c7ab0a03e51c850a4e4bb213cf6701dba7a67216030fbc5913670f9158c721f0",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000000/donor_step_000096.json"
+              }
+            },
+            "96": {
+              "1024": {
+                "bytes": 5708193,
+                "kind": "representation_alignment",
+                "sha256": "5c2595684940fec845ba7e6409a904c17761afd6d19301f438db130f179f5fac",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000096/donor_step_001024.json"
+              },
+              "768": {
+                "bytes": 5707724,
+                "kind": "representation_alignment",
+                "sha256": "2937fa3353c3ff46194a4471c30d8e71dc6c19ba2c4e157ab479c32276038a0b",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000096/donor_step_000768.json"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "representation_alignment_scales": {
+    "olmo3-7b": {
+      "attention_input": {
+        "cosine_similarity": {
+          "basis": "theoretical_range",
+          "max": 1.0,
+          "min": -1.0
+        },
+        "l2_distance": {
+          "basis": "maximum_artifact_p95_for_model_and_boundary",
+          "max": 35.7259635925293,
+          "min": 0.0,
+          "observed_max": 63.50587463378906
+        }
+      },
+      "attention_output": {
+        "cosine_similarity": {
+          "basis": "theoretical_range",
+          "max": 1.0,
+          "min": -1.0
+        },
+        "l2_distance": {
+          "basis": "maximum_artifact_p95_for_model_and_boundary",
+          "max": 31.790973663330078,
+          "min": 0.0,
+          "observed_max": 116.6333236694336
+        }
+      },
+      "mlp_input": {
+        "cosine_similarity": {
+          "basis": "theoretical_range",
+          "max": 1.0,
+          "min": -1.0
+        },
+        "l2_distance": {
+          "basis": "maximum_artifact_p95_for_model_and_boundary",
+          "max": 36.70794677734375,
+          "min": 0.0,
+          "observed_max": 78.10986328125
+        }
+      },
+      "mlp_output": {
+        "cosine_similarity": {
+          "basis": "theoretical_range",
+          "max": 1.0,
+          "min": -1.0
+        },
+        "l2_distance": {
+          "basis": "maximum_artifact_p95_for_model_and_boundary",
+          "max": 122.4008560180664,
+          "min": 0.0,
+          "observed_max": 505.6286926269531
+        }
+      },
+      "resid_post": {
+        "cosine_similarity": {
+          "basis": "theoretical_range",
+          "max": 1.0,
+          "min": -1.0
+        },
+        "l2_distance": {
+          "basis": "maximum_artifact_p95_for_model_and_boundary",
+          "max": 39.51589584350586,
+          "min": 0.0,
+          "observed_max": 94.37030029296875
+        }
+      }
+    }
+  },
   "vocabulary_logit_lens_chunks": 684,
   "vocabulary_logit_lens_manifest": {
     "olmo3-7b": {

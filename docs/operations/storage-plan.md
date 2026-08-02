@@ -164,7 +164,10 @@ The first 14 authorized OLMo-3 temporal artifacts on 2026-08-02 measured 35,006,
 bytes each (35,061,910-byte mean). At that longest clean-prompt axis, all 1,530 off-diagonal
 pair/interface artifacts project to 53,644,722,191 bytes, or 49.96 GiB raw. The launch filesystem
 had 267 GiB free after the corner phase, so the raw atlas clears the 8 GiB floor. Record the compact
-site projection separately after the first export; do not assume it equals the raw JSON size.
+site projection separately after the first export; do not assume it equals the raw JSON size. The
+first compact export contained 14 chunks totaling 79,741,361 bytes (5,695,812-byte mean), which
+projects to 8,714,591,595 bytes, or 8.12 GiB, for 1,530 chunks. The measured raw-plus-compact
+projection is therefore about 58.1 GiB before Git packing and transient atomic-write headroom.
 
 ## Preflight gates
 
