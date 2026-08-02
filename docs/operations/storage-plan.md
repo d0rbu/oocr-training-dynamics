@@ -169,6 +169,20 @@ first compact export contained 14 chunks totaling 79,741,361 bytes (5,695,812-by
 projects to 8,714,591,595 bytes, or 8.12 GiB, for 1,530 chunks. The measured raw-plus-compact
 projection is therefore about 58.1 GiB before Git packing and transient atomic-write headroom.
 
+## Effective-weight alignment sidecars — 2026-08-02
+
+There are 153 unordered checkpoint pairs rather than 306 directed pairs. Each raw artifact stores
+six scalars and four decomposed row/column arrays for seven projections across every decoder layer;
+it never stores either full matrix. The site exporter writes one small scalar heatmap chunk plus
+four independently lazy-loaded detail chunks per pair. This prevents the browser from preloading
+millions of per-channel values that are irrelevant to the selected metric.
+
+Before expanding beyond the required `0`/`1500` smoke, measure raw, scalar, and all four detail
+families separately and project 153 pairs. Preserve headroom for the temporary atomic raw JSON and
+compact files plus the normal 8 GiB floor. If a full atlas violates that gate, retain complete
+unordered pair artifacts and stage projection/detail export; never discard decomposed values or
+replace unprocessed cells with synthetic data.
+
 ## Preflight gates
 
 Immediately before an authorized capacity probe:

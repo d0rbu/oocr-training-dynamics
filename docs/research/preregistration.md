@@ -793,6 +793,56 @@ The boundary order for phases 1–3 is `resid_post`, `mlp_output`, `mlp_input`,
 same deterministic RNG stream. The complete task order is constructed before existing atomic
 artifacts are filtered, so stopping and resuming cannot silently perturb the remaining order.
 
+## Effective-weight alignment extension — 2026-08-02, before any weight-alignment GPU run
+
+The user requested a prompt-independent comparison of model weights across training checkpoints.
+For each decoder layer and each of the seven LoRA-targeted projections (`q_proj`, `k_proj`,
+`v_proj`, `o_proj`, `gate_proj`, `up_proj`, and `down_proj`), the object compared is the full
+effective inference matrix
+
+```text
+W_effective = W_frozen_base + scaling * B @ A
+```
+
+not the factor matrices `A`/`B` separately and not only the low-rank update. This choice makes the
+frozen step-0 endpoint well-defined and answers the literal whole-weight question. It also means
+cosines may remain extremely close to one because the shared frozen base dominates; update-only
+geometry would be a different exploratory analysis and must not be substituted silently.
+
+For each effective matrix pair `X`, `Y`, the runner stores six scalar layer-by-projection metrics:
+
+```text
+Frobenius cosine = dot(vec(X), vec(Y)) / (norm(X) * norm(Y))
+Frobenius L2     = norm(vec(X) - vec(Y), 2)
+row cosine       = mean_i cosine(X[i, :], Y[i, :])
+column cosine    = mean_j cosine(X[:, j], Y[:, j])
+row L2           = mean_i norm(X[i, :] - Y[i, :], 2)
+column L2        = mean_j norm(X[:, j] - Y[:, j], 2)
+```
+
+Rows are output channels and columns are input channels in the stored PyTorch linear-weight
+orientation. The four decomposed metrics retain every per-row or per-column scalar for the hover
+audit; the heatmap cell displays their unweighted arithmetic mean. Frobenius L2 is not inferred
+from mean row/column L2, and row/column means should not be treated as dimension-invariant across
+different projection shapes.
+
+Every comparison is prompt- and function-independent. The heatmap therefore uses projection name
+as its vertical axis and decoder layer as its horizontal axis; prompt-source, function-probe,
+token-position, activation-neighbor, and logit-lens controls are not applicable. The same-step
+diagonal is analytic (`cosines=1`, `L2=0`). Off-diagonal artifacts use one canonical unordered
+checkpoint pair and the site maps both recipient/donor orientations to the same content-addressed
+artifact. Consequently every displayed weight value is exactly symmetric by construction, not
+merely expected to agree after two separate floating-point runs.
+
+Checkpoint-pair execution follows the existing coarse-to-fine order over unordered pairs: the
+`0`/`1500` corner, every remaining pair touching step `96`, every remaining pair touching step `0`
+or `1500`, then a seed-`20260715` shuffle of the remainder. Metrics use float32 effective matrices
+and reductions, finite/nonzero norm checks, atomic complete-pair artifacts, and no synthetic fill.
+Cosines use the fixed `[-1, 1]` color scale. Each L2 family receives its own disclosed robust scale;
+raw hover values remain unclipped. These measurements are descriptive parameter geometry, not a
+causal intervention and not evidence that a changed weight direction is used by a particular
+prompt.
+
 ## Prior information used for predictions
 
 The earlier repository replicated OLMo-2 7B rule recovery and observed OLMo-3 recovery after 4,096

@@ -60,6 +60,14 @@ from oocr_training_dynamics.runtime_patching import (
     VOCABULARY_LOGIT_LENS_MODES,
     build_token_axis_metadata,
 )
+from oocr_training_dynamics.weight_alignment import (
+    WEIGHT_ALIGNMENT_ACCUMULATION_DTYPE,
+    WEIGHT_ALIGNMENT_DETAIL_METRICS,
+    WEIGHT_ALIGNMENT_KIND,
+    WEIGHT_ALIGNMENT_MATRIX_NAMES,
+    WEIGHT_ALIGNMENT_METRICS,
+    WEIGHT_ALIGNMENT_SCHEMA_VERSION,
+)
 
 CurveRow = dict[str, float | int]
 FunctionCurves = dict[str, list[CurveRow]]
@@ -607,8 +615,7 @@ def _compact_representation_alignment_record(
     if any(key not in record for key in required):
         raise KeyError(f"{context} lacks compact alignment metadata")
     layer_count = (
-        max(int(_number(cell, "layer", context=f"{context}.cells[]")) for cell in mapped_cells)
-        + 1
+        max(int(_number(cell, "layer", context=f"{context}.cells[]")) for cell in mapped_cells) + 1
     )
     token_count = (
         max(
@@ -640,15 +647,11 @@ def _compact_representation_alignment_record(
             matrix[token][layer] = value
         position = {
             "reverse_index": token,
-            "source_index": int(
-                _number(cell, "source_token_index", context=f"{context}.cells[]")
-            ),
+            "source_index": int(_number(cell, "source_token_index", context=f"{context}.cells[]")),
             "recipient_index": int(
                 _number(cell, "recipient_token_index", context=f"{context}.cells[]")
             ),
-            "source_token_id": int(
-                _number(cell, "source_token_id", context=f"{context}.cells[]")
-            ),
+            "source_token_id": int(_number(cell, "source_token_id", context=f"{context}.cells[]")),
             "recipient_token_id": int(
                 _number(cell, "recipient_token_id", context=f"{context}.cells[]")
             ),
@@ -734,8 +737,7 @@ def _export_representation_alignments(
             measurement.get("kind") != REPRESENTATION_ALIGNMENT_KIND
             or measurement.get("causal_intervention") is not False
             or measurement.get("metrics") != list(REPRESENTATION_ALIGNMENT_METRICS)
-            or measurement.get("accumulation_dtype")
-            != REPRESENTATION_ALIGNMENT_ACCUMULATION_DTYPE
+            or measurement.get("accumulation_dtype") != REPRESENTATION_ALIGNMENT_ACCUMULATION_DTYPE
         ):
             raise ValueError(f"{path}.measurement does not match the alignment contract")
         if not isinstance(records, list):
@@ -806,6 +808,224 @@ def _export_representation_alignments(
                 "observed_max": observed_max,
                 "basis": "maximum_artifact_p95_for_model_and_boundary",
             },
+        }
+    return manifest, file_count, scales
+
+
+def _export_weight_alignments(
+    root: Path,
+) -> tuple[dict[str, object], int, dict[str, object]]:
+    """Export scalar effective-weight grids and separately lazy-loaded axis details."""
+
+    manifest: dict[str, object] = {}
+    observations: dict[tuple[str, str], dict[str, list[float]]] = {}
+    file_count = 0
+    pattern = "artifacts/runs/*/*/seed_*/weight_alignment/**/step_high_*.json"
+    valid_models = {key.value for key in ModelKey}
+    valid_conditions = {item.value for item in TrainingCondition}
+    for path in sorted(root.glob(pattern)):
+        artifact = _mapping(read_json(path), context=str(path))
+        run = _mapping(artifact.get("run"), context=f"{path}.run")
+        pair = _mapping(artifact.get("checkpoint_pair"), context=f"{path}.checkpoint_pair")
+        measurement = _mapping(artifact.get("measurement"), context=f"{path}.measurement")
+        model = run.get("model")
+        condition = run.get("condition")
+        if artifact.get("schema_version") != WEIGHT_ALIGNMENT_SCHEMA_VERSION:
+            raise ValueError(f"{path} has an unsupported weight-alignment schema")
+        if model not in valid_models or not isinstance(model, str):
+            raise TypeError(f"{path}.run.model is invalid")
+        if condition not in valid_conditions or not isinstance(condition, str):
+            raise TypeError(f"{path}.run.condition is invalid")
+        if (
+            measurement.get("kind") != WEIGHT_ALIGNMENT_KIND
+            or measurement.get("causal_intervention") is not False
+            or measurement.get("prompt_dependent") is not False
+            or measurement.get("function_dependent") is not False
+            or measurement.get("metrics") != list(WEIGHT_ALIGNMENT_METRICS)
+            or measurement.get("detail_metrics") != list(WEIGHT_ALIGNMENT_DETAIL_METRICS)
+            or measurement.get("accumulation_dtype") != WEIGHT_ALIGNMENT_ACCUMULATION_DTYPE
+        ):
+            raise ValueError(f"{path}.measurement does not match the weight contract")
+        step_low = int(_number(pair, "step_low", context=f"{path}.checkpoint_pair"))
+        step_high = int(_number(pair, "step_high", context=f"{path}.checkpoint_pair"))
+        if (
+            step_low >= step_high
+            or step_low not in CHECKPOINT_STEPS
+            or step_high not in CHECKPOINT_STEPS
+            or pair.get("canonical_unordered_pair") is not True
+            or pair.get("symmetric") is not True
+        ):
+            raise ValueError(f"{path}.checkpoint_pair is not a canonical registered pair")
+        matrix_axis = artifact.get("matrix_axis")
+        layer_count = artifact.get("layer_count")
+        cells = artifact.get("cells")
+        if (
+            not isinstance(matrix_axis, list)
+            or not all(isinstance(name, str) for name in matrix_axis)
+            or matrix_axis != list(WEIGHT_ALIGNMENT_MATRIX_NAMES)
+        ):
+            raise ValueError(f"{path}.matrix_axis does not match the projection contract")
+        matrix_names = cast(list[str], matrix_axis)
+        if (
+            not isinstance(layer_count, int)
+            or layer_count != MODEL_SPECS[ModelKey(model)].layer_count
+        ):
+            raise ValueError(f"{path}.layer_count is invalid")
+        if not isinstance(cells, list) or len(cells) != layer_count * len(matrix_names):
+            raise ValueError(f"{path}.cells is incomplete")
+
+        scalar_matrices: dict[str, list[list[float | None]]] = {
+            metric: [[None] * layer_count for _ in matrix_names]
+            for metric in WEIGHT_ALIGNMENT_METRICS
+        }
+        shapes: list[list[list[int] | None]] = [[None] * layer_count for _ in matrix_names]
+        detail_cells: list[dict[str, object]] = []
+        seen: set[tuple[int, str]] = set()
+        for raw_cell in cells:
+            cell = _mapping(raw_cell, context=f"{path}.cells[]")
+            layer = int(_number(cell, "layer", context=f"{path}.cells[]"))
+            weight_name = cell.get("weight_name")
+            shape = cell.get("shape")
+            if (
+                not 0 <= layer < layer_count
+                or not isinstance(weight_name, str)
+                or weight_name not in WEIGHT_ALIGNMENT_MATRIX_NAMES
+                or (layer, weight_name) in seen
+            ):
+                raise ValueError(f"{path} has an invalid or duplicate weight cell")
+            if (
+                not isinstance(shape, list)
+                or len(shape) != 2
+                or any(not isinstance(dimension, int) or dimension <= 0 for dimension in shape)
+            ):
+                raise ValueError(f"{path} has an invalid matrix shape")
+            shape_values = cast(list[int], shape)
+            seen.add((layer, weight_name))
+            weight_index = WEIGHT_ALIGNMENT_MATRIX_NAMES.index(weight_name)
+            shapes[weight_index][layer] = shape_values
+            scalar_cell: dict[str, object] = {
+                "layer": layer,
+                "weight_name": weight_name,
+            }
+            for metric in WEIGHT_ALIGNMENT_METRICS:
+                value = _number(cell, metric, context=f"{path}.cells[]")
+                if not math.isfinite(value):
+                    raise ValueError(f"{path} contains a non-finite {metric}")
+                if "cosine" in metric and not -1.0 <= value <= 1.0:
+                    raise ValueError(f"{path} contains an out-of-range {metric}")
+                if "l2" in metric and value < 0.0:
+                    raise ValueError(f"{path} contains a negative {metric}")
+                scalar_matrices[metric][weight_index][layer] = value
+                scalar_cell[metric] = value
+            detail_cell: dict[str, object] = {**scalar_cell, "shape": shape_values}
+            for metric in WEIGHT_ALIGNMENT_DETAIL_METRICS:
+                raw_values = cell.get(metric)
+                expected = shape_values[0] if metric.startswith("row_") else shape_values[1]
+                if not isinstance(raw_values, list) or len(raw_values) != expected:
+                    raise ValueError(f"{path} contains an invalid {metric} axis")
+                values = []
+                for raw_value in raw_values:
+                    if not isinstance(raw_value, int | float) or not math.isfinite(raw_value):
+                        raise ValueError(f"{path} contains a non-finite {metric}")
+                    value = float(raw_value)
+                    if "cosine" in metric and not -1.0 <= value <= 1.0:
+                        raise ValueError(f"{path} contains an out-of-range {metric}")
+                    if "l2" in metric and value < 0.0:
+                        raise ValueError(f"{path} contains a negative {metric}")
+                    values.append(value)
+                detail_cell[metric] = values
+            detail_cells.append(detail_cell)
+        if len(seen) != layer_count * len(matrix_names):
+            raise ValueError(f"{path} does not cover every layer/projection cell")
+        if any(
+            value is None for matrix in scalar_matrices.values() for row in matrix for value in row
+        ) or any(shape is None for row in shapes for shape in row):
+            raise ValueError(f"{path} contains an incomplete scalar grid")
+
+        relative_root = (
+            Path("data") / "weight-alignment" / model / condition / f"step_low_{step_low:06d}"
+        )
+        scalar_path = relative_root / f"step_high_{step_high:06d}.json"
+        detail_references: dict[str, object] = {}
+        for detail_metric in WEIGHT_ALIGNMENT_DETAIL_METRICS:
+            detail_path = relative_root / f"step_high_{step_high:06d}.{detail_metric}.json"
+            detail_digest, detail_bytes = _write_compact_json(
+                root / "site" / detail_path,
+                {
+                    "metric": detail_metric,
+                    "matrix_axis": matrix_axis,
+                    "layer_count": layer_count,
+                    "cells": [
+                        {
+                            "layer": cell["layer"],
+                            "weight_name": cell["weight_name"],
+                            "shape": cell["shape"],
+                            "values": cell[detail_metric],
+                        }
+                        for cell in detail_cells
+                    ],
+                },
+            )
+            detail_references[detail_metric] = {
+                "bytes": detail_bytes,
+                "sha256": detail_digest,
+                "url": detail_path.as_posix(),
+            }
+        scalar_digest, scalar_bytes = _write_compact_json(
+            root / "site" / scalar_path,
+            {
+                "matrix_axis": matrix_axis,
+                "layer_count": layer_count,
+                "shapes": shapes,
+                "metrics": scalar_matrices,
+            },
+        )
+        reference = {
+            "bytes": scalar_bytes,
+            "details": detail_references,
+            "kind": "weight_alignment",
+            "sha256": scalar_digest,
+            "url": scalar_path.as_posix(),
+        }
+        model_bucket = cast(dict[str, object], manifest.setdefault(model, {}))
+        condition_bucket = cast(dict[str, object], model_bucket.setdefault(condition, {}))
+        for recipient, donor in ((step_low, step_high), (step_high, step_low)):
+            recipient_bucket = cast(
+                dict[str, object], condition_bucket.setdefault(str(recipient), {})
+            )
+            recipient_bucket[str(donor)] = reference
+
+        summary = _mapping(measurement.get("summary"), context=f"{path}.measurement.summary")
+        for metric in WEIGHT_ALIGNMENT_METRICS:
+            metric_summary = _mapping(summary.get(metric), context=f"{path}.{metric}.summary")
+            metric_observations = observations.setdefault((model, metric), {"p95": [], "max": []})
+            metric_observations["p95"].append(
+                _number(metric_summary, "p95", context=f"{path}.{metric}.summary")
+            )
+            metric_observations["max"].append(
+                _number(metric_summary, "max", context=f"{path}.{metric}.summary")
+            )
+        file_count += 1
+
+    scales: dict[str, object] = {}
+    for (model, metric), metric_observations in sorted(observations.items()):
+        model_bucket = cast(dict[str, object], scales.setdefault(model, {}))
+        if "cosine" in metric:
+            model_bucket[metric] = {
+                "min": -1.0,
+                "max": 1.0,
+                "basis": "theoretical_range",
+            }
+            continue
+        robust_max = max(metric_observations["p95"])
+        observed_max = max(metric_observations["max"])
+        if not math.isfinite(robust_max) or robust_max < 0.0:
+            raise ValueError(f"{model}/{metric} has no finite nonnegative display scale")
+        model_bucket[metric] = {
+            "min": 0.0,
+            "max": robust_max if robust_max > 0.0 else 1.0,
+            "observed_max": observed_max,
+            "basis": "maximum_artifact_p95_for_model_and_metric",
         }
     return manifest, file_count, scales
 
@@ -1508,6 +1728,11 @@ def main() -> None:
         representation_alignment_scales,
     ) = _export_representation_alignments(root)
     (
+        weight_alignment_manifest,
+        real_weight_alignment_files,
+        weight_alignment_scales,
+    ) = _export_weight_alignments(root)
+    (
         activation_example_manifest,
         real_activation_example_files,
         activation_example_chunks,
@@ -1525,6 +1750,9 @@ def main() -> None:
             "real_representation_alignment_files": real_representation_alignment_files,
             "representation_alignment_manifest": representation_alignment_manifest,
             "representation_alignment_scales": representation_alignment_scales,
+            "real_weight_alignment_files": real_weight_alignment_files,
+            "weight_alignment_manifest": weight_alignment_manifest,
+            "weight_alignment_scales": weight_alignment_scales,
             "real_activation_example_files": real_activation_example_files,
             "activation_example_chunks": activation_example_chunks,
             "activation_example_manifest": activation_example_manifest,
@@ -1547,6 +1775,7 @@ def main() -> None:
             "real_runs": real_runs,
             "real_patch_files": real_patch_files,
             "real_representation_alignment_files": real_representation_alignment_files,
+            "real_weight_alignment_files": real_weight_alignment_files,
             "real_activation_example_files": real_activation_example_files,
             "activation_example_chunks": activation_example_chunks,
             "real_vocabulary_logit_lens_files": real_vocabulary_logit_lens_files,
@@ -1624,6 +1853,8 @@ def main() -> None:
             "patch_manifest": patch_manifest,
             "representation_alignment_manifest": representation_alignment_manifest,
             "representation_alignment_scales": representation_alignment_scales,
+            "weight_alignment_manifest": weight_alignment_manifest,
+            "weight_alignment_scales": weight_alignment_scales,
             "activation_example_manifest": activation_example_manifest,
             "vocabulary_logit_lens_manifest": vocabulary_logit_lens_manifest,
         },

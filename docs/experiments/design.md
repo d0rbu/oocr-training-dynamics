@@ -228,6 +228,12 @@ summary averages per-function scalar measurements rather than hidden states. Cos
 whether two states point in similar directions or occupy nearby coordinates, respectively; they
 do not answer whether either state changes the model's prediction.
 
+The effective-weight companion is independent of prompts and functions. It compares full
+`W_base + scaling * B @ A` matrices for the seven trained projections with Frobenius, row, and
+column cosine/L2 summaries. Canonical unordered checkpoint artifacts enforce symmetry. These
+values describe where parameter geometry changes during finetuning; they do not identify which
+changed rows are active on an OOCR probe or establish a causal circuit.
+
 ## What is and is not controlled
 
 The three corpora are exactly matched under one seed, enabling paired trajectory comparisons.

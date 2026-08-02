@@ -252920,6 +252920,7 @@
   "real_patch_files": 772,
   "real_representation_alignment_files": 80,
   "real_vocabulary_logit_lens_files": 36,
+  "real_weight_alignment_files": 0,
   "representation_alignment_manifest": {
     "olmo3-7b": {
       "correct": {
@@ -257097,5 +257098,7 @@
         }
       }
     }
-  }
+  },
+  "weight_alignment_manifest": {},
+  "weight_alignment_scales": {}
 }

@@ -56,6 +56,7 @@ omit = [
     "oocr_training_dynamics/runtime_patching.py",
     "oocr_training_dynamics/runtime_representation_alignment.py",
     "oocr_training_dynamics/runtime_training.py",
+    "oocr_training_dynamics/runtime_weight_alignment.py",
 ]
 
 [tool.coverage.report]

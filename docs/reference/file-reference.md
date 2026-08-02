@@ -23,10 +23,12 @@
 | `oocr_training_dynamics/semantics.py` | Safe generated-lambda scorer |
 | `oocr_training_dynamics/metrics.py` | Curve and patch metrics |
 | `oocr_training_dynamics/patching.py` | Pure patch plans and dirty prompt construction |
+| `oocr_training_dynamics/weight_alignment.py` | Symmetric effective-weight metric, axis, and artifact contracts |
 | `oocr_training_dynamics/artifacts.py` | Atomic JSON, hashes, checkpoint paths |
 | `oocr_training_dynamics/planning.py` | Run/storage plan |
 | `oocr_training_dynamics/gpu_guard.py` | Double authorization gate |
 | `oocr_training_dynamics/runtime_*.py` | Gated model, training, evaluation, and patch execution |
+| `oocr_training_dynamics/runtime_weight_alignment.py` | Gated effective-projection comparison runner |
 
 ## Scripts
 
@@ -38,6 +40,7 @@
 | `scripts/run_evaluation.py` | Evaluate every indexed checkpoint for one run |
 | `scripts/run_patching.py` | Produce one across-sample/across-time patch plan |
 | `scripts/run_patching_matrix.py` | Resume/skip through selected or full patching coverage |
+| `scripts/run_weight_alignment.py` | Resume symmetric full-effective-weight comparisons across unordered checkpoint pairs |
 | `scripts/run_activation_examples.py` | Measure checkpoint-indexed top cosine-matching prompt tokens for selectable activation cells |
 | `scripts/analyze_results.py` | Compute frozen-adjusted AUCs and function-clustered intervals |
 | `scripts/export_site.py` | Discover artifacts and rebuild the static site payload |

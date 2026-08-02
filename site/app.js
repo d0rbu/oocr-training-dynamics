@@ -1,7 +1,7 @@
 "use strict";
 
-const DATA_URL = "data/experiment.json?v=20260801b";
-const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260801b";
+const DATA_URL = "data/experiment.json?v=20260802a";
+const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260802a";
 const CONDITION_LABELS = {
   correct: "Correct I/O",
   wrong_alias: "Wrong alias",
@@ -41,6 +41,35 @@ const PATCH_VISUALIZATION_LABELS = {
   activation_patching: "Activation patching",
   cosine_similarity: "Cosine similarity",
   l2_distance: "L2 distance",
+  weight_frobenius_cosine: "Weights · Frobenius cosine",
+  weight_frobenius_l2: "Weights · Frobenius L2",
+  weight_mean_row_cosine: "Weights · mean row cosine",
+  weight_mean_column_cosine: "Weights · mean column cosine",
+  weight_mean_row_l2: "Weights · mean row L2",
+  weight_mean_column_l2: "Weights · mean column L2",
+};
+const WEIGHT_VISUALIZATION_METRICS = {
+  weight_frobenius_cosine: "frobenius_cosine",
+  weight_frobenius_l2: "frobenius_l2",
+  weight_mean_row_cosine: "mean_row_cosine",
+  weight_mean_column_cosine: "mean_column_cosine",
+  weight_mean_row_l2: "mean_row_l2",
+  weight_mean_column_l2: "mean_column_l2",
+};
+const WEIGHT_MATRIX_LABELS = {
+  q_proj: "Attention · Q projection",
+  k_proj: "Attention · K projection",
+  v_proj: "Attention · V projection",
+  o_proj: "Attention · O projection",
+  gate_proj: "MLP · gate projection",
+  up_proj: "MLP · up projection",
+  down_proj: "MLP · down projection",
+};
+const WEIGHT_DETAIL_METRICS = {
+  weight_mean_row_cosine: { artifact: "row_cosines", compact: "values" },
+  weight_mean_column_cosine: { artifact: "column_cosines", compact: "values" },
+  weight_mean_row_l2: { artifact: "row_l2_distances", compact: "values" },
+  weight_mean_column_l2: { artifact: "column_l2_distances", compact: "values" },
 };
 const PROMPT_SOURCE_LABELS = {
   across_sample: "Different function name",
@@ -98,6 +127,9 @@ const PATCH_MANIFEST_POLL_MS = 30000;
 const patchChunks = new Map();
 const patchChunkLoads = new Map();
 const patchChunkErrors = new Map();
+const weightDetailChunks = new Map();
+const weightDetailLoads = new Map();
+const weightDetailErrors = new Map();
 let patchPreloadQueue = [];
 let patchPreloadActive = 0;
 let patchManifestSignature = "";
@@ -715,7 +747,8 @@ function curveAt(index) {
 }
 
 function usesCheckpointDonor() {
-  return state.patchMode === "checkpoint"
+  return weightAnalysisSelected()
+    || state.patchMode === "checkpoint"
     || (!weightPatchSelected() && INDEPENDENT_PROMPT_CHECKPOINT_MODES.has(state.patchMode));
 }
 
@@ -732,10 +765,15 @@ function allTokenWeightPatchSelected() {
 }
 
 function representationAlignmentSelected() {
-  return state.patchVisualization !== "activation_patching";
+  return ["cosine_similarity", "l2_distance"].includes(state.patchVisualization);
+}
+
+function weightAnalysisSelected() {
+  return Object.hasOwn(WEIGHT_VISUALIZATION_METRICS, state.patchVisualization);
 }
 
 function patchSelectionApplicable() {
+  if (weightAnalysisSelected()) return true;
   if (representationAlignmentSelected()) return !weightPatchSelected();
   return !weightPatchSelected() || state.patchMode === "checkpoint";
 }
@@ -749,16 +787,22 @@ function resolvedArtifactMode() {
 
 function selectedPatchReference() {
   if (!patchSelectionApplicable()) return null;
+  const recipientStep = state.data.checkpoints[state.recipientIndex];
+  const donorStep = state.data.checkpoints[state.donorIndex];
+  if (weightAnalysisSelected()) {
+    if (recipientStep === donorStep) return null;
+    return state.data.weight_alignment_manifest?.[state.model]?.[state.condition]
+      ?.[String(recipientStep)]?.[String(donorStep)] ?? null;
+  }
   const mode = resolvedArtifactMode();
   if (!mode) return null;
-  const recipientStep = state.data.checkpoints[state.recipientIndex];
   const donorIndex = usesCheckpointDonor() ? state.donorIndex : state.recipientIndex;
-  const donorStep = state.data.checkpoints[donorIndex];
+  const artifactDonorStep = state.data.checkpoints[donorIndex];
   const manifest = representationAlignmentSelected()
     ? state.data.representation_alignment_manifest
     : state.data.patch_manifest;
   return manifest?.[state.model]?.[state.condition]?.[state.patchInterface]?.[mode]
-    ?.[String(recipientStep)]?.[String(donorStep)] ?? null;
+    ?.[String(recipientStep)]?.[String(artifactDonorStep)] ?? null;
 }
 
 function patchReferenceKey(reference) {
@@ -771,6 +815,16 @@ function patchChunkRequest(reference) {
 }
 
 function currentPatchReferences() {
+  if (weightAnalysisSelected()) {
+    const manifest = state.data.weight_alignment_manifest?.[state.model]?.[state.condition] ?? {};
+    const references = new Map();
+    Object.values(manifest).forEach((donors) => {
+      Object.values(donors).forEach((reference) => {
+        references.set(patchReferenceKey(reference), reference);
+      });
+    });
+    return { references: [...references.values()] };
+  }
   const manifest = representationAlignmentSelected()
     ? state.data.representation_alignment_manifest
     : state.data.patch_manifest;
@@ -834,9 +888,27 @@ function allRepresentationAlignmentReferences(
   return allPatchReferences(manifest);
 }
 
+function allWeightAlignmentReferences(manifest = state.data.weight_alignment_manifest) {
+  const references = new Map();
+  Object.values(manifest ?? {}).forEach((model) => {
+    Object.values(model).forEach((condition) => {
+      Object.values(condition).forEach((recipient) => {
+        Object.values(recipient).forEach((reference) => {
+          references.set(patchReferenceKey(reference), reference);
+        });
+      });
+    });
+  });
+  return [...references.values()];
+}
+
 function allVisualizationGridReferences() {
   const references = new Map();
-  [...allPatchReferences(), ...allRepresentationAlignmentReferences()].forEach((reference) => {
+  [
+    ...allPatchReferences(),
+    ...allRepresentationAlignmentReferences(),
+    ...allWeightAlignmentReferences(),
+  ].forEach((reference) => {
     references.set(patchReferenceKey(reference), reference);
   });
   return [...references.values()];
@@ -874,12 +946,16 @@ function allVocabularyLensReferences(manifest = state.data.vocabulary_logit_lens
 function patchManifestKey(
   manifest = state.data.patch_manifest,
   alignmentManifest = state.data.representation_alignment_manifest,
+  weightManifest = state.data.weight_alignment_manifest,
   activationManifest = state.data.activation_example_manifest,
   vocabularyLensManifest = state.data.vocabulary_logit_lens_manifest,
 ) {
+  const weightReferences = allWeightAlignmentReferences(weightManifest);
   return [
     ...allPatchReferences(manifest),
     ...allRepresentationAlignmentReferences(alignmentManifest),
+    ...weightReferences,
+    ...weightReferences.flatMap((reference) => Object.values(reference.details ?? {})),
     ...allActivationExampleReferences(activationManifest),
     ...allVocabularyLensReferences(vocabularyLensManifest),
   ]
@@ -1135,6 +1211,120 @@ function compactRepresentationAlignmentChunk(records) {
   return compact;
 }
 
+function compactWeightAlignmentChunk(payload) {
+  if (
+    !payload
+    || !Array.isArray(payload.matrix_axis)
+    || payload.matrix_axis.length !== Object.keys(WEIGHT_MATRIX_LABELS).length
+    || !Number.isInteger(payload.layer_count)
+    || payload.layer_count <= 0
+    || !payload.metrics
+    || !Array.isArray(payload.shapes)
+  ) {
+    throw new Error("weight-alignment chunk has invalid axes");
+  }
+  const matrixAxis = payload.matrix_axis;
+  if (
+    new Set(matrixAxis).size !== matrixAxis.length
+    || matrixAxis.some((name) => !Object.hasOwn(WEIGHT_MATRIX_LABELS, name))
+  ) {
+    throw new Error("weight-alignment chunk has an unknown projection axis");
+  }
+  const layerCount = payload.layer_count;
+  const flatten = (matrix, metric) => {
+    if (!Array.isArray(matrix) || matrix.length !== matrixAxis.length) {
+      throw new Error(`weight-alignment ${metric} has an invalid projection axis`);
+    }
+    const flat = new Float64Array(matrixAxis.length * layerCount);
+    matrix.forEach((row, weightIndex) => {
+      if (!Array.isArray(row) || row.length !== layerCount) {
+        throw new Error(`weight-alignment ${metric} has an invalid layer axis`);
+      }
+      row.forEach((value, layer) => {
+        if (
+          !Number.isFinite(value)
+          || (metric.includes("cosine") ? value < -1 || value > 1 : value < 0)
+        ) {
+          throw new Error(`weight-alignment chunk contains an invalid ${metric}`);
+        }
+        flat[weightIndex * layerCount + layer] = value;
+      });
+    });
+    return flat;
+  };
+  const metrics = {};
+  Object.values(WEIGHT_VISUALIZATION_METRICS).forEach((metric) => {
+    metrics[metric] = flatten(payload.metrics[metric], metric);
+  });
+  if (
+    payload.shapes.length !== matrixAxis.length
+    || payload.shapes.some((row) => (
+      !Array.isArray(row)
+      || row.length !== layerCount
+      || row.some((shape) => (
+        !Array.isArray(shape)
+        || shape.length !== 2
+        || shape.some((dimension) => !Number.isInteger(dimension) || dimension <= 0)
+      ))
+    ))
+  ) {
+    throw new Error("weight-alignment chunk contains an invalid matrix-shape grid");
+  }
+  return {
+    axisKind: "weight_layer",
+    layerCount,
+    matrixAxis,
+    metrics,
+    shapes: payload.shapes,
+  };
+}
+
+function compactWeightAlignmentDetails(payload) {
+  if (
+    !payload
+    || !["row_cosines", "column_cosines", "row_l2_distances", "column_l2_distances"]
+      .includes(payload.metric)
+    || !Array.isArray(payload.matrix_axis)
+    || !Number.isInteger(payload.layer_count)
+    || !Array.isArray(payload.cells)
+  ) {
+    throw new Error("weight-alignment detail chunk has invalid metadata");
+  }
+  const details = new Map();
+  payload.cells.forEach((cell) => {
+    if (
+      !Number.isInteger(cell.layer)
+      || cell.layer < 0
+      || cell.layer >= payload.layer_count
+      || !payload.matrix_axis.includes(cell.weight_name)
+      || !Array.isArray(cell.shape)
+      || cell.shape.length !== 2
+    ) {
+      throw new Error("weight-alignment detail chunk has an invalid cell coordinate");
+    }
+    const expected = payload.metric.startsWith("row_") ? cell.shape[0] : cell.shape[1];
+    const cosine = payload.metric.includes("cosine");
+    if (
+      !Array.isArray(cell.values)
+      || cell.values.length !== expected
+      || cell.values.some((value) => (
+        !Number.isFinite(value)
+        || (cosine ? value < -1 || value > 1 : value < 0)
+      ))
+    ) {
+      throw new Error("weight-alignment detail chunk has invalid values");
+    }
+    const compact = { shape: cell.shape, values: Float32Array.from(cell.values) };
+    const key = `${cell.weight_name}:${cell.layer}`;
+    if (details.has(key)) throw new Error("weight-alignment detail chunk repeats a cell");
+    details.set(key, compact);
+  });
+  if (details.size !== payload.matrix_axis.length * payload.layer_count) {
+    throw new Error("weight-alignment detail chunk is incomplete");
+  }
+  return details;
+}
+
 async function loadPatchChunk(reference) {
   const key = patchReferenceKey(reference);
   if (!key || patchChunks.has(key)) return;
@@ -1148,11 +1338,17 @@ async function loadPatchChunk(reference) {
       return response.json();
     })
     .then((records) => {
+      let compact;
+      if (reference.kind === "representation_alignment") {
+        compact = compactRepresentationAlignmentChunk(records);
+      } else if (reference.kind === "weight_alignment") {
+        compact = compactWeightAlignmentChunk(records);
+      } else {
+        compact = compactPatchChunk(records);
+      }
       patchChunks.set(
         key,
-        reference.kind === "representation_alignment"
-          ? compactRepresentationAlignmentChunk(records)
-          : compactPatchChunk(records),
+        compact,
       );
       patchChunkErrors.delete(key);
     })
@@ -1166,6 +1362,47 @@ async function loadPatchChunk(reference) {
     });
   patchChunkLoads.set(key, request);
   await request;
+}
+
+async function loadWeightAlignmentDetails(reference) {
+  const key = patchReferenceKey(reference);
+  if (!key || weightDetailChunks.has(key)) return;
+  if (weightDetailLoads.has(key)) {
+    await weightDetailLoads.get(key);
+    return;
+  }
+  const request = fetch(patchChunkRequest(reference), { cache: "force-cache" })
+    .then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    })
+    .then((payload) => {
+      while (weightDetailChunks.size >= 2) {
+        weightDetailChunks.delete(weightDetailChunks.keys().next().value);
+      }
+      weightDetailChunks.set(key, compactWeightAlignmentDetails(payload));
+      weightDetailErrors.delete(key);
+    })
+    .catch((error) => {
+      weightDetailErrors.set(key, String(error.message ?? error));
+    })
+    .finally(() => {
+      weightDetailLoads.delete(key);
+    });
+  weightDetailLoads.set(key, request);
+  await request;
+}
+
+function scheduleSelectedWeightDetailsLoad() {
+  const detailSpec = WEIGHT_DETAIL_METRICS[state.patchVisualization];
+  if (!weightAnalysisSelected() || !detailSpec) {
+    return;
+  }
+  const reference = selectedPatchReference();
+  const detailReference = reference?.details?.[detailSpec.artifact];
+  const key = patchReferenceKey(detailReference);
+  if (!key || weightDetailChunks.has(key) || weightDetailLoads.has(key)) return;
+  void loadWeightAlignmentDetails(detailReference);
 }
 
 function compactActivationNeighborChunk(payload) {
@@ -1565,10 +1802,12 @@ async function refreshPatchManifest() {
     }
     const activationManifest = snapshot.activation_example_manifest ?? {};
     const alignmentManifest = snapshot.representation_alignment_manifest ?? {};
+    const weightManifest = snapshot.weight_alignment_manifest ?? {};
     const vocabularyLensManifest = snapshot.vocabulary_logit_lens_manifest ?? {};
     const signature = patchManifestKey(
       snapshot.patch_manifest,
       alignmentManifest,
+      weightManifest,
       activationManifest,
       vocabularyLensManifest,
     );
@@ -1580,6 +1819,9 @@ async function refreshPatchManifest() {
       snapshot.real_representation_alignment_files ?? 0;
     state.data.representation_alignment_scales =
       snapshot.representation_alignment_scales ?? {};
+    state.data.weight_alignment_manifest = weightManifest;
+    state.data.real_weight_alignment_files = snapshot.real_weight_alignment_files ?? 0;
+    state.data.weight_alignment_scales = snapshot.weight_alignment_scales ?? {};
     state.data.activation_example_manifest = activationManifest;
     state.data.real_activation_example_files = snapshot.real_activation_example_files ?? 0;
     state.data.activation_example_chunks = snapshot.activation_example_chunks ?? 0;
@@ -1588,6 +1830,7 @@ async function refreshPatchManifest() {
     state.data.vocabulary_logit_lens_chunks = snapshot.vocabulary_logit_lens_chunks ?? 0;
     patchManifestSignature = signature;
     patchChunkErrors.clear();
+    weightDetailErrors.clear();
     activationExampleErrors.clear();
     vocabularyLensErrors.clear();
     scheduleFullPatchPreload();
@@ -1601,6 +1844,105 @@ async function refreshPatchManifest() {
 
 function tokenAxisMode() {
   return state.patchMode === "checkpoint" ? "across_time" : state.patchMode;
+}
+
+function weightAxisPositions(matrixAxis = Object.keys(WEIGHT_MATRIX_LABELS)) {
+  return matrixAxis.map((weightName) => ({
+    axisKind: "weight_layer",
+    weightName,
+    sourceToken: WEIGHT_MATRIX_LABELS[weightName],
+    recipientToken: WEIGHT_MATRIX_LABELS[weightName],
+  }));
+}
+
+function analyticOrUnprocessedWeightAlignment() {
+  const layers = state.data.models[state.model].layer_count;
+  const recipient = state.data.checkpoints[state.recipientIndex];
+  const donor = state.data.checkpoints[state.donorIndex];
+  const analytic = recipient === donor;
+  const tokenPositions = weightAxisPositions();
+  const metricMatrices = {};
+  Object.values(WEIGHT_VISUALIZATION_METRICS).forEach((metric) => {
+    const identity = metric.includes("cosine") ? 1.0 : 0.0;
+    metricMatrices[metric] = tokenPositions.map(() => (
+      Array(layers).fill(analytic ? identity : null)
+    ));
+  });
+  const selectedMetric = WEIGHT_VISUALIZATION_METRICS[state.patchVisualization];
+  return {
+    layers,
+    tokenPositions,
+    recipient: null,
+    source: null,
+    sourceTargetRecipient: null,
+    sourceTargetSource: null,
+    sourceCorrectIndex: null,
+    recipientCorrectIndex: null,
+    matrix: metricMatrices[selectedMetric],
+    weightMetricMatrices: metricMatrices,
+    weightShapes: null,
+    sourceTargetMatrix: null,
+    target: "effective decoder projection matrices",
+    outcomeLabel: PATCH_VISUALIZATION_LABELS[state.patchVisualization],
+    sourceFunctionId: null,
+    recipientFunctionId: null,
+    sourceRenderedPrompt: "Weight comparisons are prompt-independent.",
+    recipientRenderedPrompt: "Weight comparisons are prompt-independent.",
+    sourceChoiceFunctionIds: null,
+    sourceChoiceTexts: null,
+    sourceQuestionId: null,
+    sourceQuestion: null,
+    sourceFormat: null,
+    sourceLabelRelation: null,
+    sourceContextId: null,
+    sourceContext: null,
+    answerLogitLens: null,
+    cosineMatrix: null,
+    l2Matrix: null,
+    sourceNormMatrix: null,
+    recipientNormMatrix: null,
+    measurementKind: "weight_alignment",
+    analytic,
+    measured: false,
+    processed: analytic,
+    applicable: true,
+    axisKind: "weight_layer",
+    aggregate: false,
+    functionCount: 0,
+  };
+}
+
+function measuredWeightAlignment() {
+  const key = patchReferenceKey(selectedPatchReference());
+  const record = key ? patchChunks.get(key) : null;
+  if (!record || record.axisKind !== "weight_layer") return null;
+  if (record.layerCount !== state.data.models[state.model].layer_count) {
+    throw new Error("Measured weight-alignment grid has the wrong decoder-layer count");
+  }
+  const matrixRows = (values) => record.matrixAxis.map((_, weightIndex) => (
+    values.subarray(
+      weightIndex * record.layerCount,
+      (weightIndex + 1) * record.layerCount,
+    )
+  ));
+  const metricMatrices = {};
+  Object.entries(record.metrics).forEach(([metric, values]) => {
+    metricMatrices[metric] = matrixRows(values);
+  });
+  const selectedMetric = WEIGHT_VISUALIZATION_METRICS[state.patchVisualization];
+  if (!metricMatrices[selectedMetric]) {
+    throw new Error(`Measured weight-alignment chunk lacks ${selectedMetric}`);
+  }
+  return {
+    ...analyticOrUnprocessedWeightAlignment(),
+    tokenPositions: weightAxisPositions(record.matrixAxis),
+    matrix: metricMatrices[selectedMetric],
+    weightMetricMatrices: metricMatrices,
+    weightShapes: record.shapes,
+    analytic: false,
+    measured: true,
+    processed: true,
+  };
 }
 
 function normalizePatchCheckpointIndices() {
@@ -2079,6 +2421,7 @@ function averagePatches(patches) {
 }
 
 function unprocessedPatch() {
+  if (weightAnalysisSelected()) return analyticOrUnprocessedWeightAlignment();
   const functionIds = state.functionId === ALL_FUNCTIONS_ID
     ? state.data.functions.map((fn) => fn.id)
     : [state.functionId];
@@ -2087,6 +2430,7 @@ function unprocessedPatch() {
 }
 
 function measuredPatch() {
+  if (weightAnalysisSelected()) return measuredWeightAlignment();
   const functionIds = state.functionId === ALL_FUNCTIONS_ID
     ? state.data.functions.map((fn) => fn.id)
     : [state.functionId];
@@ -2106,12 +2450,17 @@ function representationAlignmentScale() {
     ?.[state.patchInterface]?.l2_distance ?? null;
 }
 
+function weightAlignmentScale() {
+  const metric = WEIGHT_VISUALIZATION_METRICS[state.patchVisualization];
+  return state.data.weight_alignment_scales?.[state.model]?.[metric] ?? null;
+}
+
 function colorFor(value, metric, scaleMax = null) {
   if (metric === "probability") {
     const amount = Math.max(0, Math.min(1, value));
     return `rgb(${Math.round(67 + amount * 172)}, ${Math.round(89 + amount * 103)}, ${Math.round(81 - amount * 20)})`;
   }
-  if (metric === "l2_distance") {
+  if (metric === "l2_distance" || metric.includes("l2")) {
     if (!Number.isFinite(scaleMax) || scaleMax <= 0) {
       if (value !== 0) throw new Error("Measured L2 grid lacks a positive display scale");
       scaleMax = 1;
@@ -2137,17 +2486,63 @@ function formatAlignmentValue(value) {
 
 function bindHeatTooltip(cell, html) {
   const tooltip = document.getElementById("tooltip");
-  const show = (event) => {
-    tooltip.innerHTML = html;
-    tooltip.hidden = false;
+  const position = (event) => {
     const left = Math.min(window.innerWidth - tooltip.offsetWidth - 8, event.clientX + 14);
     const top = Math.min(window.innerHeight - tooltip.offsetHeight - 8, event.clientY + 14);
     tooltip.style.left = `${Math.max(8, left)}px`;
     tooltip.style.top = `${Math.max(8, top)}px`;
   };
-  cell.addEventListener("mousemove", show);
+  const show = (event) => {
+    tooltip.innerHTML = typeof html === "function" ? html() : html;
+    tooltip.hidden = false;
+    position(event);
+  };
+  cell.addEventListener("mouseenter", show);
+  cell.addEventListener("mousemove", (event) => {
+    if (!tooltip.hidden) position(event);
+  });
   cell.addEventListener("focus", () => show({ clientX: window.innerWidth / 2, clientY: window.innerHeight / 2 }));
   ["mouseleave", "blur"].forEach((name) => cell.addEventListener(name, () => { tooltip.hidden = true; }));
+}
+
+function weightDetailGridHtml(patch, weightIndex, layer) {
+  const detailSpec = WEIGHT_DETAIL_METRICS[state.patchVisualization];
+  if (!detailSpec) {
+    return "<br><small>Frobenius metrics flatten the complete matrix and therefore have no per-axis decomposition.</small>";
+  }
+  if (patch.analytic) {
+    return "<br><small>Exact identity is analytic; per-channel values were not materialized.</small>";
+  }
+  const reference = selectedPatchReference();
+  const detailReference = reference?.details?.[detailSpec.artifact];
+  const detailKey = patchReferenceKey(detailReference);
+  if (!detailKey) return "<br><small>No measured per-channel detail artifact exists.</small>";
+  if (weightDetailErrors.has(detailKey)) {
+    return `<br><small>Per-channel detail failed to load: ${escapeHtml(weightDetailErrors.get(detailKey))}</small>`;
+  }
+  const details = weightDetailChunks.get(detailKey);
+  if (!details) {
+    scheduleSelectedWeightDetailsLoad();
+    return "<br><small>Per-channel mini-grid is loading; move off and hover again when ready.</small>";
+  }
+  const weightName = patch.tokenPositions[weightIndex].weightName;
+  const detail = details.get(`${weightName}:${layer}`);
+  const values = detail?.[detailSpec.compact];
+  if (!values) return "<br><small>The measured detail file lacks this axis.</small>";
+  const sorted = Array.from(values).sort((left, right) => left - right);
+  const quantile = (fraction) => sorted[Math.round((sorted.length - 1) * fraction)];
+  const cosine = detailSpec.artifact.includes("cosine");
+  const detailScale = cosine ? null : Math.max(...values, Number.EPSILON);
+  const cells = Array.from(values, (value) => (
+    `<i style="background:${colorFor(value, cosine ? "cosine_similarity" : "l2_distance", detailScale)}"></i>`
+  )).join("");
+  const axis = detailSpec.artifact.startsWith("row_")
+    ? "row / output channel"
+    : "column / input channel";
+  const scaleNote = cosine
+    ? "fixed −1…+1 color scale"
+    : `detail colors scale 0…${formatAlignmentValue(detailScale)} within this matrix`;
+  return `<br><br><b>${axis} mini-grid · n=${values.length.toLocaleString()}</b><br><small>left-to-right, top-to-bottom index order · ${scaleNote}</small><div class="weight-detail-grid">${cells}</div><small>min ${formatAlignmentValue(sorted[0])} · median ${formatAlignmentValue(quantile(.5))} · p95 ${formatAlignmentValue(quantile(.95))} · max ${formatAlignmentValue(sorted.at(-1))}</small>`;
 }
 
 function tokenCoordinate(prefix, index, tokenId, token) {
@@ -2446,6 +2841,27 @@ function moveSelectedPatchCell(patch, tokenDelta, layerDelta) {
 
 function renderPatching() {
   const patch = patchData();
+  const weightAnalysis = weightAnalysisSelected();
+  const sourceControl = document.getElementById("patch-source-control");
+  const boundaryControl = document.getElementById("patch-boundary-control");
+  const functionControl = document.getElementById("patch-function-control");
+  document.getElementById("patch-mode-select").disabled = weightAnalysis;
+  document.getElementById("patch-interface-select").disabled = weightAnalysis;
+  document.getElementById("function-select").disabled = weightAnalysis;
+  [sourceControl, boundaryControl, functionControl].forEach((control) => {
+    control.style.opacity = weightAnalysis ? ".38" : "1";
+  });
+  document.getElementById("prompt-audit").hidden = weightAnalysis;
+  document.getElementById("activation-neighbor-panel").hidden = weightAnalysis;
+  document.getElementById("patch-heatmap-axis").textContent = weightAnalysis
+    ? "decoder layer depth → · effective projection matrix ↓"
+    : "decoder layer depth → · exact tokenizer position, stepping backward ↓";
+  document.getElementById("patch-heatmap").setAttribute(
+    "aria-label",
+    weightAnalysis
+      ? "Effective projection weight alignment heatmap"
+      : "Answer-choice activation patching heatmap",
+  );
   state.patchCellTokenIndex = Math.max(
     0,
     Math.min(state.patchCellTokenIndex, patch.tokenPositions.length - 1),
@@ -2466,7 +2882,8 @@ function renderPatching() {
   }
   patch.tokenPositions.forEach((position, tokenIndex) => {
     const layerOnly = patch.axisKind === "layer_only";
-    const sameCoordinate = layerOnly || (position.aggregate
+    const weightLayer = patch.axisKind === "weight_layer";
+    const sameCoordinate = layerOnly || weightLayer || (position.aggregate
       ? position.sourceTokenSignature === position.recipientTokenSignature
       : position.sourceToken === position.recipientToken
         && position.sourceIndex === position.recipientIndex
@@ -2475,25 +2892,33 @@ function renderPatching() {
     const recipientPrefix = state.patchMode === "checkpoint"
       ? "recipient "
       : "clean/recipient ";
-    const sourceCoordinate = layerOnly
+    const sourceCoordinate = weightLayer
+      ? `checkpoint A · ${position.weightName} full effective matrix`
+      : layerOnly
       ? "donor checkpoint · complete learned block update"
       : position.aggregate
         ? aggregateTokenCoordinate(sourcePrefix, position.sourceToken)
         : tokenCoordinate(sourcePrefix, position.sourceIndex, position.sourceTokenId, position.sourceToken);
-    const recipientCoordinate = layerOnly
+    const recipientCoordinate = weightLayer
+      ? `checkpoint B · ${position.weightName} full effective matrix`
+      : layerOnly
       ? "recipient checkpoint · complete learned block update"
       : position.aggregate
         ? aggregateTokenCoordinate(recipientPrefix, position.recipientToken)
         : tokenCoordinate(recipientPrefix, position.recipientIndex, position.recipientTokenId, position.recipientToken);
-    const tokenText = layerOnly
+    const tokenText = weightLayer
+      ? WEIGHT_MATRIX_LABELS[position.weightName]
+      : layerOnly
       ? "All sequence positions · entire decoder block"
       : sameCoordinate
         ? (position.aggregate
           ? aggregateTokenCoordinate("", position.sourceToken)
           : tokenCoordinate("", position.sourceIndex, position.sourceTokenId, position.sourceToken))
         : `${sourceCoordinate} → ${recipientCoordinate}`;
-    const label = el("div", { class: `heatmap-token${!layerOnly && position.reverseIndex === 0 ? " anchor" : ""}` });
-    label.append(el("b", {}, layerOnly
+    const label = el("div", { class: `heatmap-token${!layerOnly && !weightLayer && position.reverseIndex === 0 ? " anchor" : ""}` });
+    label.append(el("b", {}, weightLayer
+      ? "matrix"
+      : layerOnly
       ? "all tokens"
       : position.reverseIndex === 0 ? "−0 · end" : `−${position.reverseIndex}`));
     label.append(el("span", { title: tokenText }, tokenText));
@@ -2511,26 +2936,54 @@ function renderPatching() {
           ? "A measured file exists, but it could not be loaded. No fallback value is displayed."
           : patchLoading
             ? "Measured values are loading. No temporary numeric value is displayed."
-            : representationAlignmentSelected()
+            : weightAnalysis
+              ? "No effective-weight comparison has been measured for this unordered checkpoint pair."
+              : representationAlignmentSelected()
               ? "No donor/recipient representation-alignment value has been measured for this selection."
               : `No ${weightPatchSelected() ? "weight" : "activation"}-patching value has been measured for this recipient/donor selection.`;
-        const coordinate = layerOnly
+        const coordinate = weightLayer
+          ? `Layer ${layer} · ${position.weightName} effective matrix`
+          : layerOnly
           ? `Layer ${layer} · entire decoder block`
           : `Layer ${layer} · reverse token −${position.reverseIndex}`;
         bindHeatTooltip(cell, `<b>No displayed value</b><br>${coordinate}<br><br>${unavailableReason}`);
-        cell.setAttribute("aria-label", layerOnly
+        cell.setAttribute("aria-label", weightLayer
+          ? `layer ${layer}, ${position.weightName} effective matrix, unprocessed`
+          : layerOnly
           ? `layer ${layer}, entire decoder block, unprocessed`
           : `layer ${layer}, reverse token ${position.reverseIndex}, unprocessed`);
         heatmap.append(cell);
         continue;
       }
       const averagingNote = patch.aggregate ? `<br>cellwise mean over n=${patch.functionCount} functions` : "";
-      const coordinate = layerOnly
+      const coordinate = weightLayer
+        ? `Layer ${layer} · ${position.weightName} effective matrix`
+        : layerOnly
         ? `Layer ${layer} · entire decoder block`
         : `Layer ${layer} · reverse token −${position.reverseIndex}`;
-      const logitLensNote = fullVocabularyLogitLensHtml(patch, tokenIndex, layer);
+      const logitLensNote = weightLayer
+        ? ""
+        : fullVocabularyLogitLensHtml(patch, tokenIndex, layer);
       let display;
-      if (patch.measurementKind === "representation_alignment") {
+      if (patch.measurementKind === "weight_alignment") {
+        const metric = WEIGHT_VISUALIZATION_METRICS[state.patchVisualization];
+        const scale = weightAlignmentScale();
+        cell.style.background = colorFor(cellMeasurement, metric, scale?.max ?? null);
+        display = formatAlignmentValue(cellMeasurement);
+        const shape = patch.weightShapes?.[tokenIndex]?.[layer] ?? null;
+        const scalar = (name) => patch.weightMetricMatrices[name][tokenIndex][layer];
+        const shapeNote = shape
+          ? `${shape[0].toLocaleString()} output rows × ${shape[1].toLocaleString()} input columns`
+          : "analytic identity; matrix shape not materialized";
+        const scaleNote = metric.includes("l2") && scale
+          ? `<br><small>Heatmap colors saturate at model/metric p95 scale ${formatAlignmentValue(scale.max)}; raw values below are unclipped.</small>`
+          : "";
+        const baseTooltip = `<b>${coordinate}</b><br>${escapeHtml(shapeNote)}<br><br><b>full effective weight comparison</b><br>Frobenius cosine: ${formatAlignmentValue(scalar("frobenius_cosine"))}<br>Frobenius L2: ${formatAlignmentValue(scalar("frobenius_l2"))}<br>mean row cosine: ${formatAlignmentValue(scalar("mean_row_cosine"))}<br>mean column cosine: ${formatAlignmentValue(scalar("mean_column_cosine"))}<br>mean row L2: ${formatAlignmentValue(scalar("mean_row_l2"))}<br>mean column L2: ${formatAlignmentValue(scalar("mean_column_l2"))}${scaleNote}<br><small>Rows are output channels; columns are input channels. This prompt-independent artifact is shared by both checkpoint orientations, so every value is exactly symmetric.</small>`;
+        bindHeatTooltip(
+          cell,
+          () => `${baseTooltip}${weightDetailGridHtml(patch, tokenIndex, layer)}`,
+        );
+      } else if (patch.measurementKind === "representation_alignment") {
         const cosine = patch.cosineMatrix[tokenIndex][layer];
         const distance = patch.l2Matrix[tokenIndex][layer];
         const sourceNorm = patch.sourceNormMatrix?.[tokenIndex]?.[layer] ?? null;
@@ -2578,17 +3031,20 @@ function renderPatching() {
           : "";
         bindHeatTooltip(cell, `<b>${coordinate}</b>${averagingNote}<br>${escapeHtml(sourceCoordinate)}<br>${escapeHtml(recipientCoordinate)}${interventionNote}<br><br><b>clean-correct label</b><br>patched result: ${formatPercent(probability)}<br>unpatched recipient baseline: ${formatPercent(patch.recipient)}<br>unpatched donor/source baseline: ${formatPercent(patch.source)}<br>change from recipient: ${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(2)} pp${sourceTargetNote}${logitLensNote}<br><small>${baselineScope}</small>`);
       }
-      cell.setAttribute("aria-label", layerOnly
+      cell.setAttribute("aria-label", weightLayer
+        ? `layer ${layer}, ${position.weightName} effective matrix, ${display}`
+        : layerOnly
         ? `layer ${layer}, entire decoder block, ${display}`
         : `layer ${layer}, reverse token ${position.reverseIndex}, ${display}`);
       if (
         !layerOnly
+        && !weightLayer
         && state.patchCellTokenIndex === tokenIndex
         && state.patchCellLayer === layer
       ) {
         cell.classList.add("selected");
       }
-      if (!layerOnly) {
+      if (!layerOnly && !weightLayer) {
         cell.dataset.tokenIndex = String(tokenIndex);
         cell.dataset.layer = String(layer);
         const selectReference = (moveFocus = false) => {
@@ -2624,7 +3080,9 @@ function renderPatching() {
   const recipient = checkpoints[state.recipientIndex];
   const donor = checkpoints[usesCheckpointDonor() ? state.donorIndex : state.recipientIndex];
   const patchStatus = document.getElementById("patch-status");
-  const interfaceLabel = PATCH_INTERFACE_LABELS[state.patchInterface];
+  const interfaceLabel = weightAnalysis
+    ? "Effective projection weights"
+    : PATCH_INTERFACE_LABELS[state.patchInterface];
   const aggregateStatus = patch.aggregate
     ? patch.processed ? ` · mean n=${patch.functionCount}` : ` · n=${patch.functionCount} functions`
     : "";
@@ -2633,7 +3091,9 @@ function renderPatching() {
     : patch.processed
       ? patch.analytic
         ? `analytic identity · ${interfaceLabel}`
-        : representationAlignmentSelected()
+        : weightAnalysis
+          ? `measured ${PATCH_VISUALIZATION_LABELS[state.patchVisualization].toLowerCase()}`
+          : representationAlignmentSelected()
           ? `measured ${PATCH_VISUALIZATION_LABELS[state.patchVisualization].toLowerCase()} · ${interfaceLabel}`
           : `measured intervention · ${interfaceLabel}`
       : patchLoadError
@@ -2648,14 +3108,16 @@ function renderPatching() {
   const legend = document.getElementById("patch-legend");
   legend.replaceChildren();
   if (patch.processed) {
-    if (state.patchVisualization === "cosine_similarity") {
+    if (state.patchVisualization === "cosine_similarity" || (
+      weightAnalysis && WEIGHT_VISUALIZATION_METRICS[state.patchVisualization].includes("cosine")
+    )) {
       legend.append(el("span", {}, "−1 opposite"));
       const scale = el("i");
       scale.style.background = "linear-gradient(90deg, #5d79b9, #eee8d8, #ef775f)";
       legend.append(scale);
       legend.append(el("span", {}, "+1 aligned"));
-    } else if (state.patchVisualization === "l2_distance") {
-      const l2Scale = representationAlignmentScale();
+    } else if (state.patchVisualization === "l2_distance" || weightAnalysis) {
+      const l2Scale = weightAnalysis ? weightAlignmentScale() : representationAlignmentScale();
       legend.append(el("span", {}, "0 identical"));
       const scale = el("i");
       scale.style.background = "linear-gradient(90deg, #eee8d8, #674b93)";
@@ -2683,15 +3145,18 @@ function renderPatching() {
     legend.append(el("i", { class: "unprocessed" }));
     legend.append(el("span", {}, "unprocessed · no value encoded"));
   }
-  const visualizationDescription = representationAlignmentSelected()
-    ? " The heatmap compares the exact unpatched donor/source and recipient vectors at matched token/layer coordinates; it does not run an intervention."
-    : " The heatmap replaces the selected recipient state or learned-weight contribution and measures the downstream answer probability.";
-  document.getElementById("patch-interface-description").textContent =
-    PATCH_INTERFACE_DESCRIPTIONS[state.patchInterface] + visualizationDescription;
+  const visualizationDescription = weightAnalysis
+    ? "Full effective matrices are the shared frozen base weight plus each checkpoint’s scaled LoRA B·A update. Rows are output channels and columns are input channels. This prompt-independent comparison is observational and exactly symmetric."
+    : representationAlignmentSelected()
+      ? `${PATCH_INTERFACE_DESCRIPTIONS[state.patchInterface]} The heatmap compares exact unpatched donor/source and recipient vectors at matched token/layer coordinates; it does not run an intervention.`
+      : `${PATCH_INTERFACE_DESCRIPTIONS[state.patchInterface]} The heatmap replaces the selected recipient state or learned-weight contribution and measures the downstream answer probability.`;
+  document.getElementById("patch-interface-description").textContent = visualizationDescription;
   document.getElementById("recipient-label").textContent = recipient === 0 ? "frozen base" : `step ${recipient}`;
   document.getElementById("donor-label").textContent = donor === 0 ? "frozen base" : `step ${donor}`;
-  document.getElementById("donor-kind-label").textContent = representationAlignmentSelected()
-    ? "representation source"
+  document.getElementById("donor-kind-label").textContent = weightAnalysis
+    ? "comparison checkpoint"
+    : representationAlignmentSelected()
+      ? "representation source"
     : weightPatchSelected()
       ? "weight source"
       : "activation source";
@@ -2703,11 +3168,19 @@ function renderPatching() {
     state.patchTimeScale,
   );
   const fn = state.data.functions.find((item) => item.id === state.functionId);
-  document.getElementById("clean-question").textContent = patch.aggregate
-    ? `Mean over all ${patch.functionCount} clean definition questions`
-    : `What is the definition of ${fn.alias}?`;
-  document.getElementById("recipient-question-label").textContent = "clean recipient question";
-  if (state.patchMode === "checkpoint") {
+  document.getElementById("clean-question").textContent = weightAnalysis
+    ? `${recipient === 0 ? "frozen base" : `step ${recipient}`} effective projection weights`
+    : patch.aggregate
+      ? `Mean over all ${patch.functionCount} clean definition questions`
+      : `What is the definition of ${fn.alias}?`;
+  document.getElementById("recipient-question-label").textContent = weightAnalysis
+    ? "checkpoint A"
+    : "clean recipient question";
+  if (weightAnalysis) {
+    document.getElementById("source-question-label").textContent = "checkpoint B";
+    document.getElementById("source-question").textContent =
+      `${donor === 0 ? "frozen base" : `step ${donor}`} effective projection weights`;
+  } else if (state.patchMode === "checkpoint") {
     const questionCount = patch.aggregate ? `same ${patch.functionCount} clean questions` : "same clean question";
     document.getElementById("source-question-label").textContent = weightPatchSelected()
       ? "donor checkpoint weights"
@@ -2824,7 +3297,19 @@ function renderPatching() {
     document.getElementById("source-question").textContent = sourceQuestion;
     document.getElementById("patch-explanation").textContent = explanation;
   }
-  if (representationAlignmentSelected()) {
+  if (weightAnalysis) {
+    if (patchLoadError) {
+      document.getElementById("patch-explanation").textContent = `A measured effective-weight artifact exists, but its scalar grid could not be loaded (${patchLoadError}). No fallback value is shown.`;
+    } else if (patchLoading) {
+      document.getElementById("patch-explanation").textContent = "Measured effective-weight geometry is loading. Purple hatching encodes no temporary value.";
+    } else if (!patch.processed) {
+      document.getElementById("patch-explanation").textContent = "This unordered checkpoint pair has not been measured. Purple cells encode no similarity, distance, interpolation, or synthetic value.";
+    } else if (patch.analytic) {
+      document.getElementById("patch-explanation").textContent = "The two sliders select the same checkpoint, so every effective matrix is exactly itself: all cosine metrics are 1 and all L2 metrics are 0. This diagonal is analytic and no model was loaded.";
+    } else {
+      document.getElementById("patch-explanation").textContent = "Each cell compares one full effective projection matrix (frozen base + scaled LoRA B·A) across the two checkpoints. The artifact is stored once for the unordered pair and used in both orientations, guaranteeing exact symmetry. Row and column means weight every output or input channel equally; hover loads the selected pair’s per-channel mini-grid on demand.";
+    }
+  } else if (representationAlignmentSelected()) {
     if (!patch.applicable) {
       document.getElementById("patch-explanation").textContent = "Cosine similarity and L2 distance compare activation vectors. Learned-weight boundaries do not expose one vector with the same semantics, so this selection is intentionally not applicable. The purple squares encode no result.";
     } else if (patchLoadError) {
@@ -2858,13 +3343,16 @@ function renderPatching() {
     document.getElementById("patch-explanation").textContent += " Patch-grid baselines use one code-choice probe per function. The learning curve above averages 16 code-choice and 16 language-choice variants per function, so these probabilities are not expected to match exactly.";
   }
   document.getElementById("patch-outcome-control").hidden =
-    representationAlignmentSelected();
+    representationAlignmentSelected() || weightAnalysis;
   document.getElementById("source-rendered-prompt").textContent = patch.sourceRenderedPrompt;
   document.getElementById("recipient-rendered-prompt").textContent = patch.recipientRenderedPrompt;
-  renderActivationExamples(patch);
-  scheduleActivationExampleLoads();
-  scheduleVocabularyLensLoads();
+  if (!weightAnalysis) {
+    renderActivationExamples(patch);
+    scheduleActivationExampleLoads();
+    scheduleVocabularyLensLoads();
+  }
   scheduleSelectedPatchLoad();
+  scheduleSelectedWeightDetailsLoad();
   scheduleFullPatchPreload();
 }
 
@@ -2904,6 +3392,9 @@ async function initialize() {
   state.data.representation_alignment_manifest ??= {};
   state.data.real_representation_alignment_files ??= 0;
   state.data.representation_alignment_scales ??= {};
+  state.data.weight_alignment_manifest ??= {};
+  state.data.real_weight_alignment_files ??= 0;
+  state.data.weight_alignment_scales ??= {};
   patchManifestSignature = patchManifestKey();
   setupStatus();
   buildModelControls();
@@ -2962,7 +3453,7 @@ async function initialize() {
   patchVisualization.value = state.patchVisualization;
   patchVisualization.addEventListener("change", () => {
     state.patchVisualization = patchVisualization.value;
-    renderPatching();
+    renderAll();
   });
   const patchMode = document.getElementById("patch-mode-select");
   patchMode.value = state.patchMode;

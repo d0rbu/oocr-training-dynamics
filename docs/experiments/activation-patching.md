@@ -450,6 +450,21 @@ These maps are descriptive. Similar vectors can be unused by the downstream comp
 dissimilar vectors can be functionally equivalent. Read them beside—not as replacements for—the
 causal patching maps.
 
+## Effective-weight comparison view
+
+The same section also hosts a prompt-independent parameter view. Its rows are the seven effective
+Q/K/V/O and gate/up/down projection matrices, its columns are decoder layers, and its checkpoint
+sliders select an unordered pair. The six visualization choices are Frobenius cosine, Frobenius
+L2, mean row cosine, mean column cosine, mean row L2, and mean column L2. “Effective” means the
+frozen base matrix plus the checkpoint's scaled LoRA product, not a cosine between `A` and `B`
+factors. Row metrics average output-channel vectors; column metrics average input-channel vectors.
+
+The scalar heatmap remains small, while row/column detail arrays load only for the selected
+checkpoint pair. Hover expands those values into a compact mini-grid so thousands of channels are
+visible without forcing them into one line or preloading every detail atlas into browser memory.
+Because weights do not depend on a prompt, the prompt audit is hidden in this view and the source,
+function, boundary, activation-neighbor, and logit-lens controls are explicitly inapplicable.
+
 ## Interpretation cautions
 
 - A probability delta is causal for this specific intervention, but it does not prove that the

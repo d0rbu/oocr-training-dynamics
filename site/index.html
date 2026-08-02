@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="Interactive results explorer for OOCR training dynamics, activation patching, and decoder-block weight patching." />
     <title>OOCR Atlas · training dynamics</title>
-    <link rel="stylesheet" href="styles.css?v=20260801b" />
-    <script src="app.js?v=20260801b" defer></script>
+    <link rel="stylesheet" href="styles.css?v=20260802a" />
+    <script src="app.js?v=20260802a" defer></script>
   </head>
   <body>
     <div class="grain" aria-hidden="true"></div>
@@ -180,11 +180,10 @@
             <h2>A layer-by-layer view of the circuit</h2>
           </div>
           <p>
-            Each column is one decoder layer at a residual, attention, MLP, or learned-weight
-            boundary. Choose causal activation patching, or compare the unpatched donor and
-            recipient vectors directly with cosine similarity or raw L2 distance. Rows are prompt
-            tokens reverse-indexed from the true end of the model-rendered prompt. Recipient and
-            donor checkpoints move independently.
+            Each column is one decoder layer. Choose causal activation patching, compare unpatched
+            donor/recipient vectors, or inspect symmetric changes in the model’s seven effective
+            projection matrices. Activation rows are reverse-indexed prompt tokens; weight rows are
+            Q/K/V/O and gate/up/down matrices. Recipient and donor checkpoints move independently.
           </p>
         </div>
 
@@ -194,7 +193,7 @@
             <p id="patch-prefetch-status">Preloading every measured visualization grid into memory…</p>
           </div>
           <div class="patch-toolbar">
-            <label>
+            <label id="patch-source-control">
               <small>Source</small>
               <select id="patch-mode-select">
                 <option value="checkpoint">Checkpoint transfer</option>
@@ -217,9 +216,15 @@
                 <option value="activation_patching" selected>Activation patching</option>
                 <option value="cosine_similarity">Cosine similarity</option>
                 <option value="l2_distance">L2 distance</option>
+                <option value="weight_frobenius_cosine">Weights · Frobenius cosine</option>
+                <option value="weight_frobenius_l2">Weights · Frobenius L2</option>
+                <option value="weight_mean_row_cosine">Weights · mean row cosine</option>
+                <option value="weight_mean_column_cosine">Weights · mean column cosine</option>
+                <option value="weight_mean_row_l2">Weights · mean row L2</option>
+                <option value="weight_mean_column_l2">Weights · mean column L2</option>
               </select>
             </label>
-            <label>
+            <label id="patch-boundary-control">
               <small>Boundary</small>
               <select id="patch-interface-select">
                 <option value="resid_post">Residual stream</option>
@@ -231,7 +236,7 @@
                 <option value="block_weights">Weights · all tokens</option>
               </select>
             </label>
-            <label>
+            <label id="patch-function-control">
               <small>Function probe</small>
               <select id="function-select"></select>
             </label>
@@ -270,7 +275,12 @@
             <div><small id="source-question-label">donor checkpoint</small><code id="source-question">same clean question · frozen base</code></div>
           </div>
 
-          <details class="prompt-audit">
+          <div class="heatmap-frame">
+            <div id="patch-heatmap-axis" class="heatmap-axis">decoder layer depth → · exact tokenizer position, stepping backward ↓</div>
+            <div id="patch-heatmap" class="patch-heatmap" role="img" aria-label="Answer-choice activation patching heatmap"></div>
+          </div>
+
+          <details id="prompt-audit" class="prompt-audit">
             <summary>Inspect the exact rendered chat input and tokenizer coordinates</summary>
             <p>
               These are the generation prefixes actually passed to the model. Heatmap row zero is
@@ -283,11 +293,7 @@
             </div>
           </details>
 
-          <div class="heatmap-frame">
-            <div class="heatmap-axis">decoder layer depth → · exact tokenizer position, stepping backward ↓</div>
-            <div id="patch-heatmap" class="patch-heatmap" role="img" aria-label="Answer-choice activation patching heatmap"></div>
-          </div>
-          <section class="activation-neighbor-panel" aria-labelledby="activation-neighbor-title">
+          <section id="activation-neighbor-panel" class="activation-neighbor-panel" aria-labelledby="activation-neighbor-title">
             <div class="activation-neighbor-heading">
               <div>
                 <small>Selected-cell readout</small>

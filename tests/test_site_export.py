@@ -24,12 +24,18 @@ from oocr_training_dynamics.contracts import (
 )
 from oocr_training_dynamics.data import FUNCTIONS
 from oocr_training_dynamics.models import ModelKey
+from oocr_training_dynamics.weight_alignment import (
+    WEIGHT_ALIGNMENT_DETAIL_METRICS,
+    WEIGHT_ALIGNMENT_MATRIX_NAMES,
+    WEIGHT_ALIGNMENT_METRICS,
+)
 from scripts.export_site import (
     _compact_activation_neighbor_grid,
     _compact_patch_record,
     _compact_representation_alignment_record,
     _compact_vocabulary_logit_lens_side,
     _export_representation_alignments,
+    _export_weight_alignments,
     _real_letter_propensity_curve,
     _token_axes,
 )
@@ -49,6 +55,9 @@ def test_committed_site_payload_discloses_measurement_status() -> None:
     assert payload.get("real_representation_alignment_files", 0) >= 0
     assert isinstance(payload.get("representation_alignment_manifest", {}), dict)
     assert isinstance(payload.get("representation_alignment_scales", {}), dict)
+    assert payload.get("real_weight_alignment_files", 0) >= 0
+    assert isinstance(payload.get("weight_alignment_manifest", {}), dict)
+    assert isinstance(payload.get("weight_alignment_scales", {}), dict)
     assert payload.get("real_activation_example_files", 0) >= 0
     assert payload.get("activation_example_chunks", 0) >= 0
     assert isinstance(payload.get("activation_example_manifest", {}), dict)
@@ -419,8 +428,8 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert 'id="curve-rank-select"' in html
     assert "function buildCurveBatchSlider()" in javascript
     assert "function availableBatchSizes()" in javascript
-    assert 'href="styles.css?v=20260801b"' in html
-    assert 'src="app.js?v=20260801b"' in html
+    assert 'href="styles.css?v=20260802a"' in html
+    assert 'src="app.js?v=20260802a"' in html
     assert 'id="letter-propensity-chart"' in html
     assert 'id="letter-propensity-status"' in html
     assert 'id="letter-propensity-value"' in html
@@ -440,8 +449,8 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
         "unrelated_conversational_choices",
     ):
         assert f'"{mode}"' in javascript
-    assert 'const DATA_URL = "data/experiment.json?v=20260801b"' in javascript
-    assert 'const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260801b"' in javascript
+    assert 'const DATA_URL = "data/experiment.json?v=20260802a"' in javascript
+    assert 'const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260802a"' in javascript
     assert "function renderLetterPropensity()" in javascript
     assert "function letterPropensityRows()" in javascript
     assert "missing checkpoints are not connected" in javascript
@@ -465,6 +474,11 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert "function compactRepresentationAlignmentChunk(records)" in javascript
     assert "function measuredRepresentationAlignmentForFunction(functionId)" in javascript
     assert "function representationAlignmentScale()" in javascript
+    assert "function compactWeightAlignmentChunk(payload)" in javascript
+    assert "function compactWeightAlignmentDetails(payload)" in javascript
+    assert "function measuredWeightAlignment()" in javascript
+    assert "function weightAlignmentScale()" in javascript
+    assert "function weightDetailGridHtml(" in javascript
     assert "async function refreshPatchManifest()" in javascript
     assert "PATCH_PRELOAD_CONCURRENCY = 4" in javascript
     assert "PATCH_MANIFEST_POLL_MS = 30000" in javascript
@@ -509,6 +523,7 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert html.index('id="patch-heatmap"') < html.index('id="activation-neighbor-title"')
     recipient_prompt = html.index('<pre id="recipient-rendered-prompt"')
     source_prompt = html.index('<pre id="source-rendered-prompt"')
+    assert html.index('id="patch-heatmap"') < recipient_prompt
     assert recipient_prompt < source_prompt
     assert "source-correct label" in javascript
     assert "averages 16 code-choice and 16 language-choice variants" in javascript
@@ -525,7 +540,12 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert '<option value="activation_patching" selected>' in html
     assert '<option value="cosine_similarity">' in html
     assert '<option value="l2_distance">' in html
+    for metric in WEIGHT_ALIGNMENT_METRICS:
+        assert f'value="weight_{metric}">' in html
     assert 'patchVisualization: "activation_patching"' in javascript
+    assert 'measurementKind: "weight_alignment"' in javascript
+    assert "full effective weight comparison" in javascript
+    assert "exactly symmetric" in javascript
     assert "Observational comparison only" in javascript
     assert "vectors are not averaged before scoring" in javascript
 
@@ -547,6 +567,18 @@ def test_measured_site_patches_use_compact_complete_grids() -> None:
     )
     assert patch_snapshot.get("representation_alignment_scales", {}) == payload.get(
         "representation_alignment_scales",
+        {},
+    )
+    assert patch_snapshot.get("real_weight_alignment_files", 0) == payload.get(
+        "real_weight_alignment_files",
+        0,
+    )
+    assert patch_snapshot.get("weight_alignment_manifest", {}) == payload.get(
+        "weight_alignment_manifest",
+        {},
+    )
+    assert patch_snapshot.get("weight_alignment_scales", {}) == payload.get(
+        "weight_alignment_scales",
         {},
     )
     assert patch_snapshot.get("real_activation_example_files", 0) == payload.get(
@@ -959,9 +991,7 @@ def test_representation_alignment_export_uses_separate_manifest_and_l2_scale(
     assert count == 1
     typed_manifest = cast(dict[str, Any], manifest)
     typed_scales = cast(dict[str, Any], scales)
-    reference = typed_manifest["olmo3-7b"]["correct"]["mlp_output"]["across_sample"]["96"][
-        "96"
-    ]
+    reference = typed_manifest["olmo3-7b"]["correct"]["mlp_output"]["across_sample"]["96"]["96"]
     assert reference["kind"] == "representation_alignment"
     assert (tmp_path / "site" / reference["url"]).is_file()
     assert typed_scales["olmo3-7b"]["mlp_output"]["cosine_similarity"] == {
@@ -974,4 +1004,96 @@ def test_representation_alignment_export_uses_separate_manifest_and_l2_scale(
         "max": 4.5,
         "observed_max": 7.0,
         "basis": "maximum_artifact_p95_for_model_and_boundary",
+    }
+
+
+def test_weight_alignment_export_is_symmetric_and_splits_hover_details(
+    tmp_path: Path,
+) -> None:
+    artifact_path = (
+        tmp_path
+        / "artifacts/runs/olmo3-7b/correct/seed_20260715"
+        / "weight_alignment/effective_projection/step_low_step_000000"
+        / "step_high_step_000096.json"
+    )
+    artifact_path.parent.mkdir(parents=True)
+    cells = []
+    for layer in range(32):
+        for weight_name in WEIGHT_ALIGNMENT_MATRIX_NAMES:
+            cells.append(
+                {
+                    "layer": layer,
+                    "weight_name": weight_name,
+                    "shape": [2, 3],
+                    "frobenius_cosine": 0.9,
+                    "frobenius_l2": 2.0,
+                    "mean_row_cosine": 0.8,
+                    "mean_column_cosine": 0.7,
+                    "mean_row_l2": 1.5,
+                    "mean_column_l2": 1.0,
+                    "row_cosines": [0.7, 0.9],
+                    "column_cosines": [0.6, 0.7, 0.8],
+                    "row_l2_distances": [1.0, 2.0],
+                    "column_l2_distances": [0.5, 1.0, 1.5],
+                }
+            )
+    artifact_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run": {"model": "olmo3-7b", "condition": "correct"},
+                "checkpoint_pair": {
+                    "step_low": 0,
+                    "step_high": 96,
+                    "canonical_unordered_pair": True,
+                    "symmetric": True,
+                },
+                "measurement": {
+                    "kind": "effective_projection_weight_alignment",
+                    "causal_intervention": False,
+                    "prompt_dependent": False,
+                    "function_dependent": False,
+                    "metrics": list(WEIGHT_ALIGNMENT_METRICS),
+                    "detail_metrics": list(WEIGHT_ALIGNMENT_DETAIL_METRICS),
+                    "accumulation_dtype": "float32",
+                    "summary": {
+                        metric: {"p95": 0.9 if "cosine" in metric else 2.0, "max": 3.0}
+                        for metric in WEIGHT_ALIGNMENT_METRICS
+                    },
+                },
+                "matrix_axis": list(WEIGHT_ALIGNMENT_MATRIX_NAMES),
+                "layer_count": 32,
+                "cells": cells,
+            }
+        )
+    )
+
+    manifest, count, scales = _export_weight_alignments(tmp_path)
+
+    assert count == 1
+    typed_manifest = cast(dict[str, Any], manifest)
+    typed_scales = cast(dict[str, Any], scales)
+    forward = typed_manifest["olmo3-7b"]["correct"]["0"]["96"]
+    reverse = typed_manifest["olmo3-7b"]["correct"]["96"]["0"]
+    assert forward == reverse
+    assert forward["kind"] == "weight_alignment"
+    scalar = json.loads((tmp_path / "site" / forward["url"]).read_text())
+    row_detail = json.loads(
+        (tmp_path / "site" / forward["details"]["row_cosines"]["url"]).read_text()
+    )
+    column_detail = json.loads(
+        (tmp_path / "site" / forward["details"]["column_cosines"]["url"]).read_text()
+    )
+    assert scalar["metrics"]["mean_row_cosine"][0][0] == 0.8
+    assert scalar["shapes"][0][0] == [2, 3]
+    assert row_detail["metric"] == "row_cosines"
+    assert row_detail["cells"][0]["values"] == [0.7, 0.9]
+    assert column_detail["metric"] == "column_cosines"
+    assert column_detail["cells"][0]["values"] == [0.6, 0.7, 0.8]
+    assert typed_scales["olmo3-7b"]["frobenius_cosine"]["max"] == 1.0
+    assert typed_scales["olmo3-7b"]["frobenius_l2"] == {
+        "min": 0.0,
+        "max": 2.0,
+        "observed_max": 3.0,
+        "basis": "maximum_artifact_p95_for_model_and_metric",
     }

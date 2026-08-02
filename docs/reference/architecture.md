@@ -34,6 +34,7 @@ contracts + model registry + deterministic corpus
 | `metrics.py` | Stable softmax, curve AUC, chance adjustment, normalized patch effect |
 | `patching.py` | Prompt corruption, fixed answer-label controls, and validated patch plans/cells |
 | `representation_alignment.py` | Versioned noncausal metric/interface contract and run-scoped artifact paths |
+| `weight_alignment.py` | Canonical unordered checkpoint-pair contract for effective projection weights |
 | `artifacts.py` | Atomic JSON, adapter paths/digests, checkpoint-index invariants |
 | `planning.py` | Baseline/ablation matrices, capacity bounds, and storage estimates |
 | `gpu_guard.py` | Two-part authorization gate |
@@ -47,6 +48,7 @@ contracts + model registry + deterministic corpus
 | `runtime_evaluation.py` | Intended/planted choice metrics and semantic free-form generation |
 | `runtime_patching.py` | Activation/LoRA interventions, dual-label outcomes, full-vocabulary lens sidecars, and cell-selected cosine neighbors across prompts or checkpoint time |
 | `runtime_representation_alignment.py` | Multi-boundary unpatched activation capture and float32 cosine/L2 grids |
+| `runtime_weight_alignment.py` | Full effective-matrix reconstruction and symmetric Frobenius/row/column geometry |
 | `runtime_letter_propensity.py` | Resumable checkpoint evaluation of standalone A–E probability mass on raw FineWeb tokens |
 
 Importing these modules does not launch CUDA. Their script entry points call `gpu_guard` before
@@ -123,6 +125,12 @@ with patching but never reuses a probability chunk as an alignment result. The b
 both atlases, renders missing alignment grids as unprocessed, uses fixed `[-1, 1]` cosine colors,
 and reads boundary-specific robust L2 scales from the exported manifest. Same-prompt,
 same-checkpoint identity values are labeled analytic rather than measured.
+
+Effective-weight alignment has a third manifest under `site/data/weight-alignment/`. Scalar
+layer-by-projection grids preload with the patch atlas. Four per-axis detail chunks remain separate
+per unordered checkpoint pair and load only for the selected row/column visualization, with a
+two-chunk browser cache. Both recipient/donor orientations reference the same scalar and detail
+digests; there is no second directed computation.
 
 Final-suffix answer-label artifacts preserve a second typed matrix for the source-correct label and
 the original compact A–E logit-lens tensors as raw provenance. They also preserve the deterministic

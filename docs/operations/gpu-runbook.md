@@ -526,6 +526,32 @@ Prompt-counterfactual modes can be repeated in the same command. Same-prompt, sa
 temporal diagonals are exact analytic identities and are not stored. Weight interfaces are rejected
 at argument parsing rather than coerced into flattened-parameter metrics.
 
+## 6d. Run effective-weight alignment only after a new GPU release
+
+The weight-alignment runner loads model checkpoints and is independently gated by a fresh user GPU
+release, `.gpu-runs-enabled`, live storage/VRAM checks, and `--confirm-gpu-run`. It compares the
+seven full effective projection matrices and stores each unordered checkpoint pair once:
+
+```bash
+uv run python scripts/run_weight_alignment.py \
+  --model olmo3-7b --condition correct \
+  --shuffle-seed 20260715 \
+  --confirm-gpu-run
+```
+
+Do not launch this command while another repository owns the GPU. The default 18-checkpoint atlas
+contains 153 unordered off-diagonal artifacts: one `0`/`1500` corner, 17 remaining pairs touching
+step `96`, 30 remaining endpoint-edge pairs, and 105 seeded-remainder pairs. Same-step identities
+are analytic and produce no files. Resume skips complete canonical pair artifacts before loading a
+model.
+
+Start with `--step 0 --step 1500` after authorization. Inspect the atomic artifact under
+`artifacts/runs/olmo3-7b/correct/seed_20260715/weight_alignment/` and require exactly seven matrices
+times 32 layers, finite cosines in `[-1, 1]`, nonnegative L2 values, row/column detail lengths equal
+to the stored matrix shape, and a canonical symmetric checkpoint-pair declaration. Independently
+recompute at least one small projection slice before expanding. Exported scalar grids preload; the
+four large per-axis detail families are split and fetched only for the selected metric/pair.
+
 ## 7. Refresh the site
 
 This is CPU-only and may be run after each artifact batch:

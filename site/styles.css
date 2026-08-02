@@ -239,6 +239,9 @@ footer span { font: 600 24px Georgia, serif; }
 footer p { margin: 7px 0 0; color: #99aaa1; font-size: 12px; }
 .tooltip { position: fixed; z-index: 30; max-width: 320px; padding: 12px 14px; border: 1px solid rgba(255,255,255,.2); background: rgba(12,25,21,.96); color: white; box-shadow: 0 12px 40px rgba(0,0,0,.3); pointer-events: none; font-size: 11px; line-height: 1.5; }
 .tooltip b { color: var(--acid); }
+.tooltip:has(.weight-detail-grid) { width: min(520px, calc(100vw - 16px)); max-width: 520px; max-height: calc(100vh - 16px); overflow: hidden; }
+.weight-detail-grid { display: grid; grid-template-columns: repeat(64, minmax(2px, 1fr)); gap: 1px; margin: 7px 0; }
+.weight-detail-grid i { display: block; min-width: 2px; aspect-ratio: 1; border-radius: 1px; }
 
 @media (max-width: 980px) {
   .nav-links { display: none; }
@@ -274,4 +277,5 @@ footer p { margin: 7px 0 0; color: #99aaa1; font-size: 12px; }
   .heatmap-footer p { text-align: left; }
   footer { display: block; }
   #footer-status { margin-top: 24px; }
+  .weight-detail-grid { grid-template-columns: repeat(40, minmax(2px, 1fr)); }
 }
