@@ -15,9 +15,11 @@ from oocr_training_dynamics.contracts import (
 from oocr_training_dynamics.patching import TokenPositionPair
 from oocr_training_dynamics.representation_alignment import representation_alignment_path
 from oocr_training_dynamics.runtime_representation_alignment import (
+    _alignment_interleaved_priority_tier,
     _capture_alignment_interfaces,
     _representation_alignment_grid,
     _scheduled_alignment_pairs,
+    _seeded_interleaved_alignment_order,
 )
 
 
@@ -73,9 +75,13 @@ def test_representation_alignment_path_is_separate_and_activation_only(tmp_path:
         1_500,
     )
 
-    assert path.relative_to(tmp_path).as_posix().endswith(
-        "representation_alignment/sequence_end/mlp_input/unrelated_question/"
-        "recipient_step_000096/donor_step_001500.json"
+    assert (
+        path.relative_to(tmp_path)
+        .as_posix()
+        .endswith(
+            "representation_alignment/sequence_end/mlp_input/unrelated_question/"
+            "recipient_step_000096/donor_step_001500.json"
+        )
     )
     with pytest.raises(ValueError, match="activation interfaces"):
         representation_alignment_path(
@@ -179,7 +185,43 @@ def test_alignment_scheduler_respects_mode_checkpoint_contracts() -> None:
     assert (96, 0, PatchingMode.ACROSS_TIME) in pairs
     assert (0, 1_500, PatchingMode.LATER_CHECKPOINT) in pairs
     assert all(
-        recipient == donor
-        for recipient, donor, mode in pairs
-        if mode is PatchingMode.ACROSS_SAMPLE
+        recipient == donor for recipient, donor, mode in pairs if mode is PatchingMode.ACROSS_SAMPLE
+    )
+
+
+def test_interleaved_alignment_order_groups_coarse_tiers_by_interface() -> None:
+    steps = (0, 96, 128, 192, 1_500)
+    interfaces = (
+        PatchingInterface.RESID_POST,
+        PatchingInterface.MLP_OUTPUT,
+        PatchingInterface.ATTENTION_OUTPUT,
+    )
+    pairs = _scheduled_alignment_pairs(
+        steps,
+        steps,
+        (PatchingMode.ACROSS_TIME, PatchingMode.LATER_CHECKPOINT),
+    )
+
+    tasks = _seeded_interleaved_alignment_order(pairs, interfaces, 20260715)
+
+    assert tasks == _seeded_interleaved_alignment_order(pairs, interfaces, 20260715)
+    assert {(recipient, donor, mode, interface) for recipient, donor, mode, interface in tasks} == {
+        (*pair, interface) for pair in pairs for interface in interfaces
+    }
+    tiers = [
+        _alignment_interleaved_priority_tier((recipient, donor, mode))
+        for recipient, donor, mode, _interface in tasks
+    ]
+    assert tiers == sorted(tiers)
+    for tier in range(3):
+        tier_interfaces = [
+            task[3] for task_tier, task in zip(tiers, tasks, strict=True) if task_tier == tier
+        ]
+        block_size = len(tier_interfaces) // len(interfaces)
+        assert tier_interfaces == [interface for interface in interfaces for _ in range(block_size)]
+    remainder = [task for task, tier in zip(tasks, tiers, strict=True) if tier == 3]
+    assert remainder
+    assert all(
+        recipient not in {0, 96, 1_500} and donor not in {0, 96, 1_500}
+        for recipient, donor, _mode, _interface in remainder
     )

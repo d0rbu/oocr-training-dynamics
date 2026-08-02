@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gc
 import math
+import random
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -53,6 +54,14 @@ from oocr_training_dynamics.runtime_patching import (
 )
 
 ActivationBank = dict[PatchingInterface, tuple[t.Tensor, ...]]
+AlignmentTask = tuple[int, int, PatchingMode, PatchingInterface]
+
+ALIGNMENT_INTERLEAVED_PRIORITY_LABELS = (
+    "corners",
+    "step-96",
+    "remaining-endpoint-edges",
+    "shuffled-remainder",
+)
 
 
 @dataclass(frozen=True)
@@ -159,9 +168,7 @@ def _capture_alignment_interfaces(
     result: ActivationBank = {}
     for interface, values in captured.items():
         if any(value is None for value in values):
-            raise RuntimeError(
-                f"not every decoder layer produced {interface.value} for alignment"
-            )
+            raise RuntimeError(f"not every decoder layer produced {interface.value} for alignment")
         result[interface] = tuple(cast(t.Tensor, value) for value in values)
     return result
 
@@ -190,9 +197,7 @@ def _representation_alignment_grid(
             or recipient_layer.ndim != 2
             or source_layer.shape[1] != recipient_layer.shape[1]
         ):
-            raise ValueError(
-                "alignment activations must have compatible [sequence, hidden] shapes"
-            )
+            raise ValueError("alignment activations must have compatible [sequence, hidden] shapes")
         if any(
             position.source_index >= source_layer.shape[0]
             or position.recipient_index >= recipient_layer.shape[0]
@@ -217,8 +222,7 @@ def _representation_alignment_grid(
         ):
             raise RuntimeError("alignment vectors and norms must be finite and non-zero")
         cosines = (
-            (source_vectors * recipient_vectors).sum(dim=-1)
-            / (source_norms * recipient_norms)
+            (source_vectors * recipient_vectors).sum(dim=-1) / (source_norms * recipient_norms)
         ).clamp(min=-1.0, max=1.0)
         distances = t.linalg.vector_norm(source_vectors - recipient_vectors, dim=-1)
         if not bool(t.isfinite(cosines).all()) or not bool(t.isfinite(distances).all()):
@@ -312,9 +316,7 @@ def _serialize_alignment_record(
     serialized: dict[str, object] = {
         "function_id": record.function_id,
         "source_function_id": (
-            counterfactual.source_function_id
-            if counterfactual is not None
-            else record.function_id
+            counterfactual.source_function_id if counterfactual is not None else record.function_id
         ),
         "recipient_function_id": record.function_id,
         "recipient_choice_function_ids": record.choice_function_ids,
@@ -464,8 +466,7 @@ def _scheduled_alignment_pairs(
                 )
             else:
                 scheduled.extend(
-                    (recipient_step, recipient_step, mode)
-                    for recipient_step in recipient_steps
+                    (recipient_step, recipient_step, mode) for recipient_step in recipient_steps
                 )
             continue
         for recipient_step in recipient_steps:
@@ -477,6 +478,49 @@ def _scheduled_alignment_pairs(
     return scheduled
 
 
+def _alignment_interleaved_priority_tier(
+    pair: tuple[int, int, PatchingMode],
+) -> int:
+    """Return the user-requested coarse-to-fine alignment-atlas tier."""
+
+    recipient_step, donor_step, _mode = pair
+    endpoints = frozenset((0, 1_500))
+    if recipient_step in endpoints and donor_step in endpoints:
+        return 0
+    if recipient_step == 96 or donor_step == 96:
+        return 1
+    if recipient_step in endpoints or donor_step in endpoints:
+        return 2
+    return 3
+
+
+def _seeded_interleaved_alignment_order(
+    scheduled_pairs: list[tuple[int, int, PatchingMode]],
+    interfaces: tuple[PatchingInterface, ...],
+    shuffle_seed: int,
+) -> list[AlignmentTask]:
+    """Group coarse tiers by interface, then shuffle the remainder across interfaces."""
+
+    pair_tiers: list[list[tuple[int, int, PatchingMode]]] = [
+        [] for _ in ALIGNMENT_INTERLEAVED_PRIORITY_LABELS
+    ]
+    for pair in scheduled_pairs:
+        pair_tiers[_alignment_interleaved_priority_tier(pair)].append(pair)
+    randomizer = random.Random(shuffle_seed)
+    ordered: list[AlignmentTask] = []
+    for tier in pair_tiers[:-1]:
+        for interface in interfaces:
+            shuffled_pairs = list(tier)
+            randomizer.shuffle(shuffled_pairs)
+            ordered.extend((*pair, interface) for pair in shuffled_pairs)
+    remainder: list[AlignmentTask] = [
+        (*pair, interface) for pair in pair_tiers[-1] for interface in interfaces
+    ]
+    randomizer.shuffle(remainder)
+    ordered.extend(remainder)
+    return ordered
+
+
 def run_representation_alignment_matrix(
     root: Path,
     run: RunKey,
@@ -486,6 +530,7 @@ def run_representation_alignment_matrix(
     interfaces: tuple[PatchingInterface, ...] = REPRESENTATION_ALIGNMENT_INTERFACES,
     *,
     shuffle_seed: int | None = None,
+    interleave_interfaces_by_priority: bool = False,
     allow_provisional_model: bool = False,
 ) -> None:
     """Measure exact unpatched donor/recipient vector alignment for selected coordinates."""
@@ -507,28 +552,50 @@ def run_representation_alignment_matrix(
         raise ValueError("alignment interfaces must be unique activation boundaries")
     if shuffle_seed is not None and shuffle_seed < 0:
         raise ValueError("alignment shuffle seed must be non-negative")
+    if interleave_interfaces_by_priority and shuffle_seed is None:
+        raise ValueError("interface-interleaved alignment requires a shuffle seed")
 
     scheduled = _scheduled_alignment_pairs(recipient_steps, donor_steps, modes)
-    if shuffle_seed is not None:
+    if shuffle_seed is not None and not interleave_interfaces_by_priority:
         scheduled = _seeded_priority_temporal_order(scheduled, shuffle_seed)
     pending: list[tuple[int, int, PatchingMode, tuple[PatchingInterface, ...]]] = []
     skipped = 0
-    for recipient_step, donor_step, mode in scheduled:
-        missing_interfaces = tuple(
-            interface
-            for interface in interfaces
-            if not representation_alignment_path(
+    if interleave_interfaces_by_priority:
+        assert shuffle_seed is not None
+        interleaved = _seeded_interleaved_alignment_order(
+            scheduled,
+            interfaces,
+            shuffle_seed,
+        )
+        for recipient_step, donor_step, mode, interface in interleaved:
+            if representation_alignment_path(
                 root,
                 run,
                 interface,
                 mode,
                 recipient_step,
                 donor_step,
-            ).is_file()
-        )
-        skipped += len(interfaces) - len(missing_interfaces)
-        if missing_interfaces:
-            pending.append((recipient_step, donor_step, mode, missing_interfaces))
+            ).is_file():
+                skipped += 1
+            else:
+                pending.append((recipient_step, donor_step, mode, (interface,)))
+    else:
+        for recipient_step, donor_step, mode in scheduled:
+            missing_interfaces = tuple(
+                interface
+                for interface in interfaces
+                if not representation_alignment_path(
+                    root,
+                    run,
+                    interface,
+                    mode,
+                    recipient_step,
+                    donor_step,
+                ).is_file()
+            )
+            skipped += len(interfaces) - len(missing_interfaces)
+            if missing_interfaces:
+                pending.append((recipient_step, donor_step, mode, missing_interfaces))
     if skipped:
         print(
             f"[representation-alignment] {run.model}/{run.condition.value} skipped "
@@ -537,7 +604,25 @@ def run_representation_alignment_matrix(
         )
     if not pending:
         return
-    if shuffle_seed is not None:
+    if interleave_interfaces_by_priority:
+        tier_counts = [0] * len(ALIGNMENT_INTERLEAVED_PRIORITY_LABELS)
+        for recipient_step, donor_step, mode, missing in pending:
+            tier = _alignment_interleaved_priority_tier((recipient_step, donor_step, mode))
+            tier_counts[tier] += len(missing)
+        summary = ", ".join(
+            f"{label}: {count}"
+            for label, count in zip(
+                ALIGNMENT_INTERLEAVED_PRIORITY_LABELS,
+                tier_counts,
+                strict=True,
+            )
+        )
+        print(
+            f"[representation-alignment] interface-interleaved {len(pending)} missing "
+            f"artifact tasks with seed {shuffle_seed} ({summary})",
+            flush=True,
+        )
+    elif shuffle_seed is not None:
         tier_counts = [0] * (len(TEMPORAL_PRIORITY_LABELS) + 1)
         for recipient_step, donor_step, mode, _missing in pending:
             tier_counts[_temporal_priority_tier((recipient_step, donor_step, mode))] += 1
@@ -576,9 +661,7 @@ def run_representation_alignment_matrix(
                         missing_interfaces,
                         source_view.input_ids,
                         source_view.attention_mask,
-                        token_indices=tuple(
-                            position.source_index for position in positions
-                        ),
+                        token_indices=tuple(position.source_index for position in positions),
                     ),
                 )
         finally:
@@ -603,9 +686,7 @@ def run_representation_alignment_matrix(
                     missing_interfaces,
                     source.recipient_view.input_ids,
                     source.recipient_view.attention_mask,
-                    token_indices=tuple(
-                        position.recipient_index for position in source.positions
-                    ),
+                    token_indices=tuple(position.recipient_index for position in source.positions),
                 )
                 dense_positions = tuple(
                     TokenPositionPair(index, index, position.reverse_index)
@@ -667,8 +748,10 @@ def run_representation_alignment_matrix(
 
 
 __all__ = [
+    "ALIGNMENT_INTERLEAVED_PRIORITY_LABELS",
     "RepresentationAlignmentGrid",
     "_capture_alignment_interfaces",
     "_representation_alignment_grid",
+    "_seeded_interleaved_alignment_order",
     "run_representation_alignment_matrix",
 ]

@@ -160,6 +160,12 @@ checkpoint coverage is preferred whenever the projection would violate the norma
 Missing site cells remain unprocessed; copying, interpolating, or retaining raw activation banks to
 fill them is prohibited.
 
+The first 14 authorized OLMo-3 temporal artifacts on 2026-08-02 measured 35,006,212–35,080,794
+bytes each (35,061,910-byte mean). At that longest clean-prompt axis, all 1,530 off-diagonal
+pair/interface artifacts project to 53,644,722,191 bytes, or 49.96 GiB raw. The launch filesystem
+had 267 GiB free after the corner phase, so the raw atlas clears the 8 GiB floor. Record the compact
+site projection separately after the first export; do not assume it equals the raw JSON size.
+
 ## Preflight gates
 
 Immediately before an authorized capacity probe:

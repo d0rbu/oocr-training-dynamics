@@ -433,6 +433,13 @@ hidden-state banks are not retained. Metrics and source/recipient norms are accu
 float32. Every completed donor/recipient pair is written atomically under
 `representation_alignment/sequence_end/<interface>/<mode>/`, separately from causal probabilities.
 
+The full checkpoint atlas may instead use the preregistered interface-interleaved schedule. In
+that mode each task captures one boundary so the initial partial atlas reaches all five boundaries
+in the order `resid_post`, `mlp_output`, `mlp_input`, `attention_output`, `attention_input` for the
+corner, step-96-cross, and remaining-endpoint phases. The unprocessed remainder is then shuffled
+across boundary and checkpoint pair. This execution-order tradeoff performs more model loads than
+multi-boundary capture but leaves every stored vector and metric contract unchanged.
+
 Cosine is dimensionless and uses `[-1, 1]`. L2 is an unnormalized distance in the chosen
 boundary's activation units. The site therefore assigns L2 a robust color scale separately for
 each model and activation boundary while preserving the raw, unclipped value in hover. Function

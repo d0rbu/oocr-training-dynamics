@@ -500,6 +500,28 @@ uv run python scripts/run_representation_alignment.py \
   --confirm-gpu-run
 ```
 
+For the full OLMo-3 atlas, use the 2026-08-02 preregistered boundary-interleaved order. The
+explicit interface order is semantically significant for the first three priority phases:
+
+```bash
+uv run python scripts/run_representation_alignment.py \
+  --model olmo3-7b --condition correct \
+  --mode across_time --mode later_checkpoint \
+  --interface resid_post \
+  --interface mlp_output \
+  --interface mlp_input \
+  --interface attention_output \
+  --interface attention_input \
+  --shuffle-seed 20260715 \
+  --interleave-interfaces-by-priority \
+  --confirm-gpu-run
+```
+
+This produces the two directed endpoint corners boundary-by-boundary, then the entire step-96
+row/column boundary-by-boundary, then the remaining endpoint edges boundary-by-boundary, and
+finally one seeded shuffle across all remaining checkpoint-pair/boundary tasks. The schedule is
+formed before completed artifacts are skipped, preserving deterministic resume order.
+
 Prompt-counterfactual modes can be repeated in the same command. Same-prompt, same-checkpoint
 temporal diagonals are exact analytic identities and are not stored. Weight interfaces are rejected
 at argument parsing rather than coerced into flattened-parameter metrics.

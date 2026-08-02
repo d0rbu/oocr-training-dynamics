@@ -61,6 +61,14 @@ def parse_args() -> argparse.Namespace:
         type=int,
         help="deterministically shuffle pairs within the existing checkpoint-priority tiers",
     )
+    parser.add_argument(
+        "--interleave-interfaces-by-priority",
+        action="store_true",
+        help=(
+            "process corners, the full step-96 cross, and remaining endpoint edges "
+            "interface-by-interface before shuffling all remaining interface/pair tasks"
+        ),
+    )
     parser.add_argument("--allow-provisional-gemma", action="store_true")
     parser.add_argument("--confirm-gpu-run", action="store_true")
     return parser.parse_args()
@@ -90,6 +98,7 @@ def main() -> None:
         tuple(PatchingMode(value) for value in args.mode),
         interfaces,
         shuffle_seed=args.shuffle_seed,
+        interleave_interfaces_by_priority=args.interleave_interfaces_by_priority,
         allow_provisional_model=args.allow_provisional_gemma,
     )
 

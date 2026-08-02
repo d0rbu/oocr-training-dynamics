@@ -773,6 +773,26 @@ look directionally similar, and L2 can expose scale-sensitive divergence, but ne
 that the shared direction is causally used. Causal claims continue to require the separate
 activation-patching outcomes.
 
+### Computation-order amendment — 2026-08-02, before the first alignment GPU run
+
+The user requested a coarse-to-fine, activation-boundary-interleaved execution order so early
+partial artifacts cover every boundary instead of filling one full atlas first. This changes only
+which already-specified cells become available first; it does not change prompts, checkpoints,
+metrics, aggregation, or interpretation. For the OLMo-3 checkpoint-transfer atlas, tasks run in
+these deterministic phases:
+
+1. The two directed `0`/`1500` corners, grouped by activation boundary.
+2. Every off-diagonal cell whose recipient or donor checkpoint is step `96`, grouped by boundary.
+3. Every remaining off-diagonal cell whose recipient or donor is step `0` or `1500`, grouped by
+   boundary.
+4. Every remaining `(recipient, donor, boundary)` task in one seeded shuffle across boundaries.
+
+The boundary order for phases 1–3 is `resid_post`, `mlp_output`, `mlp_input`,
+`attention_output`, then `attention_input`. Pairs inside each boundary/phase are shuffled with seed
+`20260715`; the final phase shuffles complete pair/boundary tasks with the continuation of that
+same deterministic RNG stream. The complete task order is constructed before existing atomic
+artifacts are filtered, so stopping and resuming cannot silently perturb the remaining order.
+
 ## Prior information used for predictions
 
 The earlier repository replicated OLMo-2 7B rule recovery and observed OLMo-3 recovery after 4,096
