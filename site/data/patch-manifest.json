@@ -252918,7 +252918,7 @@
   },
   "real_activation_example_files": 144,
   "real_patch_files": 772,
-  "real_representation_alignment_files": 14,
+  "real_representation_alignment_files": 80,
   "real_vocabulary_logit_lens_files": 36,
   "representation_alignment_manifest": {
     "olmo3-7b": {
@@ -252976,6 +252976,20 @@
                 "sha256": "a1c5da298f88ab4c243d19ef2c7efd2b88e41c1e2e9a1b45a4757f8f5bf96d00",
                 "url": "data/representation-alignment/olmo3-7b/correct/mlp_input/across_time/recipient_step_001500/donor_step_000000.json"
               }
+            },
+            "96": {
+              "64": {
+                "bytes": 5721796,
+                "kind": "representation_alignment",
+                "sha256": "6f28f517b7911695246b38296a2a4e9724dea6e0bc5112e13ded99954d4457fc",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_input/across_time/recipient_step_000096/donor_step_000064.json"
+              },
+              "8": {
+                "bytes": 5713552,
+                "kind": "representation_alignment",
+                "sha256": "be51129a156805dff04e071733c133e9a3f5bde8f6390f83faabfdd906a17646",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_input/across_time/recipient_step_000096/donor_step_000008.json"
+              }
             }
           },
           "later_checkpoint": {
@@ -252991,12 +253005,132 @@
         },
         "mlp_output": {
           "across_time": {
+            "1024": {
+              "96": {
+                "bytes": 5704878,
+                "kind": "representation_alignment",
+                "sha256": "18ca368c194491febdf1c2524cb6494f4fd6de6945ae4f3662ed6319c6e01412",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/across_time/recipient_step_001024/donor_step_000096.json"
+              }
+            },
+            "128": {
+              "96": {
+                "bytes": 5724032,
+                "kind": "representation_alignment",
+                "sha256": "dddc80bbb7d7fa5cd99e7483b4567875c8178889a25100cda7fdc2ce15ac1fa0",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/across_time/recipient_step_000128/donor_step_000096.json"
+              }
+            },
+            "1280": {
+              "96": {
+                "bytes": 5703541,
+                "kind": "representation_alignment",
+                "sha256": "2c133a15e8296ff548bf5c76bcbba9d047e0a167834ce9ff3d51c0dc2da57dab",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/across_time/recipient_step_001280/donor_step_000096.json"
+              }
+            },
             "1500": {
               "0": {
                 "bytes": 5700100,
                 "kind": "representation_alignment",
                 "sha256": "ac96f915fb618a2ab6b61f8fd5e733cd3adca2f589500390c1958862c9bc63b6",
                 "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/across_time/recipient_step_001500/donor_step_000000.json"
+              },
+              "96": {
+                "bytes": 5703025,
+                "kind": "representation_alignment",
+                "sha256": "197cc7c5b984bd9f7bb10c59e8c35ca95b6c7fc5411cc93ae3bcc94171881fba",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/across_time/recipient_step_001500/donor_step_000096.json"
+              }
+            },
+            "192": {
+              "96": {
+                "bytes": 5715865,
+                "kind": "representation_alignment",
+                "sha256": "3402c251ceed387c6347e717735cd5263a17fd2c0229f2df2725daadd2a7af96",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/across_time/recipient_step_000192/donor_step_000096.json"
+              }
+            },
+            "256": {
+              "96": {
+                "bytes": 5712058,
+                "kind": "representation_alignment",
+                "sha256": "09823893e8ac3c57c01fb13a116d252c461e30758562d3ed189632c23e3d15b5",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/across_time/recipient_step_000256/donor_step_000096.json"
+              }
+            },
+            "384": {
+              "96": {
+                "bytes": 5709009,
+                "kind": "representation_alignment",
+                "sha256": "6f4f7a98dee6701accbd9679ffc3c6cc63f20b521f10fbd3b7c4a0e5da468817",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/across_time/recipient_step_000384/donor_step_000096.json"
+              }
+            },
+            "512": {
+              "96": {
+                "bytes": 5705752,
+                "kind": "representation_alignment",
+                "sha256": "c105807157ccf77da3feb2d3f0f9ab7dc280b1a16c43c4d2eee81c6352f809fa",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/across_time/recipient_step_000512/donor_step_000096.json"
+              }
+            },
+            "768": {
+              "96": {
+                "bytes": 5705894,
+                "kind": "representation_alignment",
+                "sha256": "357722813a3fdb05e6503bb846cdcc4522628bec016a84cf104efa7264762bea",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/across_time/recipient_step_000768/donor_step_000096.json"
+              }
+            },
+            "96": {
+              "0": {
+                "bytes": 5706108,
+                "kind": "representation_alignment",
+                "sha256": "a844a1968d0e7c14a87e6f8976eda69924d77fbe99ed7c27e1349ecfe7bb41a3",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/across_time/recipient_step_000096/donor_step_000000.json"
+              },
+              "1": {
+                "bytes": 5707213,
+                "kind": "representation_alignment",
+                "sha256": "319228ce190b77555b8e45311701c5c7deec2f0ad84238a91cb2ac5178cd6445",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/across_time/recipient_step_000096/donor_step_000001.json"
+              },
+              "16": {
+                "bytes": 5708774,
+                "kind": "representation_alignment",
+                "sha256": "06f82cd0c1c45c329ae45c0ad5de4a3134cc5a3cb9e7203687fec17f64816fac",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/across_time/recipient_step_000096/donor_step_000016.json"
+              },
+              "2": {
+                "bytes": 5707030,
+                "kind": "representation_alignment",
+                "sha256": "d515856e81c4f74ef3ccd2715b7bb24fdc1356dd5c829b6777f2119902ffdeca",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/across_time/recipient_step_000096/donor_step_000002.json"
+              },
+              "32": {
+                "bytes": 5711288,
+                "kind": "representation_alignment",
+                "sha256": "d237fd4291f8fe85030229e58ef560ee954ef0b1a55f38ca15782274085a2203",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/across_time/recipient_step_000096/donor_step_000032.json"
+              },
+              "4": {
+                "bytes": 5706665,
+                "kind": "representation_alignment",
+                "sha256": "2e4cafffeab6c347b114f0ad1b0d8f8ac28915915ddff9fc49186f38a6126708",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/across_time/recipient_step_000096/donor_step_000004.json"
+              },
+              "64": {
+                "bytes": 5720189,
+                "kind": "representation_alignment",
+                "sha256": "3aed8965eb0ed9cdffb94a98a491f0044e1acc6f98b2acf328365a946257589a",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/across_time/recipient_step_000096/donor_step_000064.json"
+              },
+              "8": {
+                "bytes": 5706256,
+                "kind": "representation_alignment",
+                "sha256": "6185f67e736d034e7c9ec61e28f0c781caaa2e8667def44842f99ad96748f1cc",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/across_time/recipient_step_000096/donor_step_000008.json"
               }
             }
           },
@@ -253007,18 +253141,166 @@
                 "kind": "representation_alignment",
                 "sha256": "debeb404ae54695b15eb7672f0216116f0dd636d2be8067817fcf3d0a2110436",
                 "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/later_checkpoint/recipient_step_000000/donor_step_001500.json"
+              },
+              "96": {
+                "bytes": 5706108,
+                "kind": "representation_alignment",
+                "sha256": "0f3dd6f3197ebffa9118972084bc2beda8e4fd401824458bf01d3cb4d27a64a5",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/later_checkpoint/recipient_step_000000/donor_step_000096.json"
+              }
+            },
+            "1": {
+              "96": {
+                "bytes": 5707213,
+                "kind": "representation_alignment",
+                "sha256": "f03f9301ea97e610f47e263affcf78d1d46185ea917e4c2249f07feedc8f1e3b",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/later_checkpoint/recipient_step_000001/donor_step_000096.json"
+              }
+            },
+            "16": {
+              "96": {
+                "bytes": 5708774,
+                "kind": "representation_alignment",
+                "sha256": "95af362ac93bd251c89d7a1a2e421d3fa61368d9001faee8d01a3e6da0deb95c",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/later_checkpoint/recipient_step_000016/donor_step_000096.json"
+              }
+            },
+            "2": {
+              "96": {
+                "bytes": 5707030,
+                "kind": "representation_alignment",
+                "sha256": "f83b28f5c47c2b9940098609c3c41eb8d5f52c39c858eb0fd9431f951ae3eb97",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/later_checkpoint/recipient_step_000002/donor_step_000096.json"
+              }
+            },
+            "32": {
+              "96": {
+                "bytes": 5711288,
+                "kind": "representation_alignment",
+                "sha256": "fdc11b46e70298e51582b64080690d8e9804f834abc511701879ce4c5b83b3a2",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/later_checkpoint/recipient_step_000032/donor_step_000096.json"
+              }
+            },
+            "4": {
+              "96": {
+                "bytes": 5706665,
+                "kind": "representation_alignment",
+                "sha256": "f944eb3506a6d5a2e87c1078dfc4a025b3467bc538b10b87791c372c1f98d3a7",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/later_checkpoint/recipient_step_000004/donor_step_000096.json"
+              }
+            },
+            "64": {
+              "96": {
+                "bytes": 5720189,
+                "kind": "representation_alignment",
+                "sha256": "01726bfbb0bf10e91d976a266b750461dc622b489ca56af0c646565585595f34",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/later_checkpoint/recipient_step_000064/donor_step_000096.json"
+              }
+            },
+            "8": {
+              "96": {
+                "bytes": 5706256,
+                "kind": "representation_alignment",
+                "sha256": "b1b6f7849a1384112ea3fe57ca9dd5d104514ebdcc87e6533e640446e086993c",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/later_checkpoint/recipient_step_000008/donor_step_000096.json"
+              }
+            },
+            "96": {
+              "1024": {
+                "bytes": 5704878,
+                "kind": "representation_alignment",
+                "sha256": "aa304e179457dc936e1247f87f68af5d8f0385fccea4bfdc1c01db1e00bc8c07",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/later_checkpoint/recipient_step_000096/donor_step_001024.json"
+              },
+              "128": {
+                "bytes": 5724032,
+                "kind": "representation_alignment",
+                "sha256": "cba4c9d225235a9a9b9687d7e29e259c25768dbd3d5831dd2f7514805b49b811",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/later_checkpoint/recipient_step_000096/donor_step_000128.json"
+              },
+              "1280": {
+                "bytes": 5703541,
+                "kind": "representation_alignment",
+                "sha256": "5bddd218a8f2894524e95dd7b28212993c9cdb2a41754b48ab566e8f79250acf",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/later_checkpoint/recipient_step_000096/donor_step_001280.json"
+              },
+              "1500": {
+                "bytes": 5703025,
+                "kind": "representation_alignment",
+                "sha256": "84e343a8f6f7c9eab52da8b522c0843ece858be31df6b7ef5f462f9656477d33",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/later_checkpoint/recipient_step_000096/donor_step_001500.json"
+              },
+              "192": {
+                "bytes": 5715865,
+                "kind": "representation_alignment",
+                "sha256": "98307b77098baf3104b4f0eed51687c1e24c17e4ba508991627dfee29e07d9a1",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/later_checkpoint/recipient_step_000096/donor_step_000192.json"
+              },
+              "256": {
+                "bytes": 5712058,
+                "kind": "representation_alignment",
+                "sha256": "02a856b4165817600885732a59e2ab87e948b915c31805612bd7e494a9ec33b9",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/later_checkpoint/recipient_step_000096/donor_step_000256.json"
+              },
+              "384": {
+                "bytes": 5709009,
+                "kind": "representation_alignment",
+                "sha256": "3996877668fb1213575904bbe2e624ec49106c1d12a73078b266308f2e79d34a",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/later_checkpoint/recipient_step_000096/donor_step_000384.json"
+              },
+              "512": {
+                "bytes": 5705752,
+                "kind": "representation_alignment",
+                "sha256": "cd012fd4872fcc134aa6fae6b842631c2461ed37ca29bb48e91dac1c739da696",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/later_checkpoint/recipient_step_000096/donor_step_000512.json"
+              },
+              "768": {
+                "bytes": 5705894,
+                "kind": "representation_alignment",
+                "sha256": "33909ee3235894ab6e98d1bb85b40308d050492b108cb479688862a820b5de62",
+                "url": "data/representation-alignment/olmo3-7b/correct/mlp_output/later_checkpoint/recipient_step_000096/donor_step_000768.json"
               }
             }
           }
         },
         "resid_post": {
           "across_time": {
+            "1024": {
+              "96": {
+                "bytes": 5708193,
+                "kind": "representation_alignment",
+                "sha256": "8beb5efe8115966f41c2b02b87659b4c5a6d42b6a3fa4209376ba7798245a92a",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/across_time/recipient_step_001024/donor_step_000096.json"
+              }
+            },
+            "128": {
+              "96": {
+                "bytes": 5721345,
+                "kind": "representation_alignment",
+                "sha256": "481801a58917cebd1662b03b125fd2e4a426bd31757e6b021bd1c31f3d8b9707",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/across_time/recipient_step_000128/donor_step_000096.json"
+              }
+            },
+            "1280": {
+              "96": {
+                "bytes": 5705805,
+                "kind": "representation_alignment",
+                "sha256": "a047c94b04bb4978a8900d82bb79bb1326d0458a12870f0252991c39bf24aa89",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/across_time/recipient_step_001280/donor_step_000096.json"
+              }
+            },
             "1500": {
               "0": {
                 "bytes": 5703378,
                 "kind": "representation_alignment",
                 "sha256": "13808a05f2d7a175e7f87431198fb53440fbef8de42c2143bbc3e0c0078a6fa4",
                 "url": "data/representation-alignment/olmo3-7b/correct/resid_post/across_time/recipient_step_001500/donor_step_000000.json"
+              },
+              "96": {
+                "bytes": 5705870,
+                "kind": "representation_alignment",
+                "sha256": "8fb77e0ff47620eefbc67ffa45199faacc3728f0f72dbeee219e31d33b4049af",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/across_time/recipient_step_001500/donor_step_000096.json"
               }
             },
             "192": {
@@ -253027,6 +253309,88 @@
                 "kind": "representation_alignment",
                 "sha256": "8c3d7ee4409597bc9771914cb26158d4db052950025fe067bf47dd54894ee6d7",
                 "url": "data/representation-alignment/olmo3-7b/correct/resid_post/across_time/recipient_step_000192/donor_step_000096.json"
+              }
+            },
+            "256": {
+              "96": {
+                "bytes": 5712202,
+                "kind": "representation_alignment",
+                "sha256": "853f4da91f473d5534a1f2afe76933db9b9a7f1d0b9c32609431ff8230530224",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/across_time/recipient_step_000256/donor_step_000096.json"
+              }
+            },
+            "384": {
+              "96": {
+                "bytes": 5710750,
+                "kind": "representation_alignment",
+                "sha256": "237d4e091d20e595de670f13e7a2f3328c2b3a2520b7824cb897fc8d187c1262",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/across_time/recipient_step_000384/donor_step_000096.json"
+              }
+            },
+            "512": {
+              "96": {
+                "bytes": 5707403,
+                "kind": "representation_alignment",
+                "sha256": "6a082f566ba174c13dd3f14b5f1feb50337157b3975c0cb0b3d9b7505aff3d1f",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/across_time/recipient_step_000512/donor_step_000096.json"
+              }
+            },
+            "768": {
+              "96": {
+                "bytes": 5707724,
+                "kind": "representation_alignment",
+                "sha256": "453fcab60a3f0cdd1e25b9cebd0249d643dbd7b13de3109798192d7e1ea4ff18",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/across_time/recipient_step_000768/donor_step_000096.json"
+              }
+            },
+            "96": {
+              "0": {
+                "bytes": 5707954,
+                "kind": "representation_alignment",
+                "sha256": "908e79f4fea848c1b70a73b0239a362b0f9cf559d20f0c0736cebe8c664c6a55",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/across_time/recipient_step_000096/donor_step_000000.json"
+              },
+              "1": {
+                "bytes": 5709926,
+                "kind": "representation_alignment",
+                "sha256": "2212045c696f3c082c017e20fe79f7fcc474f59de06bfac4ae9592de410c55e9",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/across_time/recipient_step_000096/donor_step_000001.json"
+              },
+              "16": {
+                "bytes": 5713560,
+                "kind": "representation_alignment",
+                "sha256": "6d12832784868950c01768abf52394d1f0e50e32d874e1907ccf8976faa2a678",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/across_time/recipient_step_000096/donor_step_000016.json"
+              },
+              "2": {
+                "bytes": 5709754,
+                "kind": "representation_alignment",
+                "sha256": "ebbd45f9ab1d462112df680b45ab4469750e61236590ae1a701eb7a59f5af958",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/across_time/recipient_step_000096/donor_step_000002.json"
+              },
+              "32": {
+                "bytes": 5713558,
+                "kind": "representation_alignment",
+                "sha256": "cff56c69bfaee77a968c7046b405eb68d8b3dd3d1b338b81c61798fcdf1cf5ae",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/across_time/recipient_step_000096/donor_step_000032.json"
+              },
+              "4": {
+                "bytes": 5711524,
+                "kind": "representation_alignment",
+                "sha256": "96b1f1a24d48c3d04a9fc85f0f7ca04deec7ef89ddbe0dac381e515fbe8092d9",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/across_time/recipient_step_000096/donor_step_000004.json"
+              },
+              "64": {
+                "bytes": 5719806,
+                "kind": "representation_alignment",
+                "sha256": "9701fd6fcb8c26b398309d897cd87523959623d43e5170c87f8e5c080372d013",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/across_time/recipient_step_000096/donor_step_000064.json"
+              },
+              "8": {
+                "bytes": 5712063,
+                "kind": "representation_alignment",
+                "sha256": "ab13abf3cdedde6de817ea1bbab23aafee29b72abf6914d25e544b7a5d88997a",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/across_time/recipient_step_000096/donor_step_000008.json"
               }
             }
           },
@@ -253045,12 +253409,110 @@
                 "url": "data/representation-alignment/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000000/donor_step_000096.json"
               }
             },
+            "1": {
+              "96": {
+                "bytes": 5709926,
+                "kind": "representation_alignment",
+                "sha256": "14cda3c68c771bf2ccb17197d561dc1dd1588f4ab3a97caefd6e03bf307e6b1c",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000001/donor_step_000096.json"
+              }
+            },
+            "16": {
+              "96": {
+                "bytes": 5713560,
+                "kind": "representation_alignment",
+                "sha256": "fafc7864121e087fb4c7c8fd36bc0339f0dc73865e7c8ffd4e2220e0885c28af",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000016/donor_step_000096.json"
+              }
+            },
+            "2": {
+              "96": {
+                "bytes": 5709754,
+                "kind": "representation_alignment",
+                "sha256": "32379c96f5639d16fe647b727c5ec2a13c8a15a8c23ff9e596d7187f8016120d",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000002/donor_step_000096.json"
+              }
+            },
+            "32": {
+              "96": {
+                "bytes": 5713558,
+                "kind": "representation_alignment",
+                "sha256": "7653579b71f056cba220e0a7c4b533b6f1df71244f8c61830ad2acf14256f2a7",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000032/donor_step_000096.json"
+              }
+            },
+            "4": {
+              "96": {
+                "bytes": 5711524,
+                "kind": "representation_alignment",
+                "sha256": "44f8a37257b6bbdb2e9dacec34ec5d4722f5055c7210743d5ac6b3224abb4c34",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000004/donor_step_000096.json"
+              }
+            },
+            "64": {
+              "96": {
+                "bytes": 5719806,
+                "kind": "representation_alignment",
+                "sha256": "89a5b84fa86d9869e87a9c8bfaf0ee8f8ab259f1fe5a8f09095437f2f443c518",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000064/donor_step_000096.json"
+              }
+            },
+            "8": {
+              "96": {
+                "bytes": 5712063,
+                "kind": "representation_alignment",
+                "sha256": "6992f29cc2f286b06a9882fbdbd77fabae186d263a08d4561683ad1aa84f6075",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000008/donor_step_000096.json"
+              }
+            },
             "96": {
               "1024": {
                 "bytes": 5708193,
                 "kind": "representation_alignment",
                 "sha256": "5c2595684940fec845ba7e6409a904c17761afd6d19301f438db130f179f5fac",
                 "url": "data/representation-alignment/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000096/donor_step_001024.json"
+              },
+              "128": {
+                "bytes": 5721345,
+                "kind": "representation_alignment",
+                "sha256": "eed3b72f1d341569bd69ad01547d40f93e12d0a3a3fa3eaf712bbc8ec50886fb",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000096/donor_step_000128.json"
+              },
+              "1280": {
+                "bytes": 5705805,
+                "kind": "representation_alignment",
+                "sha256": "8078d47f28c50d938ec870004b8e02f9ebc7eb304e17d41d730e72213fee5033",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000096/donor_step_001280.json"
+              },
+              "1500": {
+                "bytes": 5705870,
+                "kind": "representation_alignment",
+                "sha256": "6838909feea10431b784831882e79a9fc8773ef0ce655464785c7bc8991e4d2e",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000096/donor_step_001500.json"
+              },
+              "192": {
+                "bytes": 5714696,
+                "kind": "representation_alignment",
+                "sha256": "5b7f22ca8aae7f299e138d3eae00b8de5df8736b4835d25fddc2e8cb5fa438cc",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000096/donor_step_000192.json"
+              },
+              "256": {
+                "bytes": 5712202,
+                "kind": "representation_alignment",
+                "sha256": "eaa530f6c172f4acc4e8889649804d7d945967e54a740346d3b90477160b62aa",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000096/donor_step_000256.json"
+              },
+              "384": {
+                "bytes": 5710750,
+                "kind": "representation_alignment",
+                "sha256": "492dad5fa99566906e81c08f27743e287d087d1c064c378ee9de4cd7efae1a7d",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000096/donor_step_000384.json"
+              },
+              "512": {
+                "bytes": 5707403,
+                "kind": "representation_alignment",
+                "sha256": "a5a2fd1ad11630eccd2041740bb14a40a5faaee0232c27672d68e2a707113340",
+                "url": "data/representation-alignment/olmo3-7b/correct/resid_post/later_checkpoint/recipient_step_000096/donor_step_000512.json"
               },
               "768": {
                 "bytes": 5707724,
