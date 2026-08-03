@@ -64,19 +64,7 @@ def test_complete_weight_component_axis_covers_every_checkpoint_tensor(
     assert by_id["o_proj"].shape[1] % 128 == 0
 
     visible = weight_site_component_specs(model)
-    assert len(visible) == 9
-    assert all(component.tensor_rank == 2 for component in visible)
-    assert {component.component_id for component in visible} == {
-        "embed_tokens",
-        "q_proj",
-        "k_proj",
-        "v_proj",
-        "o_proj",
-        "gate_proj",
-        "up_proj",
-        "down_proj",
-        "lm_head",
-    }
+    assert visible == components
 
 
 def test_weight_alignment_path_is_canonical_and_excludes_identity(tmp_path: Path) -> None:

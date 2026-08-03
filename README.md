@@ -123,17 +123,20 @@ missing grids stay unprocessed, and same-prompt/same-checkpoint identities are l
 These alignment maps are descriptive and do not replace the causal patching result.
 
 A second observational family compares full effective weights across checkpoints. Its complete
-axis covers embeddings, all decoder projection matrices, and the unembedding. Frozen normalization
-vectors are omitted because this experiment did not train them and they are exact identities at
-every checkpoint. The seven LoRA targets use measured full effective matrices (frozen base plus
-scaled LoRA `B @ A`). Off-diagonal checkpoint
+axis covers embeddings, all decoder projection matrices, learned normalization vectors, the final
+norm, and the unembedding. Frozen non-target tensors are displayed as exact analytic identities.
+The seven LoRA targets use measured full effective matrices (frozen base plus scaled LoRA `B @ A`).
+Off-diagonal checkpoint
 pairs are stored once and reused in both directions for exact symmetry. Weight-cosine colors always
 span `0..1`; decomposed views add an inset border for population variance. Packed float32 detail
 chunks prefetch all four row/column views for the selected pair and stay in a two-pair local cache.
-The fixed `0..1` weight-cosine ramp uses blue at zero and red at one with quadratic color
-interpolation; hover retains the raw value. Hover canvases keep one contiguous neuron grid and
+The fixed `0..1` weight-cosine ramp uses blue at zero, white at the transformed midpoint, and red at
+one with quadratic color interpolation; hover retains the raw value. Variance insets use a fixed
+white at 20% opacity and vary only in width. Hover canvases keep one contiguous neuron grid and
 outline the 128-channel attention-head regions in Q/K/V rows and O columns; larger MLP axes remain
-dense enough to stay on screen. Exact zero-vector pairs use the disclosed convention zero/zero
+dense enough to stay on screen. The canvas fills the hover-card width, and the surrounding text is
+limited to the selected metric, variance, shape, and compact summary statistics. Exact zero-vector
+pairs use the disclosed convention zero/zero
 cosine `1` and exactly-one-zero cosine `0`; hover reports the corresponding counts.
 
 Clicking a measured activation cell also selects its exact source and recipient vectors for a

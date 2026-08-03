@@ -1,7 +1,7 @@
 "use strict";
 
-const DATA_URL = "data/experiment.json?v=20260803b";
-const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260803b";
+const DATA_URL = "data/experiment.json?v=20260803c";
+const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260803c";
 const CONDITION_LABELS = {
   correct: "Correct I/O",
   wrong_alias: "Wrong alias",
@@ -2635,8 +2635,12 @@ function colorFor(value, metric, scaleMax = null) {
     const clamped = Math.max(0, Math.min(1, value));
     const amount = clamped ** 2;
     const unaligned = [55, 92, 170];
+    const midpoint = [255, 255, 255];
     const aligned = [239, 119, 95];
-    return `rgb(${unaligned.map((channel, index) => Math.round(channel + (aligned[index] - channel) * amount)).join(",")})`;
+    const start = amount <= .5 ? unaligned : midpoint;
+    const end = amount <= .5 ? midpoint : aligned;
+    const segment = amount <= .5 ? amount * 2 : (amount - .5) * 2;
+    return `rgb(${start.map((channel, index) => Math.round(channel + (end[index] - channel) * segment)).join(",")})`;
   }
   const clipped = Math.max(-1, Math.min(1, value));
   const neutral = [238, 232, 216];
@@ -2785,16 +2789,13 @@ function weightDetailGridHtml(patch, weightIndex, columnIndex) {
   const axis = detailSpec.artifact.startsWith("row_")
     ? "row / output channel"
     : "column / input channel";
-  const scaleNote = cosine
-    ? "fixed 0…1 weight-cosine color scale; negative raw values clamp to the 0 endpoint"
-    : `detail colors scale 0…${formatAlignmentValue(detailScale)} within this matrix`;
   const groupSize = detailSpec.artifact.startsWith("row_")
     ? component.row_group_size
     : component.column_group_size;
   const groupNote = groupSize
-    ? `<br><small class="weight-detail-group-note">This is one contiguous 64-column neuron grid. Each acid-green outlined region is one ${escapeHtml(component.group_label)} (${groupSize} contiguous channels); regions follow head index order from top to bottom.</small>`
+    ? ` · <small class="weight-detail-group-note">outlined band = one ${escapeHtml(component.group_label)} (${groupSize} channels)</small>`
     : "";
-  return `<br><br><b>${axis} mini-grid · n=${values.length.toLocaleString()}</b><br><small>left-to-right, top-to-bottom index order · ${scaleNote}</small>${groupNote}<canvas class="weight-detail-grid" data-detail-key="${escapeHtml(detailKey)}" data-cell-key="${escapeHtml(cellKey)}" data-cosine="${cosine}" data-scale="${detailScale ?? 1}" data-group-size="${groupSize ?? 0}"></canvas><small>min ${formatAlignmentValue(sorted[0])} · median ${formatAlignmentValue(quantile(.5))} · p95 ${formatAlignmentValue(quantile(.95))} · max ${formatAlignmentValue(sorted.at(-1))}</small>`;
+  return `<br><br><b>${axis} · n=${values.length.toLocaleString()}</b>${groupNote}<canvas class="weight-detail-grid" data-detail-key="${escapeHtml(detailKey)}" data-cell-key="${escapeHtml(cellKey)}" data-cosine="${cosine}" data-scale="${detailScale ?? 1}" data-group-size="${groupSize ?? 0}"></canvas><small>min ${formatAlignmentValue(sorted[0])} · median ${formatAlignmentValue(quantile(.5))} · p95 ${formatAlignmentValue(quantile(.95))} · max ${formatAlignmentValue(sorted.at(-1))}</small>`;
 }
 
 function tokenCoordinate(prefix, index, tokenId, token) {
@@ -3255,34 +3256,24 @@ function renderPatching() {
         if (Number.isFinite(variance) && varianceScale?.max > 0) {
           const amount = Math.sqrt(Math.max(0, Math.min(1, variance / varianceScale.max)));
           const width = .5 + amount * 3.5;
-          cell.style.boxShadow = `inset 0 0 0 ${width.toFixed(2)}px rgba(255, 255, 255, .82)`;
+          cell.style.boxShadow = `inset 0 0 0 ${width.toFixed(2)}px rgba(255, 255, 255, .20)`;
         }
         display = formatAlignmentValue(cellMeasurement);
         const shape = patch.weightShapes?.[tokenIndex]?.[layer] ?? null;
-        const scalar = (name) => patch.weightMetricMatrices[name][tokenIndex][layer];
-        const degenerate = (name) => (
-          patch.weightDegenerateCounts?.[name]?.[tokenIndex]?.[layer] ?? Number.NaN
-        );
         const shapeNote = shape
           ? shape.length === 2
             ? `${shape[0].toLocaleString()} output rows × ${shape[1].toLocaleString()} input columns`
             : `${shape[0].toLocaleString()} learned scale values`
           : "tensor shape unavailable";
-        const scaleNote = metric.includes("l2") && scale
-          ? `<br><small>Heatmap colors saturate at model/metric p95 scale ${formatAlignmentValue(scale.max)}; raw values below are unclipped.</small>`
-          : "";
-        const zeroNote = patch.analytic
-          ? ""
-          : Number.isFinite(degenerate("row_both_zero_count"))
-            ? `<br><small>zero-vector audit · rows both-zero ${degenerate("row_both_zero_count")}, exactly-one-zero ${degenerate("row_one_zero_count")} · columns both-zero ${degenerate("column_both_zero_count")}, exactly-one-zero ${degenerate("column_one_zero_count")}. Cosine convention: nonzero/nonzero ordinary; zero/zero = 1; exactly-one-zero = 0.</small>`
-            : "";
         const varianceNote = Number.isFinite(variance)
-          ? `<br>selected-axis population variance: ${formatAlignmentValue(variance)}${varianceScale ? ` <small>(fixed light inset; only its width changes, reaching maximum at cross-cell p95 ${formatAlignmentValue(varianceScale.max)}; raw value shown)</small>` : ""}`
+          ? `<br>variance: ${formatAlignmentValue(variance)}`
           : "";
         const frozenNote = position.component.frozen_during_lora
-          ? "<br><small>This tensor was outside the LoRA target set and is therefore exactly unchanged across these checkpoints; identity values are derived analytically.</small>"
+          ? " · <small>analytic frozen identity</small>"
           : "";
-        const baseTooltip = `<b>${coordinate}</b><br>${escapeHtml(shapeNote)}<br><br><b>full effective weight comparison</b><br>Frobenius cosine: ${formatAlignmentValue(scalar("frobenius_cosine"))}<br>Frobenius L2: ${formatAlignmentValue(scalar("frobenius_l2"))}<br>mean row cosine: ${formatAlignmentValue(scalar("mean_row_cosine"))}<br>mean column cosine: ${formatAlignmentValue(scalar("mean_column_cosine"))}<br>mean row L2: ${formatAlignmentValue(scalar("mean_row_l2"))}<br>mean column L2: ${formatAlignmentValue(scalar("mean_column_l2"))}${varianceNote}${scaleNote}${zeroNote}${frozenNote}<br><small>Rows are output channels; columns are input channels. This prompt-independent artifact is shared by both checkpoint orientations, so every value is exactly symmetric.</small>`;
+        const selectedLabel = PATCH_VISUALIZATION_LABELS[state.patchVisualization]
+          .replace("Weights · ", "");
+        const baseTooltip = `<b>${coordinate}</b> · ${escapeHtml(shapeNote)}${frozenNote}<br><b>${escapeHtml(selectedLabel)}</b>: ${formatAlignmentValue(cellMeasurement)}${varianceNote}`;
         bindHeatTooltip(
           cell,
           () => `${baseTooltip}${weightDetailGridHtml(patch, tokenIndex, layer)}`,
@@ -3415,7 +3406,7 @@ function renderPatching() {
     if (weightAnalysis && WEIGHT_VISUALIZATION_METRICS[state.patchVisualization].includes("cosine")) {
       legend.append(el("span", {}, "0 unaligned"));
       const scale = el("i");
-      scale.style.background = "linear-gradient(90deg, #375caa, #ef775f)";
+      scale.style.background = "linear-gradient(90deg, #375caa 0%, #fff 70.71%, #ef775f 100%)";
       legend.append(scale);
       legend.append(el("span", {}, "1 aligned"));
       if (WEIGHT_VISUALIZATION_VARIANCES[state.patchVisualization]) {
@@ -3620,7 +3611,7 @@ function renderPatching() {
     } else if (patch.analytic) {
       document.getElementById("patch-explanation").textContent = "The two sliders select the same checkpoint, so every displayed weight matrix is exactly itself: all cosine metrics are 1 and all L2 metrics are 0. This diagonal is analytic and no model was loaded.";
     } else {
-      document.getElementById("patch-explanation").textContent = "The atlas shows only matrix-valued weights: embedding, seven decoder projections, and unembedding. Frozen normalization vectors are omitted because they are exact identities throughout these LoRA runs. The trained projections compare full effective matrices (frozen base + scaled LoRA B·A), and each unordered checkpoint pair is stored once for exact symmetry. Weight-cosine colors use a high-contrast blue-at-0 to red-at-1 ramp with quadratic interpolation; hover retains the raw cosine. Decomposed views add an inset border for population variance. All four packed row/column detail families prefetch for the selected pair; hover outlines attention-head regions and densely tiles large MLP axes.";
+      document.getElementById("patch-explanation").textContent = "The atlas covers every learned tensor: embedding, decoder projections and norms, final norm, and unembedding. The trained projections compare full effective matrices (frozen base + scaled LoRA B·A); frozen non-target tensors are exact analytic identities. Each unordered checkpoint pair is stored once for exact symmetry. Weight-cosine colors use a quadratic blue-to-white-to-red ramp; hover retains the raw cosine. Decomposed views add a 20%-opacity light inset whose width encodes population variance. All four packed row/column detail families prefetch for the selected pair; hover outlines attention-head regions and densely tiles large MLP axes.";
     }
   } else if (representationAlignmentSelected()) {
     if (!patch.applicable) {

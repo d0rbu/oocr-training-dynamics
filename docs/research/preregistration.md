@@ -863,18 +863,19 @@ need no zero-vector convention.
 
 After decomposed projection artifacts existed, the requested website atlas was expanded without
 changing the GPU measurement or inferential target. The registered OLMo-3 and Qwen-3 inventories
-cover every learned tensor, but the displayed vertical axis contains only matrix-valued weights:
-embedding, seven decoder projections, and untied LM head. The initially displayed normalization
-vectors were subsequently removed at the user's request because these LoRA runs never train them
-and their cross-checkpoint identity is exact by construction (`cosine=1`, `L2=0`). Displayed frozen
-embedding and LM-head row/column identities remain analytic.
+cover every learned tensor, and the displayed vertical axis includes embedding, seven decoder
+projections, all learned normalization vectors, final norm, and untied LM head. These LoRA runs
+never train the non-projection tensors, so their cross-checkpoint identity is exact by construction
+(`cosine=1`, `L2=0`). One-dimensional norm vectors expose flattened metrics only; decomposed cells
+are N/A rather than fabricated.
 
 For each already-stored decomposed row/column family, the exporter additionally derives population
 variance from the raw per-axis values. The scalar cell color still encodes its mean; a fixed light
 inset border encodes variance only through its width from zero to the cross-cell p95, while hover
 reports the unclipped variance. Weight
-cosine color maps now use the requested fixed `0..1` range, blue at zero and red at one, with
-quadratic color interpolation to spread high-cosine differences. Any rare negative raw cosine
+cosine color maps now use the requested fixed `0..1` range, blue at zero, white at the transformed
+midpoint, and red at one, with quadratic color interpolation to spread high-cosine differences.
+The variance inset is fixed white at 20% opacity and changes only in width. Any rare negative raw cosine
 remains visible in hover and clamps only at the color endpoint; the underlying artifact is
 unchanged. Q/K/V row details and O column details use exact 128-channel attention-head boundaries
 from the model schema, drawn as outlines over one contiguous 64-column neuron grid. Detail

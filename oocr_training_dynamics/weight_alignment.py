@@ -234,11 +234,9 @@ def weight_component_specs(model: ModelKey) -> tuple[WeightComponentSpec, ...]:
 
 @beartype
 def weight_site_component_specs(model: ModelKey) -> tuple[WeightComponentSpec, ...]:
-    """Return the matrix-valued weight families shown in the interactive atlas."""
+    """Return every learned weight family shown in the interactive atlas."""
 
-    return tuple(
-        component for component in weight_component_specs(model) if component.tensor_rank == 2
-    )
+    return weight_component_specs(model)
 
 
 @beartype

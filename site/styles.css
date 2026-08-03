@@ -241,7 +241,7 @@ footer p { margin: 7px 0 0; color: #99aaa1; font-size: 12px; }
 .tooltip { position: fixed; z-index: 30; max-width: 320px; padding: 12px 14px; border: 1px solid rgba(255,255,255,.2); background: rgba(12,25,21,.96); color: white; box-shadow: 0 12px 40px rgba(0,0,0,.3); pointer-events: none; font-size: 11px; line-height: 1.5; }
 .tooltip b { color: var(--acid); }
 .tooltip:has(.weight-detail-grid) { width: min(560px, calc(100vw - 16px)); max-width: 560px; max-height: calc(100vh - 16px); overflow: hidden; }
-.weight-detail-grid { display: block; width: auto; max-width: 100%; height: auto; max-height: 250px; margin: 7px 0; image-rendering: pixelated; }
+.weight-detail-grid { display: block; width: 100%; max-width: 100%; height: auto; margin: 7px 0; image-rendering: pixelated; }
 .weight-detail-group-note { color: #d0ff5a; }
 
 @media (max-width: 980px) {
@@ -278,5 +278,4 @@ footer p { margin: 7px 0 0; color: #99aaa1; font-size: 12px; }
   .heatmap-footer p { text-align: left; }
   footer { display: block; }
   #footer-status { margin-top: 24px; }
-  .weight-detail-grid { max-height: 190px; }
 }
