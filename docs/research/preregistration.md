@@ -875,7 +875,7 @@ inset border encodes variance only through its width from zero to the cross-cell
 reports the unclipped variance. Weight
 cosine color maps now use the requested fixed `0..1` range, blue at zero, white at the transformed
 midpoint, and red at one, with quadratic color interpolation to spread high-cosine differences.
-The variance inset is fixed white at 20% opacity and changes only in width. Any rare negative raw cosine
+The variance inset is fixed white at 30% opacity and changes only in width. Any rare negative raw cosine
 remains visible in hover and clamps only at the color endpoint; the underlying artifact is
 unchanged. Q/K/V row details and O column details use exact 128-channel attention-head boundaries
 from the model schema, drawn as outlines over one contiguous 64-column neuron grid. Detail

@@ -1,7 +1,7 @@
 "use strict";
 
-const DATA_URL = "data/experiment.json?v=20260803c";
-const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260803c";
+const DATA_URL = "data/experiment.json?v=20260803d";
+const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260803d";
 const CONDITION_LABELS = {
   correct: "Correct I/O",
   wrong_alias: "Wrong alias",
@@ -2710,7 +2710,7 @@ function renderWeightDetailCanvases(container) {
         );
       });
       context.strokeStyle = "rgba(204, 255, 0, .95)";
-      context.lineWidth = 1;
+      context.lineWidth = .5;
       for (let group = 0; group < groupCount; group += 1) {
         const start = group * groupSize;
         const end = Math.min(start + groupSize, values.length);
@@ -3256,7 +3256,7 @@ function renderPatching() {
         if (Number.isFinite(variance) && varianceScale?.max > 0) {
           const amount = Math.sqrt(Math.max(0, Math.min(1, variance / varianceScale.max)));
           const width = .5 + amount * 3.5;
-          cell.style.boxShadow = `inset 0 0 0 ${width.toFixed(2)}px rgba(255, 255, 255, .20)`;
+          cell.style.boxShadow = `inset 0 0 0 ${width.toFixed(2)}px rgba(255, 255, 255, .30)`;
         }
         display = formatAlignmentValue(cellMeasurement);
         const shape = patch.weightShapes?.[tokenIndex]?.[layer] ?? null;
@@ -3611,7 +3611,7 @@ function renderPatching() {
     } else if (patch.analytic) {
       document.getElementById("patch-explanation").textContent = "The two sliders select the same checkpoint, so every displayed weight matrix is exactly itself: all cosine metrics are 1 and all L2 metrics are 0. This diagonal is analytic and no model was loaded.";
     } else {
-      document.getElementById("patch-explanation").textContent = "The atlas covers every learned tensor: embedding, decoder projections and norms, final norm, and unembedding. The trained projections compare full effective matrices (frozen base + scaled LoRA B·A); frozen non-target tensors are exact analytic identities. Each unordered checkpoint pair is stored once for exact symmetry. Weight-cosine colors use a quadratic blue-to-white-to-red ramp; hover retains the raw cosine. Decomposed views add a 20%-opacity light inset whose width encodes population variance. All four packed row/column detail families prefetch for the selected pair; hover outlines attention-head regions and densely tiles large MLP axes.";
+      document.getElementById("patch-explanation").textContent = "The atlas covers every learned tensor: embedding, decoder projections and norms, final norm, and unembedding. The trained projections compare full effective matrices (frozen base + scaled LoRA B·A); frozen non-target tensors are exact analytic identities. Each unordered checkpoint pair is stored once for exact symmetry. Weight-cosine colors use a quadratic blue-to-white-to-red ramp; hover retains the raw cosine. Decomposed views add a 30%-opacity light inset whose width encodes population variance. All four packed row/column detail families prefetch for the selected pair; hover outlines attention-head regions and densely tiles large MLP axes.";
     }
   } else if (representationAlignmentSelected()) {
     if (!patch.applicable) {

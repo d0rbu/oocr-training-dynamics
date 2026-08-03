@@ -466,7 +466,7 @@ Row metrics average output-channel vectors; column metrics average input-channel
 Weight-cosine colors use a fixed blue-at-0, white-at-transformed-midpoint, red-at-1 range with
 quadratic interpolation; raw hover values are unchanged. In the four decomposed views, an inset cell border
 encodes the population variance of the underlying row/column values. Its color and opacity remain a
-fixed white shade at 20% opacity; only width changes, reaching its maximum at the model-wide cross-cell p95. Hover
+fixed white shade at 30% opacity; only width changes, reaching its maximum at the model-wide cross-cell p95. Hover
 retains the raw variance. Packed float32 detail arrays for all
 four views prefetch as soon as a measured checkpoint pair is selected and remain in a two-pair local
 cache. Hover draws them on a bounded canvas rather than creating one DOM node per neuron. Exact

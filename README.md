@@ -132,7 +132,7 @@ span `0..1`; decomposed views add an inset border for population variance. Packe
 chunks prefetch all four row/column views for the selected pair and stay in a two-pair local cache.
 The fixed `0..1` weight-cosine ramp uses blue at zero, white at the transformed midpoint, and red at
 one with quadratic color interpolation; hover retains the raw value. Variance insets use a fixed
-white at 20% opacity and vary only in width. Hover canvases keep one contiguous neuron grid and
+white at 30% opacity and vary only in width. Hover canvases keep one contiguous neuron grid and
 outline the 128-channel attention-head regions in Q/K/V rows and O columns; larger MLP axes remain
 dense enough to stay on screen. The canvas fills the hover-card width, and the surrounding text is
 limited to the selected metric, variance, shape, and compact summary statistics. Exact zero-vector
