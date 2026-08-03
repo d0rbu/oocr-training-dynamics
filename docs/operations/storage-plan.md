@@ -174,8 +174,9 @@ projection is therefore about 58.1 GiB before Git packing and transient atomic-w
 There are 153 unordered checkpoint pairs rather than 306 directed pairs. Each raw artifact stores
 six scalars and four decomposed row/column arrays for seven projections across every decoder layer;
 it never stores either full matrix. The site exporter writes one small scalar heatmap chunk plus
-four independently lazy-loaded detail chunks per pair. This prevents the browser from preloading
-millions of per-channel values that are irrelevant to the selected metric.
+four packed float32 detail chunks per pair. The selected pair's four chunks prefetch together and
+an eight-chunk browser cache retains two complete pairs, avoiding repeated JSON parsing and hover
+round trips without attempting to preload the complete 153-pair detail atlas.
 
 Before expanding beyond the required `0`/`1500` smoke, measure raw, scalar, and all four detail
 families separately and project 153 pairs. Preserve headroom for the temporary atomic raw JSON and

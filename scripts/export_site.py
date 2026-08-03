@@ -6,6 +6,8 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import sys
+from array import array
 from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
@@ -68,13 +70,22 @@ from oocr_training_dynamics.weight_alignment import (
     WEIGHT_ALIGNMENT_MATRIX_NAMES,
     WEIGHT_ALIGNMENT_METRICS,
     WEIGHT_ALIGNMENT_SCHEMA_VERSION,
+    WEIGHT_ALIGNMENT_VARIANCE_METRICS,
     WEIGHT_ALIGNMENT_ZERO_NORM_CONVENTION,
+    weight_component_specs,
 )
 
 CurveRow = dict[str, float | int]
 FunctionCurves = dict[str, list[CurveRow]]
 PatchRecord = dict[str, object]
 LetterPropensityRow = dict[str, object]
+
+WEIGHT_DETAIL_TO_VARIANCE = {
+    "row_cosines": ("mean_row_cosine", "row_cosine_variance"),
+    "column_cosines": ("mean_column_cosine", "column_cosine_variance"),
+    "row_l2_distances": ("mean_row_l2", "row_l2_variance"),
+    "column_l2_distances": ("mean_column_l2", "column_l2_variance"),
+}
 
 
 def _mapping(value: object, *, context: str) -> dict[str, object]:
@@ -521,6 +532,22 @@ def _write_compact_json(path: Path, value: object) -> tuple[str, int]:
     return hashlib.sha256(serialized).hexdigest(), len(serialized)
 
 
+def _write_compact_float32(path: Path, values: list[float]) -> tuple[str, int]:
+    """Atomically write one deterministic little-endian packed-float detail chunk."""
+
+    packed = array("f", values)
+    if packed.itemsize != 4:
+        raise RuntimeError("the platform float array is not IEEE-754 binary32")
+    if sys.byteorder != "little":
+        packed.byteswap()
+    serialized = packed.tobytes()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_bytes(serialized)
+    temporary.replace(path)
+    return hashlib.sha256(serialized).hexdigest(), len(serialized)
+
+
 def _export_real_patches(root: Path) -> tuple[dict[str, object], int]:
     manifest: dict[str, object] = {}
     file_count = 0
@@ -814,13 +841,83 @@ def _export_representation_alignments(
     return manifest, file_count, scales
 
 
+def _weight_alignment_site_axis(model: ModelKey) -> dict[str, object]:
+    spec = MODEL_SPECS[model]
+    components = weight_component_specs(model)
+    return {
+        "component_axis": [
+            {
+                "id": component.component_id,
+                "label": component.label,
+                "placement": component.placement,
+                "tensor_rank": component.tensor_rank,
+                "shape": component.shape,
+                "parameter_template": component.parameter_template,
+                "frozen_during_lora": component.frozen_during_lora,
+                "row_group_size": component.row_group_size,
+                "column_group_size": component.column_group_size,
+                "group_label": component.group_label,
+            }
+            for component in components
+        ],
+        "column_axis": [
+            {"id": "input", "label": "input", "kind": "global_input"},
+            *[
+                {
+                    "id": f"layer_{layer}",
+                    "label": str(layer),
+                    "kind": "decoder_layer",
+                    "layer": layer,
+                }
+                for layer in range(spec.layer_count)
+            ],
+            {"id": "output", "label": "output", "kind": "global_output"},
+        ],
+        "decoder_layer_count": spec.layer_count,
+        "covered_parameter_tensors": sum(
+            spec.layer_count if component.placement == "layer" else 1 for component in components
+        ),
+        "all_non_projection_weights_frozen": True,
+    }
+
+
+def _population_variance(values: list[float], mean: float) -> float:
+    if not values or not math.isfinite(mean):
+        raise ValueError("population variance requires finite values and mean")
+    variance = math.fsum((value - mean) ** 2 for value in values) / len(values)
+    if not math.isfinite(variance) or variance < 0.0:
+        raise ValueError("population variance must be finite and nonnegative")
+    return variance
+
+
+def _linear_percentile(values: list[float], quantile: float) -> float:
+    if not values or not 0.0 <= quantile <= 1.0:
+        raise ValueError("percentile requires values and a quantile in [0, 1]")
+    ordered = sorted(values)
+    coordinate = (len(ordered) - 1) * quantile
+    lower = math.floor(coordinate)
+    upper = math.ceil(coordinate)
+    if lower == upper:
+        return ordered[lower]
+    fraction = coordinate - lower
+    return ordered[lower] * (1.0 - fraction) + ordered[upper] * fraction
+
+
 def _export_weight_alignments(
     root: Path,
-) -> tuple[dict[str, object], int, dict[str, object]]:
+) -> tuple[dict[str, object], int, dict[str, object], dict[str, object]]:
     """Export scalar effective-weight grids and separately lazy-loaded axis details."""
 
     manifest: dict[str, object] = {}
     observations: dict[tuple[str, str], dict[str, list[float]]] = {}
+    variance_observations: dict[tuple[str, str], list[float]] = {}
+    axes: dict[str, object] = {}
+    for model_key in ModelKey:
+        try:
+            axes[model_key.value] = _weight_alignment_site_axis(model_key)
+        except ValueError:
+            # Provisional architectures remain absent until an exact tensor inventory is registered.
+            continue
     file_count = 0
     pattern = "artifacts/runs/*/*/seed_*/weight_alignment/**/step_high_*.json"
     valid_models = {key.value for key in ModelKey}
@@ -879,15 +976,29 @@ def _export_weight_alignments(
         if not isinstance(cells, list) or len(cells) != layer_count * len(matrix_names):
             raise ValueError(f"{path}.cells is incomplete")
 
+        model_key = ModelKey(model)
+        site_axis = _weight_alignment_site_axis(model_key)
+        existing_axis = axes.setdefault(model, site_axis)
+        if existing_axis != site_axis:
+            raise ValueError(f"{path} conflicts with the registered complete-weight axis")
+        components = weight_component_specs(model_key)
+        component_ids = tuple(component.component_id for component in components)
+        component_index = {component_id: index for index, component_id in enumerate(component_ids)}
+        column_count = layer_count + 2
+
         scalar_matrices: dict[str, list[list[float | None]]] = {
-            metric: [[None] * layer_count for _ in matrix_names]
+            metric: [[None] * column_count for _ in components]
             for metric in WEIGHT_ALIGNMENT_METRICS
         }
         degenerate_matrices: dict[str, list[list[int | None]]] = {
-            metric: [[None] * layer_count for _ in matrix_names]
+            metric: [[None] * column_count for _ in components]
             for metric in WEIGHT_ALIGNMENT_DEGENERATE_COUNTS
         }
-        shapes: list[list[list[int] | None]] = [[None] * layer_count for _ in matrix_names]
+        variance_matrices: dict[str, list[list[float | None]]] = {
+            metric: [[None] * column_count for _ in components]
+            for metric in WEIGHT_ALIGNMENT_VARIANCE_METRICS
+        }
+        shapes: list[list[list[int] | None]] = [[None] * column_count for _ in components]
         detail_cells: list[dict[str, object]] = []
         seen: set[tuple[int, str]] = set()
         for raw_cell in cells:
@@ -910,8 +1021,15 @@ def _export_weight_alignments(
                 raise ValueError(f"{path} has an invalid matrix shape")
             shape_values = cast(list[int], shape)
             seen.add((layer, weight_name))
-            weight_index = WEIGHT_ALIGNMENT_MATRIX_NAMES.index(weight_name)
-            shapes[weight_index][layer] = shape_values
+            weight_index = component_index[weight_name]
+            column_index = layer + 1
+            expected_shape = components[weight_index].shape
+            if tuple(shape_values) != expected_shape:
+                raise ValueError(
+                    f"{path} has shape {tuple(shape_values)} for {weight_name}; "
+                    f"expected {expected_shape}"
+                )
+            shapes[weight_index][column_index] = shape_values
             scalar_cell: dict[str, object] = {
                 "layer": layer,
                 "weight_name": weight_name,
@@ -924,14 +1042,14 @@ def _export_weight_alignments(
                     raise ValueError(f"{path} contains an out-of-range {metric}")
                 if "l2" in metric and value < 0.0:
                     raise ValueError(f"{path} contains a negative {metric}")
-                scalar_matrices[metric][weight_index][layer] = value
+                scalar_matrices[metric][weight_index][column_index] = value
                 scalar_cell[metric] = value
             for metric in WEIGHT_ALIGNMENT_DEGENERATE_COUNTS:
                 count = cell.get(metric)
                 axis_length = shape_values[0] if metric.startswith("row_") else shape_values[1]
                 if not isinstance(count, int) or not 0 <= count <= axis_length:
                     raise ValueError(f"{path} contains an invalid {metric}")
-                degenerate_matrices[metric][weight_index][layer] = count
+                degenerate_matrices[metric][weight_index][column_index] = count
             detail_cell: dict[str, object] = {**scalar_cell, "shape": shape_values}
             for metric in WEIGHT_ALIGNMENT_DETAIL_METRICS:
                 raw_values = cell.get(metric)
@@ -949,62 +1067,111 @@ def _export_weight_alignments(
                         raise ValueError(f"{path} contains a negative {metric}")
                     values.append(value)
                 detail_cell[metric] = values
+                mean_metric, variance_metric = WEIGHT_DETAIL_TO_VARIANCE[metric]
+                mean_value = cast(float, scalar_cell[mean_metric])
+                variance = _population_variance(values, mean_value)
+                variance_matrices[variance_metric][weight_index][column_index] = variance
+                variance_observations.setdefault((model, variance_metric), []).append(variance)
             detail_cells.append(detail_cell)
         if len(seen) != layer_count * len(matrix_names):
             raise ValueError(f"{path} does not cover every layer/projection cell")
-        if (
-            any(
-                value is None
-                for matrix in scalar_matrices.values()
-                for row in matrix
-                for value in row
-            )
-            or any(
-                value is None
-                for matrix in degenerate_matrices.values()
-                for row in matrix
-                for value in row
-            )
-            or any(shape is None for row in shapes for shape in row)
-        ):
-            raise ValueError(f"{path} contains an incomplete scalar grid")
+        for weight_index, component in enumerate(components):
+            if component.placement == "input":
+                valid_columns = (0,)
+            elif component.placement == "output":
+                valid_columns = (column_count - 1,)
+            else:
+                valid_columns = tuple(range(1, layer_count + 1))
+            if component.frozen_during_lora:
+                for column_index in valid_columns:
+                    shapes[weight_index][column_index] = list(component.shape)
+                    scalar_matrices["frobenius_cosine"][weight_index][column_index] = 1.0
+                    scalar_matrices["frobenius_l2"][weight_index][column_index] = 0.0
+                    if component.tensor_rank == 2:
+                        for metric in (
+                            "mean_row_cosine",
+                            "mean_column_cosine",
+                        ):
+                            scalar_matrices[metric][weight_index][column_index] = 1.0
+                        for metric in ("mean_row_l2", "mean_column_l2"):
+                            scalar_matrices[metric][weight_index][column_index] = 0.0
+                        for metric in WEIGHT_ALIGNMENT_DEGENERATE_COUNTS:
+                            degenerate_matrices[metric][weight_index][column_index] = 0
+                        for metric in WEIGHT_ALIGNMENT_VARIANCE_METRICS:
+                            variance_matrices[metric][weight_index][column_index] = 0.0
+            for column_index in range(column_count):
+                valid = column_index in valid_columns
+                shape = shapes[weight_index][column_index]
+                if valid != (shape is not None):
+                    raise ValueError(
+                        f"{path} has an invalid placement for {component.component_id}"
+                    )
+                required_metrics = (
+                    WEIGHT_ALIGNMENT_METRICS
+                    if component.tensor_rank == 2
+                    else ("frobenius_cosine", "frobenius_l2")
+                )
+                for metric in WEIGHT_ALIGNMENT_METRICS:
+                    value = scalar_matrices[metric][weight_index][column_index]
+                    if (valid and metric in required_metrics) != (value is not None):
+                        raise ValueError(
+                            f"{path} has an incomplete {metric} cell for {component.component_id}"
+                        )
+                for matrices in (degenerate_matrices, variance_matrices):
+                    for metric, matrix in matrices.items():
+                        value = matrix[weight_index][column_index]
+                        expected = valid and component.tensor_rank == 2
+                        if expected != (value is not None):
+                            raise ValueError(
+                                f"{path} has an incomplete {metric} cell for "
+                                f"{component.component_id}"
+                            )
 
         relative_root = (
             Path("data") / "weight-alignment" / model / condition / f"step_low_{step_low:06d}"
         )
         scalar_path = relative_root / f"step_high_{step_high:06d}.json"
         detail_references: dict[str, object] = {}
+        detail_cell_index = {
+            (cast(str, cell["weight_name"]), cast(int, cell["layer"])): cell
+            for cell in detail_cells
+        }
         for detail_metric in WEIGHT_ALIGNMENT_DETAIL_METRICS:
-            detail_path = relative_root / f"step_high_{step_high:06d}.{detail_metric}.json"
-            detail_digest, detail_bytes = _write_compact_json(
+            detail_path = relative_root / f"step_high_{step_high:06d}.{detail_metric}.f32"
+            packed_values = [
+                value
+                for weight_name in matrix_names
+                for layer in range(layer_count)
+                for value in cast(
+                    list[float],
+                    detail_cell_index[(weight_name, layer)][detail_metric],
+                )
+            ]
+            detail_digest, detail_bytes = _write_compact_float32(
                 root / "site" / detail_path,
-                {
-                    "metric": detail_metric,
-                    "matrix_axis": matrix_axis,
-                    "layer_count": layer_count,
-                    "cells": [
-                        {
-                            "layer": cell["layer"],
-                            "weight_name": cell["weight_name"],
-                            "shape": cell["shape"],
-                            "values": cell[detail_metric],
-                        }
-                        for cell in detail_cells
-                    ],
-                },
+                packed_values,
             )
             detail_references[detail_metric] = {
                 "bytes": detail_bytes,
+                "format": "float32_le",
+                "layer_count": layer_count,
+                "layout": "weight_major_then_layer_then_axis_index",
+                "matrix_axis": matrix_axis,
+                "metric": detail_metric,
                 "sha256": detail_digest,
                 "url": detail_path.as_posix(),
+                "value_count": len(packed_values),
             }
         scalar_digest, scalar_bytes = _write_compact_json(
             root / "site" / scalar_path,
             {
-                "matrix_axis": matrix_axis,
-                "layer_count": layer_count,
+                "component_axis": site_axis["component_axis"],
+                "column_axis": site_axis["column_axis"],
+                "column_count": column_count,
+                "decoder_layer_count": layer_count,
                 "shapes": shapes,
                 "metrics": scalar_matrices,
+                "variances": variance_matrices,
                 "degenerate_counts": degenerate_matrices,
                 "cosine_zero_norm_convention": WEIGHT_ALIGNMENT_ZERO_NORM_CONVENTION,
             },
@@ -1041,9 +1208,10 @@ def _export_weight_alignments(
         model_bucket = cast(dict[str, object], scales.setdefault(model, {}))
         if "cosine" in metric:
             model_bucket[metric] = {
-                "min": -1.0,
+                "min": 0.0,
                 "max": 1.0,
-                "basis": "theoretical_range",
+                "basis": "requested_fixed_weight_cosine_range",
+                "raw_values_below_minimum_are_color_clamped": True,
             }
             continue
         robust_max = max(metric_observations["p95"])
@@ -1056,7 +1224,21 @@ def _export_weight_alignments(
             "observed_max": observed_max,
             "basis": "maximum_artifact_p95_for_model_and_metric",
         }
-    return manifest, file_count, scales
+    for (model, metric), values in sorted(variance_observations.items()):
+        if not values or any(not math.isfinite(value) or value < 0.0 for value in values):
+            raise ValueError(f"{model}/{metric} has invalid variance observations")
+        robust_max = _linear_percentile(values, 0.95)
+        observed_max = max(values)
+        model_bucket = cast(dict[str, object], scales.setdefault(model, {}))
+        variance_bucket = cast(dict[str, object], model_bucket.setdefault("variances", {}))
+        variance_bucket[metric] = {
+            "min": 0.0,
+            "max": robust_max if robust_max > 0.0 else 1.0,
+            "observed_max": observed_max,
+            "basis": "p95_across_measured_layer_component_cells",
+            "statistic": "population_variance",
+        }
+    return manifest, file_count, scales, axes
 
 
 def _compact_activation_neighbor_grid(
@@ -1760,6 +1942,7 @@ def main() -> None:
         weight_alignment_manifest,
         real_weight_alignment_files,
         weight_alignment_scales,
+        weight_alignment_axes,
     ) = _export_weight_alignments(root)
     (
         activation_example_manifest,
@@ -1782,6 +1965,7 @@ def main() -> None:
             "real_weight_alignment_files": real_weight_alignment_files,
             "weight_alignment_manifest": weight_alignment_manifest,
             "weight_alignment_scales": weight_alignment_scales,
+            "weight_alignment_axes": weight_alignment_axes,
             "real_activation_example_files": real_activation_example_files,
             "activation_example_chunks": activation_example_chunks,
             "activation_example_manifest": activation_example_manifest,
@@ -1884,6 +2068,7 @@ def main() -> None:
             "representation_alignment_scales": representation_alignment_scales,
             "weight_alignment_manifest": weight_alignment_manifest,
             "weight_alignment_scales": weight_alignment_scales,
+            "weight_alignment_axes": weight_alignment_axes,
             "activation_example_manifest": activation_example_manifest,
             "vocabulary_logit_lens_manifest": vocabulary_logit_lens_manifest,
         },

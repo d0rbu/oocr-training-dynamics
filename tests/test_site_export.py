@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
+from array import array
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -30,6 +33,7 @@ from oocr_training_dynamics.weight_alignment import (
     WEIGHT_ALIGNMENT_MATRIX_NAMES,
     WEIGHT_ALIGNMENT_METRICS,
     WEIGHT_ALIGNMENT_ZERO_NORM_CONVENTION,
+    weight_component_specs,
 )
 from scripts.export_site import (
     _compact_activation_neighbor_grid,
@@ -60,6 +64,7 @@ def test_committed_site_payload_discloses_measurement_status() -> None:
     assert payload.get("real_weight_alignment_files", 0) >= 0
     assert isinstance(payload.get("weight_alignment_manifest", {}), dict)
     assert isinstance(payload.get("weight_alignment_scales", {}), dict)
+    assert isinstance(payload.get("weight_alignment_axes", {}), dict)
     assert payload.get("real_activation_example_files", 0) >= 0
     assert payload.get("activation_example_chunks", 0) >= 0
     assert isinstance(payload.get("activation_example_manifest", {}), dict)
@@ -430,8 +435,8 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert 'id="curve-rank-select"' in html
     assert "function buildCurveBatchSlider()" in javascript
     assert "function availableBatchSizes()" in javascript
-    assert 'href="styles.css?v=20260802a"' in html
-    assert 'src="app.js?v=20260802a"' in html
+    assert 'href="styles.css?v=20260803a"' in html
+    assert 'src="app.js?v=20260803a"' in html
     assert 'id="letter-propensity-chart"' in html
     assert 'id="letter-propensity-status"' in html
     assert 'id="letter-propensity-value"' in html
@@ -451,8 +456,8 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
         "unrelated_conversational_choices",
     ):
         assert f'"{mode}"' in javascript
-    assert 'const DATA_URL = "data/experiment.json?v=20260802a"' in javascript
-    assert 'const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260802a"' in javascript
+    assert 'const DATA_URL = "data/experiment.json?v=20260803a"' in javascript
+    assert 'const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260803a"' in javascript
     assert "function renderLetterPropensity()" in javascript
     assert "function letterPropensityRows()" in javascript
     assert "missing checkpoints are not connected" in javascript
@@ -477,10 +482,15 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert "function measuredRepresentationAlignmentForFunction(functionId)" in javascript
     assert "function representationAlignmentScale()" in javascript
     assert "function compactWeightAlignmentChunk(payload)" in javascript
-    assert "function compactWeightAlignmentDetails(payload)" in javascript
+    assert "function compactWeightAlignmentDetails(buffer, reference, scalarRecord)" in javascript
     assert "function measuredWeightAlignment()" in javascript
     assert "function weightAlignmentScale()" in javascript
+    assert "function weightVarianceScale()" in javascript
     assert "function weightDetailGridHtml(" in javascript
+    assert "function renderWeightDetailCanvases(" in javascript
+    assert "WEIGHT_DETAIL_CACHE_LIMIT = 8" in javascript
+    assert "WEIGHT_DETAIL_PREFETCH_CONCURRENCY = 2" in javascript
+    assert "weight_major_then_layer_then_axis_index" in javascript
     assert "async function refreshPatchManifest()" in javascript
     assert "PATCH_PRELOAD_CONCURRENCY = 4" in javascript
     assert "PATCH_MANIFEST_POLL_MS = 30000" in javascript
@@ -583,6 +593,10 @@ def test_measured_site_patches_use_compact_complete_grids() -> None:
         "weight_alignment_scales",
         {},
     )
+    assert patch_snapshot.get("weight_alignment_axes", {}) == payload.get(
+        "weight_alignment_axes",
+        {},
+    )
     assert patch_snapshot.get("real_activation_example_files", 0) == payload.get(
         "real_activation_example_files",
         0,
@@ -661,6 +675,32 @@ def test_measured_site_patches_use_compact_complete_grids() -> None:
             ):
                 assert len(record[key]) == shape[0]
                 assert all(len(row) == shape[1] for row in record[key])
+
+    directed_weight_references = [
+        reference
+        for model in payload.get("weight_alignment_manifest", {}).values()
+        for condition in model.values()
+        for recipient in condition.values()
+        for reference in recipient.values()
+    ]
+    unique_weight_references = {
+        reference["sha256"]: reference for reference in directed_weight_references
+    }
+    assert len(directed_weight_references) == 2 * payload.get("real_weight_alignment_files", 0)
+    assert len(unique_weight_references) == payload.get("real_weight_alignment_files", 0)
+    for reference in unique_weight_references.values():
+        scalar_path = root / "site" / reference["url"]
+        assert scalar_path.stat().st_size == reference["bytes"]
+        scalar = json.loads(scalar_path.read_text())
+        assert len(scalar["component_axis"]) == 14
+        assert scalar["column_count"] == scalar["decoder_layer_count"] + 2
+        assert set(reference["details"]) == set(WEIGHT_ALIGNMENT_DETAIL_METRICS)
+        for metric, detail in reference["details"].items():
+            detail_path = root / "site" / detail["url"]
+            assert detail["metric"] == metric
+            assert detail["format"] == "float32_le"
+            assert detail["layout"] == "weight_major_then_layer_then_axis_index"
+            assert detail_path.stat().st_size == detail["bytes"] == detail["value_count"] * 4
 
 
 def test_weight_patch_compaction_preserves_a_real_layer_only_axis() -> None:
@@ -1011,7 +1051,16 @@ def test_representation_alignment_export_uses_separate_manifest_and_l2_scale(
 
 def test_weight_alignment_export_is_symmetric_and_splits_hover_details(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    tiny_components = tuple(
+        replace(component, shape=(2, 3) if component.tensor_rank == 2 else (2,))
+        for component in weight_component_specs(ModelKey.OLMO3_7B)
+    )
+    monkeypatch.setattr(
+        "scripts.export_site.weight_component_specs",
+        lambda _model: tiny_components,
+    )
     artifact_path = (
         tmp_path
         / "artifacts/runs/olmo3-7b/correct/seed_20260715"
@@ -1076,7 +1125,7 @@ def test_weight_alignment_export_is_symmetric_and_splits_hover_details(
         )
     )
 
-    manifest, count, scales = _export_weight_alignments(tmp_path)
+    manifest, count, scales, axes = _export_weight_alignments(tmp_path)
 
     assert count == 1
     typed_manifest = cast(dict[str, Any], manifest)
@@ -1086,24 +1135,57 @@ def test_weight_alignment_export_is_symmetric_and_splits_hover_details(
     assert forward == reverse
     assert forward["kind"] == "weight_alignment"
     scalar = json.loads((tmp_path / "site" / forward["url"]).read_text())
-    row_detail = json.loads(
-        (tmp_path / "site" / forward["details"]["row_cosines"]["url"]).read_text()
-    )
-    column_detail = json.loads(
-        (tmp_path / "site" / forward["details"]["column_cosines"]["url"]).read_text()
-    )
-    assert scalar["metrics"]["mean_row_cosine"][0][0] == 0.8
-    assert scalar["degenerate_counts"]["row_one_zero_count"][0][0] == 1
+
+    def read_detail(metric: str) -> list[float]:
+        reference = forward["details"][metric]
+        content = (tmp_path / "site" / reference["url"]).read_bytes()
+        assert reference["format"] == "float32_le"
+        assert reference["layout"] == "weight_major_then_layer_then_axis_index"
+        assert reference["value_count"] * 4 == len(content)
+        assert reference["bytes"] == len(content)
+        assert reference["sha256"] == hashlib.sha256(content).hexdigest()
+        values = array("f")
+        values.frombytes(content)
+        if sys.byteorder != "little":
+            values.byteswap()
+        return list(values)
+
+    row_detail = read_detail("row_cosines")
+    column_detail = read_detail("column_cosines")
+    component_ids = [component["id"] for component in scalar["component_axis"]]
+    q_index = component_ids.index("q_proj")
+    o_index = component_ids.index("o_proj")
+    final_norm_index = component_ids.index("final_norm")
+    assert scalar["column_axis"][0]["id"] == "input"
+    assert scalar["column_axis"][-1]["id"] == "output"
+    assert scalar["decoder_layer_count"] == 32
+    assert scalar["column_count"] == 34
+    assert scalar["component_axis"][q_index]["row_group_size"] == 128
+    assert scalar["component_axis"][q_index]["group_label"] == "attention head"
+    assert scalar["component_axis"][o_index]["column_group_size"] == 128
+    assert scalar["metrics"]["mean_row_cosine"][q_index][1] == 0.8
+    assert scalar["degenerate_counts"]["row_one_zero_count"][q_index][1] == 1
+    assert scalar["variances"]["row_cosine_variance"][q_index][1] == pytest.approx(0.01)
+    assert scalar["metrics"]["frobenius_cosine"][0][0] == 1.0
+    assert scalar["metrics"]["frobenius_l2"][0][0] == 0.0
+    assert scalar["metrics"]["mean_row_cosine"][final_norm_index][-1] is None
     assert scalar["cosine_zero_norm_convention"] == WEIGHT_ALIGNMENT_ZERO_NORM_CONVENTION
-    assert scalar["shapes"][0][0] == [2, 3]
-    assert row_detail["metric"] == "row_cosines"
-    assert row_detail["cells"][0]["values"] == [0.7, 0.9]
-    assert column_detail["metric"] == "column_cosines"
-    assert column_detail["cells"][0]["values"] == [0.6, 0.7, 0.8]
-    assert typed_scales["olmo3-7b"]["frobenius_cosine"]["max"] == 1.0
+    assert scalar["shapes"][q_index][1] == [2, 3]
+    assert row_detail[:2] == pytest.approx([0.7, 0.9])
+    assert column_detail[:3] == pytest.approx([0.6, 0.7, 0.8])
+    assert typed_scales["olmo3-7b"]["frobenius_cosine"] == {
+        "min": 0.0,
+        "max": 1.0,
+        "basis": "requested_fixed_weight_cosine_range",
+        "raw_values_below_minimum_are_color_clamped": True,
+    }
     assert typed_scales["olmo3-7b"]["frobenius_l2"] == {
         "min": 0.0,
         "max": 2.0,
         "observed_max": 3.0,
         "basis": "maximum_artifact_p95_for_model_and_metric",
     }
+    assert typed_scales["olmo3-7b"]["variances"]["row_cosine_variance"]["max"] == pytest.approx(
+        0.01
+    )
+    assert cast(dict[str, Any], axes)["olmo3-7b"]["covered_parameter_tensors"] == 355

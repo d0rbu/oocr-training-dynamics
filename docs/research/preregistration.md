@@ -859,6 +859,26 @@ shared dormant channel. Every cell stores counts of both-zero and exactly-one-ze
 and the website discloses those counts in hover. L2 metrics remain ordinary Euclidean distances and
 need no zero-vector convention.
 
+### Complete-weight atlas and display amendment — 2026-08-03
+
+After decomposed projection artifacts existed, the requested website atlas was expanded without
+changing the GPU measurement or inferential target. The vertical axis now enumerates every learned
+tensor in the registered OLMo-3 and Qwen-3 schemas: embedding, seven decoder projections, all
+learned per-layer norm vectors, final norm, and untied LM head. Because these runs train LoRA only
+on the seven projections, every added tensor is frozen and its cross-checkpoint identity is exact
+by construction (`cosine=1`, `L2=0`). Matrix row/column identities are therefore analytic; a norm
+vector has only flattened metrics and its row/column cells are N/A rather than fabricated.
+
+For each already-stored decomposed row/column family, the exporter additionally derives population
+variance from the raw per-axis values. The scalar cell color still encodes its mean; an inset border
+encodes variance from zero to the cross-cell p95, while hover reports the unclipped variance. Weight
+cosine color maps now use the requested fixed `0..1` range for comparisons across views. Any rare
+negative raw cosine remains visible in hover and clamps only at the color endpoint; the underlying
+artifact is unchanged. Q/K/V row details and O column details use exact 128-channel attention-head
+boundaries from the model schema. Detail transport changes from JSON to packed little-endian
+float32 and prefetches all four families per selected checkpoint pair. This changes storage and
+interaction latency only; it neither recomputes nor alters the measured values.
+
 ## Prior information used for predictions
 
 The earlier repository replicated OLMo-2 7B rule recovery and observed OLMo-3 recovery after 4,096

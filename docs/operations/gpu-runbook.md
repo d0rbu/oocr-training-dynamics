@@ -549,8 +549,9 @@ Start with `--step 0 --step 1500` after authorization. Inspect the atomic artifa
 `artifacts/runs/olmo3-7b/correct/seed_20260715/weight_alignment/` and require exactly seven matrices
 times 32 layers, finite cosines in `[-1, 1]`, nonnegative L2 values, row/column detail lengths equal
 to the stored matrix shape, and a canonical symmetric checkpoint-pair declaration. Independently
-recompute at least one small projection slice before expanding. Exported scalar grids preload; the
-four large per-axis detail families are split and fetched only for the selected metric/pair.
+recompute at least one small projection slice before expanding. Exported scalar grids preload. The
+four large per-axis detail families are packed float32 sidecars and all prefetch when a checkpoint
+pair is selected; this is a CPU-only export change and does not require recomputing raw GPU data.
 
 ## 7. Refresh the site
 

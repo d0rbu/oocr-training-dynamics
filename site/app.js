@@ -1,7 +1,7 @@
 "use strict";
 
-const DATA_URL = "data/experiment.json?v=20260802a";
-const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260802a";
+const DATA_URL = "data/experiment.json?v=20260803a";
+const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260803a";
 const CONDITION_LABELS = {
   correct: "Correct I/O",
   wrong_alias: "Wrong alias",
@@ -55,6 +55,12 @@ const WEIGHT_VISUALIZATION_METRICS = {
   weight_mean_column_cosine: "mean_column_cosine",
   weight_mean_row_l2: "mean_row_l2",
   weight_mean_column_l2: "mean_column_l2",
+};
+const WEIGHT_VISUALIZATION_VARIANCES = {
+  weight_mean_row_cosine: "row_cosine_variance",
+  weight_mean_column_cosine: "column_cosine_variance",
+  weight_mean_row_l2: "row_l2_variance",
+  weight_mean_column_l2: "column_l2_variance",
 };
 const WEIGHT_MATRIX_LABELS = {
   q_proj: "Attention · Q projection",
@@ -124,6 +130,8 @@ const INDEPENDENT_PROMPT_CHECKPOINT_MODES = new Set([
 const SLIDER_UNITS = 10000;
 const ALL_FUNCTIONS_ID = "__all__";
 const PATCH_PRELOAD_CONCURRENCY = 4;
+const WEIGHT_DETAIL_CACHE_LIMIT = 8;
+const WEIGHT_DETAIL_PREFETCH_CONCURRENCY = 2;
 const PATCH_MANIFEST_POLL_MS = 30000;
 const patchChunks = new Map();
 const patchChunkLoads = new Map();
@@ -133,6 +141,8 @@ const weightDetailLoads = new Map();
 const weightDetailErrors = new Map();
 let patchPreloadQueue = [];
 let patchPreloadActive = 0;
+let weightDetailPreloadQueue = [];
+let weightDetailPreloadActive = 0;
 let patchManifestSignature = "";
 const activationNeighborChunks = new Map();
 const activationCandidateCatalogs = new Map();
@@ -1215,42 +1225,62 @@ function compactRepresentationAlignmentChunk(records) {
 function compactWeightAlignmentChunk(payload) {
   if (
     !payload
-    || !Array.isArray(payload.matrix_axis)
-    || payload.matrix_axis.length !== Object.keys(WEIGHT_MATRIX_LABELS).length
-    || !Number.isInteger(payload.layer_count)
-    || payload.layer_count <= 0
+    || !Array.isArray(payload.component_axis)
+    || payload.component_axis.length === 0
+    || !Array.isArray(payload.column_axis)
+    || !Number.isInteger(payload.column_count)
+    || payload.column_count !== payload.column_axis.length
+    || !Number.isInteger(payload.decoder_layer_count)
+    || payload.decoder_layer_count <= 0
     || !payload.metrics
+    || !payload.variances
     || !payload.degenerate_counts
     || !Array.isArray(payload.shapes)
     || payload.cosine_zero_norm_convention !== WEIGHT_ZERO_NORM_CONVENTION
   ) {
     throw new Error("weight-alignment chunk has invalid axes");
   }
-  const matrixAxis = payload.matrix_axis;
+  const componentAxis = payload.component_axis;
+  const columnAxis = payload.column_axis;
   if (
-    new Set(matrixAxis).size !== matrixAxis.length
-    || matrixAxis.some((name) => !Object.hasOwn(WEIGHT_MATRIX_LABELS, name))
+    new Set(componentAxis.map((component) => component.id)).size !== componentAxis.length
+    || componentAxis.some((component) => (
+      !component
+      || typeof component.id !== "string"
+      || typeof component.label !== "string"
+      || !["input", "layer", "output"].includes(component.placement)
+      || ![1, 2].includes(component.tensor_rank)
+      || !Array.isArray(component.shape)
+      || component.shape.length !== component.tensor_rank
+      || component.shape.some((dimension) => !Number.isInteger(dimension) || dimension <= 0)
+    ))
+    || new Set(columnAxis.map((column) => column.id)).size !== columnAxis.length
+    || columnAxis.filter((column) => column.kind === "decoder_layer").length
+      !== payload.decoder_layer_count
   ) {
-    throw new Error("weight-alignment chunk has an unknown projection axis");
+    throw new Error("weight-alignment chunk has an invalid complete-model axis");
   }
-  const layerCount = payload.layer_count;
-  const flatten = (matrix, metric) => {
-    if (!Array.isArray(matrix) || matrix.length !== matrixAxis.length) {
-      throw new Error(`weight-alignment ${metric} has an invalid projection axis`);
+  const columnCount = payload.column_count;
+  const flatten = (matrix, metric, { integer = false } = {}) => {
+    if (!Array.isArray(matrix) || matrix.length !== componentAxis.length) {
+      throw new Error(`weight-alignment ${metric} has an invalid component axis`);
     }
-    const flat = new Float64Array(matrixAxis.length * layerCount);
+    const flat = new Float64Array(componentAxis.length * columnCount);
+    flat.fill(Number.NaN);
     matrix.forEach((row, weightIndex) => {
-      if (!Array.isArray(row) || row.length !== layerCount) {
-        throw new Error(`weight-alignment ${metric} has an invalid layer axis`);
+      if (!Array.isArray(row) || row.length !== columnCount) {
+        throw new Error(`weight-alignment ${metric} has an invalid column axis`);
       }
-      row.forEach((value, layer) => {
+      row.forEach((value, column) => {
+        if (value === null) return;
         if (
           !Number.isFinite(value)
+          || (integer && !Number.isInteger(value))
           || (metric.includes("cosine") ? value < -1 || value > 1 : value < 0)
         ) {
           throw new Error(`weight-alignment chunk contains an invalid ${metric}`);
         }
-        flat[weightIndex * layerCount + layer] = value;
+        flat[weightIndex * columnCount + column] = value;
       });
     });
     return flat;
@@ -1259,6 +1289,10 @@ function compactWeightAlignmentChunk(payload) {
   Object.values(WEIGHT_VISUALIZATION_METRICS).forEach((metric) => {
     metrics[metric] = flatten(payload.metrics[metric], metric);
   });
+  const variances = {};
+  Object.values(WEIGHT_VISUALIZATION_VARIANCES).forEach((metric) => {
+    variances[metric] = flatten(payload.variances[metric], metric);
+  });
   const degenerateCounts = {};
   [
     "row_both_zero_count",
@@ -1266,77 +1300,90 @@ function compactWeightAlignmentChunk(payload) {
     "column_both_zero_count",
     "column_one_zero_count",
   ].forEach((metric) => {
-    const values = flatten(payload.degenerate_counts[metric], metric);
-    if (values.some((value) => !Number.isInteger(value))) {
-      throw new Error(`weight-alignment chunk contains an invalid ${metric}`);
-    }
-    degenerateCounts[metric] = values;
+    degenerateCounts[metric] = flatten(payload.degenerate_counts[metric], metric, {
+      integer: true,
+    });
   });
   if (
-    payload.shapes.length !== matrixAxis.length
+    payload.shapes.length !== componentAxis.length
     || payload.shapes.some((row) => (
       !Array.isArray(row)
-      || row.length !== layerCount
+      || row.length !== columnCount
       || row.some((shape) => (
-        !Array.isArray(shape)
-        || shape.length !== 2
-        || shape.some((dimension) => !Number.isInteger(dimension) || dimension <= 0)
+        shape !== null
+        && (!Array.isArray(shape)
+          || ![1, 2].includes(shape.length)
+          || shape.some((dimension) => !Number.isInteger(dimension) || dimension <= 0))
       ))
     ))
   ) {
-    throw new Error("weight-alignment chunk contains an invalid matrix-shape grid");
+    throw new Error("weight-alignment chunk contains an invalid tensor-shape grid");
   }
   return {
     axisKind: "weight_layer",
-    layerCount,
-    matrixAxis,
+    layerCount: columnCount,
+    decoderLayerCount: payload.decoder_layer_count,
+    componentAxis,
+    columnAxis,
     metrics,
+    variances,
     degenerateCounts,
     shapes: payload.shapes,
   };
 }
 
-function compactWeightAlignmentDetails(payload) {
+function compactWeightAlignmentDetails(buffer, reference, scalarRecord) {
   if (
-    !payload
+    !(buffer instanceof ArrayBuffer)
+    || !reference
+    || reference.format !== "float32_le"
+    || reference.layout !== "weight_major_then_layer_then_axis_index"
     || !["row_cosines", "column_cosines", "row_l2_distances", "column_l2_distances"]
-      .includes(payload.metric)
-    || !Array.isArray(payload.matrix_axis)
-    || !Number.isInteger(payload.layer_count)
-    || !Array.isArray(payload.cells)
+      .includes(reference.metric)
+    || !Array.isArray(reference.matrix_axis)
+    || !Number.isInteger(reference.layer_count)
+    || !Number.isInteger(reference.value_count)
+    || buffer.byteLength !== reference.value_count * Float32Array.BYTES_PER_ELEMENT
+    || !scalarRecord
   ) {
     throw new Error("weight-alignment detail chunk has invalid metadata");
   }
+  const allValues = new Float32Array(buffer);
   const details = new Map();
-  payload.cells.forEach((cell) => {
-    if (
-      !Number.isInteger(cell.layer)
-      || cell.layer < 0
-      || cell.layer >= payload.layer_count
-      || !payload.matrix_axis.includes(cell.weight_name)
-      || !Array.isArray(cell.shape)
-      || cell.shape.length !== 2
-    ) {
-      throw new Error("weight-alignment detail chunk has an invalid cell coordinate");
+  let offset = 0;
+  const cosine = reference.metric.includes("cosine");
+  reference.matrix_axis.forEach((weightName) => {
+    const componentIndex = scalarRecord.componentAxis.findIndex(
+      (component) => component.id === weightName,
+    );
+    if (componentIndex < 0) {
+      throw new Error("weight-alignment detail axis is absent from the scalar chunk");
     }
-    const expected = payload.metric.startsWith("row_") ? cell.shape[0] : cell.shape[1];
-    const cosine = payload.metric.includes("cosine");
-    if (
-      !Array.isArray(cell.values)
-      || cell.values.length !== expected
-      || cell.values.some((value) => (
-        !Number.isFinite(value)
-        || (cosine ? value < -1 || value > 1 : value < 0)
-      ))
-    ) {
-      throw new Error("weight-alignment detail chunk has invalid values");
+    for (let layer = 0; layer < reference.layer_count; layer += 1) {
+      const column = layer + 1;
+      const shape = scalarRecord.shapes[componentIndex]?.[column];
+      if (!Array.isArray(shape) || shape.length !== 2) {
+        throw new Error("weight-alignment detail chunk lacks a projection shape");
+      }
+      const length = reference.metric.startsWith("row_") ? shape[0] : shape[1];
+      const values = allValues.subarray(offset, offset + length);
+      if (
+        values.length !== length
+        || values.some((value) => (
+          !Number.isFinite(value)
+          || (cosine ? value < -1 || value > 1 : value < 0)
+        ))
+      ) {
+        throw new Error("weight-alignment detail chunk has invalid values");
+      }
+      details.set(`${weightName}:${layer}`, { shape, values });
+      offset += length;
     }
-    const compact = { shape: cell.shape, values: Float32Array.from(cell.values) };
-    const key = `${cell.weight_name}:${cell.layer}`;
-    if (details.has(key)) throw new Error("weight-alignment detail chunk repeats a cell");
-    details.set(key, compact);
   });
-  if (details.size !== payload.matrix_axis.length * payload.layer_count) {
+  if (
+    offset !== allValues.length
+    || details.size !== reference.matrix_axis.length * reference.layer_count
+  ) {
     throw new Error("weight-alignment detail chunk is incomplete");
   }
   return details;
@@ -1381,23 +1428,29 @@ async function loadPatchChunk(reference) {
   await request;
 }
 
-async function loadWeightAlignmentDetails(reference) {
+async function loadWeightAlignmentDetails(reference, scalarReference) {
   const key = patchReferenceKey(reference);
   if (!key || weightDetailChunks.has(key)) return;
   if (weightDetailLoads.has(key)) {
     await weightDetailLoads.get(key);
     return;
   }
+  const scalarKey = patchReferenceKey(scalarReference);
+  const scalarRecord = scalarKey ? patchChunks.get(scalarKey) : null;
+  if (!scalarRecord || scalarRecord.axisKind !== "weight_layer") return;
   const request = fetch(patchChunkRequest(reference), { cache: "force-cache" })
     .then((response) => {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return response.json();
+      return response.arrayBuffer();
     })
-    .then((payload) => {
-      while (weightDetailChunks.size >= 2) {
+    .then((buffer) => {
+      while (weightDetailChunks.size >= WEIGHT_DETAIL_CACHE_LIMIT) {
         weightDetailChunks.delete(weightDetailChunks.keys().next().value);
       }
-      weightDetailChunks.set(key, compactWeightAlignmentDetails(payload));
+      weightDetailChunks.set(
+        key,
+        compactWeightAlignmentDetails(buffer, reference, scalarRecord),
+      );
       weightDetailErrors.delete(key);
     })
     .catch((error) => {
@@ -1410,16 +1463,40 @@ async function loadWeightAlignmentDetails(reference) {
   await request;
 }
 
-function scheduleSelectedWeightDetailsLoad() {
-  const detailSpec = WEIGHT_DETAIL_METRICS[state.patchVisualization];
-  if (!weightAnalysisSelected() || !detailSpec) {
-    return;
+function pumpWeightDetailPreloadQueue() {
+  while (
+    weightDetailPreloadActive < WEIGHT_DETAIL_PREFETCH_CONCURRENCY
+    && weightDetailPreloadQueue.length > 0
+  ) {
+    const { detailReference, scalarReference } = weightDetailPreloadQueue.shift();
+    const key = patchReferenceKey(detailReference);
+    if (!key || weightDetailChunks.has(key) || weightDetailLoads.has(key)) continue;
+    weightDetailPreloadActive += 1;
+    void loadWeightAlignmentDetails(detailReference, scalarReference).finally(() => {
+      weightDetailPreloadActive -= 1;
+      pumpWeightDetailPreloadQueue();
+    });
   }
-  const reference = selectedPatchReference();
-  const detailReference = reference?.details?.[detailSpec.artifact];
-  const key = patchReferenceKey(detailReference);
-  if (!key || weightDetailChunks.has(key) || weightDetailLoads.has(key)) return;
-  void loadWeightAlignmentDetails(detailReference);
+}
+
+function scheduleSelectedWeightDetailsLoad() {
+  if (!weightAnalysisSelected()) return;
+  const scalarReference = selectedPatchReference();
+  const scalarKey = patchReferenceKey(scalarReference);
+  if (!scalarKey || !patchChunks.has(scalarKey)) return;
+  Object.values(scalarReference?.details ?? {}).forEach((detailReference) => {
+    const key = patchReferenceKey(detailReference);
+    if (
+      !key
+      || weightDetailChunks.has(key)
+      || weightDetailLoads.has(key)
+      || weightDetailPreloadQueue.some((queued) => (
+        patchReferenceKey(queued.detailReference) === key
+      ))
+    ) return;
+    weightDetailPreloadQueue.push({ detailReference, scalarReference });
+  });
+  pumpWeightDetailPreloadQueue();
 }
 
 function compactActivationNeighborChunk(payload) {
@@ -1839,6 +1916,7 @@ async function refreshPatchManifest() {
     state.data.weight_alignment_manifest = weightManifest;
     state.data.real_weight_alignment_files = snapshot.real_weight_alignment_files ?? 0;
     state.data.weight_alignment_scales = snapshot.weight_alignment_scales ?? {};
+    state.data.weight_alignment_axes = snapshot.weight_alignment_axes ?? {};
     state.data.activation_example_manifest = activationManifest;
     state.data.real_activation_example_files = snapshot.real_activation_example_files ?? 0;
     state.data.activation_example_chunks = snapshot.activation_example_chunks ?? 0;
@@ -1863,28 +1941,76 @@ function tokenAxisMode() {
   return state.patchMode === "checkpoint" ? "across_time" : state.patchMode;
 }
 
-function weightAxisPositions(matrixAxis = Object.keys(WEIGHT_MATRIX_LABELS)) {
-  return matrixAxis.map((weightName) => ({
+function registeredWeightAxis() {
+  const axis = state.data.weight_alignment_axes?.[state.model] ?? null;
+  if (axis) return axis;
+  const decoderLayerCount = state.data.models[state.model].layer_count;
+  return {
+    component_axis: Object.entries(WEIGHT_MATRIX_LABELS).map(([id, label]) => ({
+      id,
+      label,
+      placement: "layer",
+      tensor_rank: 2,
+      frozen_during_lora: false,
+    })),
+    column_axis: Array.from({ length: decoderLayerCount }, (_, layer) => ({
+      id: `layer_${layer}`,
+      label: String(layer),
+      kind: "decoder_layer",
+      layer,
+    })),
+    decoder_layer_count: decoderLayerCount,
+  };
+}
+
+function weightAxisPositions(componentAxis = registeredWeightAxis().component_axis) {
+  return componentAxis.map((component) => ({
     axisKind: "weight_layer",
-    weightName,
-    sourceToken: WEIGHT_MATRIX_LABELS[weightName],
-    recipientToken: WEIGHT_MATRIX_LABELS[weightName],
+    weightName: component.id,
+    component,
+    sourceToken: component.label,
+    recipientToken: component.label,
   }));
 }
 
 function analyticOrUnprocessedWeightAlignment() {
-  const layers = state.data.models[state.model].layer_count;
+  const axis = registeredWeightAxis();
+  const layers = axis.column_axis.length;
   const recipient = state.data.checkpoints[state.recipientIndex];
   const donor = state.data.checkpoints[state.donorIndex];
   const analytic = recipient === donor;
-  const tokenPositions = weightAxisPositions();
+  const tokenPositions = weightAxisPositions(axis.component_axis);
+  const validCell = (component, column) => (
+    (component.placement === "input" && column.kind === "global_input")
+    || (component.placement === "output" && column.kind === "global_output")
+    || (component.placement === "layer" && column.kind === "decoder_layer")
+  );
   const metricMatrices = {};
   Object.values(WEIGHT_VISUALIZATION_METRICS).forEach((metric) => {
     const identity = metric.includes("cosine") ? 1.0 : 0.0;
-    metricMatrices[metric] = tokenPositions.map(() => (
-      Array(layers).fill(analytic ? identity : null)
+    metricMatrices[metric] = tokenPositions.map(({ component }) => (
+      axis.column_axis.map((column) => (
+        analytic
+        && validCell(component, column)
+        && (component.tensor_rank === 2 || metric.startsWith("frobenius_"))
+          ? identity
+          : null
+      ))
     ));
   });
+  const varianceMatrices = {};
+  Object.values(WEIGHT_VISUALIZATION_VARIANCES).forEach((metric) => {
+    varianceMatrices[metric] = tokenPositions.map(({ component }) => (
+      axis.column_axis.map((column) => (
+        analytic && component.tensor_rank === 2 && validCell(component, column) ? 0.0 : null
+      ))
+    ));
+  });
+  const weightShapes = tokenPositions.map(({ component }) => (
+    axis.column_axis.map((column) => (
+      validCell(component, column) ? component.shape ?? null : null
+    ))
+  ));
   const selectedMetric = WEIGHT_VISUALIZATION_METRICS[state.patchVisualization];
   return {
     layers,
@@ -1897,10 +2023,12 @@ function analyticOrUnprocessedWeightAlignment() {
     recipientCorrectIndex: null,
     matrix: metricMatrices[selectedMetric],
     weightMetricMatrices: metricMatrices,
-    weightShapes: null,
+    weightVarianceMatrices: varianceMatrices,
+    weightShapes,
     weightDegenerateCounts: null,
+    weightColumnAxis: axis.column_axis,
     sourceTargetMatrix: null,
-    target: "effective decoder projection matrices",
+    target: "complete effective learned-weight atlas",
     outcomeLabel: PATCH_VISUALIZATION_LABELS[state.patchVisualization],
     sourceFunctionId: null,
     recipientFunctionId: null,
@@ -1934,10 +2062,10 @@ function measuredWeightAlignment() {
   const key = patchReferenceKey(selectedPatchReference());
   const record = key ? patchChunks.get(key) : null;
   if (!record || record.axisKind !== "weight_layer") return null;
-  if (record.layerCount !== state.data.models[state.model].layer_count) {
+  if (record.decoderLayerCount !== state.data.models[state.model].layer_count) {
     throw new Error("Measured weight-alignment grid has the wrong decoder-layer count");
   }
-  const matrixRows = (values) => record.matrixAxis.map((_, weightIndex) => (
+  const matrixRows = (values) => record.componentAxis.map((_, weightIndex) => (
     values.subarray(
       weightIndex * record.layerCount,
       (weightIndex + 1) * record.layerCount,
@@ -1953,10 +2081,15 @@ function measuredWeightAlignment() {
   }
   return {
     ...analyticOrUnprocessedWeightAlignment(),
-    tokenPositions: weightAxisPositions(record.matrixAxis),
+    layers: record.layerCount,
+    tokenPositions: weightAxisPositions(record.componentAxis),
     matrix: metricMatrices[selectedMetric],
     weightMetricMatrices: metricMatrices,
+    weightVarianceMatrices: Object.fromEntries(
+      Object.entries(record.variances).map(([metric, values]) => [metric, matrixRows(values)]),
+    ),
     weightShapes: record.shapes,
+    weightColumnAxis: record.columnAxis,
     weightDegenerateCounts: Object.fromEntries(
       Object.entries(record.degenerateCounts).map(([metric, values]) => [metric, matrixRows(values)]),
     ),
@@ -2476,6 +2609,13 @@ function weightAlignmentScale() {
   return state.data.weight_alignment_scales?.[state.model]?.[metric] ?? null;
 }
 
+function weightVarianceScale() {
+  const metric = WEIGHT_VISUALIZATION_VARIANCES[state.patchVisualization];
+  return metric
+    ? state.data.weight_alignment_scales?.[state.model]?.variances?.[metric] ?? null
+    : null;
+}
+
 function colorFor(value, metric, scaleMax = null) {
   if (metric === "probability") {
     const amount = Math.max(0, Math.min(1, value));
@@ -2491,6 +2631,12 @@ function colorFor(value, metric, scaleMax = null) {
     const far = [103, 75, 147];
     return `rgb(${near.map((channel, index) => Math.round(channel + (far[index] - channel) * amount)).join(",")})`;
   }
+  if (metric.includes("cosine") && metric !== "cosine_similarity") {
+    const amount = Math.max(0, Math.min(1, value));
+    const unaligned = [238, 232, 216];
+    const aligned = [239, 119, 95];
+    return `rgb(${unaligned.map((channel, index) => Math.round(channel + (aligned[index] - channel) * amount)).join(",")})`;
+  }
   const clipped = Math.max(-1, Math.min(1, value));
   const neutral = [238, 232, 216];
   const endpoint = clipped >= 0 ? [239, 119, 95] : [93, 121, 185];
@@ -2499,6 +2645,7 @@ function colorFor(value, metric, scaleMax = null) {
 }
 
 function formatAlignmentValue(value) {
+  if (!Number.isFinite(value)) return "n/a";
   if (Math.abs(value) >= 1000 || (Math.abs(value) > 0 && Math.abs(value) < .001)) {
     return value.toExponential(3);
   }
@@ -2515,6 +2662,7 @@ function bindHeatTooltip(cell, html) {
   };
   const show = (event) => {
     tooltip.innerHTML = typeof html === "function" ? html() : html;
+    renderWeightDetailCanvases(tooltip);
     tooltip.hidden = false;
     position(event);
   };
@@ -2526,13 +2674,89 @@ function bindHeatTooltip(cell, html) {
   ["mouseleave", "blur"].forEach((name) => cell.addEventListener(name, () => { tooltip.hidden = true; }));
 }
 
-function weightDetailGridHtml(patch, weightIndex, layer) {
+function renderWeightDetailCanvases(container) {
+  container.querySelectorAll("canvas.weight-detail-grid").forEach((canvas) => {
+    const details = weightDetailChunks.get(canvas.dataset.detailKey);
+    const detail = details?.get(canvas.dataset.cellKey);
+    const values = detail?.values;
+    if (!values) return;
+    const cosine = canvas.dataset.cosine === "true";
+    const scale = Number(canvas.dataset.scale);
+    const groupSize = Number(canvas.dataset.groupSize) || 0;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    if (groupSize > 0) {
+      const innerColumns = 16;
+      const innerRows = Math.ceil(groupSize / innerColumns);
+      const groupCount = Math.ceil(values.length / groupSize);
+      const groupsPerRow = Math.min(8, groupCount);
+      const cellSize = 2;
+      const gap = 4;
+      const groupWidth = innerColumns * cellSize;
+      const groupHeight = innerRows * cellSize;
+      canvas.width = groupsPerRow * (groupWidth + gap) - gap;
+      canvas.height = Math.ceil(groupCount / groupsPerRow) * (groupHeight + gap) - gap;
+      values.forEach((value, index) => {
+        const group = Math.floor(index / groupSize);
+        const within = index % groupSize;
+        const groupX = group % groupsPerRow;
+        const groupY = Math.floor(group / groupsPerRow);
+        const x = groupX * (groupWidth + gap) + (within % innerColumns) * cellSize;
+        const y = groupY * (groupHeight + gap) + Math.floor(within / innerColumns) * cellSize;
+        context.fillStyle = colorFor(
+          value,
+          cosine ? "weight_detail_cosine" : "l2_distance",
+          scale,
+        );
+        context.fillRect(x, y, cellSize, cellSize);
+      });
+      context.strokeStyle = "rgba(204, 255, 0, .95)";
+      context.lineWidth = 1;
+      for (let group = 0; group < groupCount; group += 1) {
+        const groupX = group % groupsPerRow;
+        const groupY = Math.floor(group / groupsPerRow);
+        context.strokeRect(
+          groupX * (groupWidth + gap) + .5,
+          groupY * (groupHeight + gap) + .5,
+          groupWidth - 1,
+          groupHeight - 1,
+        );
+      }
+    } else {
+      const columns = values.length >= 8000 ? 192 : values.length >= 4000 ? 128 : 64;
+      const cellSize = values.length >= 4000 ? 2 : 3;
+      canvas.width = Math.min(columns, values.length) * cellSize;
+      canvas.height = Math.ceil(values.length / columns) * cellSize;
+      values.forEach((value, index) => {
+        context.fillStyle = colorFor(
+          value,
+          cosine ? "weight_detail_cosine" : "l2_distance",
+          scale,
+        );
+        context.fillRect(
+          (index % columns) * cellSize,
+          Math.floor(index / columns) * cellSize,
+          cellSize,
+          cellSize,
+        );
+      });
+    }
+  });
+}
+
+function weightDetailGridHtml(patch, weightIndex, columnIndex) {
   const detailSpec = WEIGHT_DETAIL_METRICS[state.patchVisualization];
   if (!detailSpec) {
     return "<br><small>Frobenius metrics flatten the complete matrix and therefore have no per-axis decomposition.</small>";
   }
-  if (patch.analytic) {
-    return "<br><small>Exact identity is analytic; per-channel values were not materialized.</small>";
+  const position = patch.tokenPositions[weightIndex];
+  const component = position.component;
+  if (component.tensor_rank !== 2) {
+    return "<br><small>Row/column decomposition is not defined for this one-dimensional norm vector; use a Frobenius view.</small>";
+  }
+  if (component.frozen_during_lora || patch.analytic) {
+    const identity = detailSpec.artifact.includes("cosine") ? "1.0000" : "0.0000";
+    return `<br><small>Exact analytic identity: every applicable per-channel value is ${identity}; no redundant detail payload is materialized.</small>`;
   }
   const reference = selectedPatchReference();
   const detailReference = reference?.details?.[detailSpec.artifact];
@@ -2544,26 +2768,36 @@ function weightDetailGridHtml(patch, weightIndex, layer) {
   const details = weightDetailChunks.get(detailKey);
   if (!details) {
     scheduleSelectedWeightDetailsLoad();
-    return "<br><small>Per-channel mini-grid is loading; move off and hover again when ready.</small>";
+    return "<br><small>All four per-channel views for this checkpoint pair are being prefetched and locally cached.</small>";
   }
-  const weightName = patch.tokenPositions[weightIndex].weightName;
-  const detail = details.get(`${weightName}:${layer}`);
+  weightDetailChunks.delete(detailKey);
+  weightDetailChunks.set(detailKey, details);
+  const column = patch.weightColumnAxis[columnIndex];
+  if (column?.kind !== "decoder_layer") {
+    return "<br><small>This learned projection exists only at decoder-layer columns.</small>";
+  }
+  const weightName = position.weightName;
+  const cellKey = `${weightName}:${column.layer}`;
+  const detail = details.get(cellKey);
   const values = detail?.[detailSpec.compact];
   if (!values) return "<br><small>The measured detail file lacks this axis.</small>";
   const sorted = Array.from(values).sort((left, right) => left - right);
   const quantile = (fraction) => sorted[Math.round((sorted.length - 1) * fraction)];
   const cosine = detailSpec.artifact.includes("cosine");
   const detailScale = cosine ? null : Math.max(...values, Number.EPSILON);
-  const cells = Array.from(values, (value) => (
-    `<i style="background:${colorFor(value, cosine ? "cosine_similarity" : "l2_distance", detailScale)}"></i>`
-  )).join("");
   const axis = detailSpec.artifact.startsWith("row_")
     ? "row / output channel"
     : "column / input channel";
   const scaleNote = cosine
-    ? "fixed −1…+1 color scale"
+    ? "fixed 0…1 weight-cosine color scale; negative raw values clamp to the 0 endpoint"
     : `detail colors scale 0…${formatAlignmentValue(detailScale)} within this matrix`;
-  return `<br><br><b>${axis} mini-grid · n=${values.length.toLocaleString()}</b><br><small>left-to-right, top-to-bottom index order · ${scaleNote}</small><div class="weight-detail-grid">${cells}</div><small>min ${formatAlignmentValue(sorted[0])} · median ${formatAlignmentValue(quantile(.5))} · p95 ${formatAlignmentValue(quantile(.95))} · max ${formatAlignmentValue(sorted.at(-1))}</small>`;
+  const groupSize = detailSpec.artifact.startsWith("row_")
+    ? component.row_group_size
+    : component.column_group_size;
+  const groupNote = groupSize
+    ? `<br><small class="weight-detail-group-note">Each acid-green outlined block is one ${escapeHtml(component.group_label)} (${groupSize} contiguous channels); blocks follow head index order.</small>`
+    : "";
+  return `<br><br><b>${axis} mini-grid · n=${values.length.toLocaleString()}</b><br><small>left-to-right, top-to-bottom index order · ${scaleNote}</small>${groupNote}<canvas class="weight-detail-grid" data-detail-key="${escapeHtml(detailKey)}" data-cell-key="${escapeHtml(cellKey)}" data-cosine="${cosine}" data-scale="${detailScale ?? 1}" data-group-size="${groupSize ?? 0}"></canvas><small>min ${formatAlignmentValue(sorted[0])} · median ${formatAlignmentValue(quantile(.5))} · p95 ${formatAlignmentValue(quantile(.95))} · max ${formatAlignmentValue(sorted.at(-1))}</small>`;
 }
 
 function tokenCoordinate(prefix, index, tokenId, token) {
@@ -2875,12 +3109,12 @@ function renderPatching() {
   document.getElementById("prompt-audit").hidden = weightAnalysis;
   document.getElementById("activation-neighbor-panel").hidden = weightAnalysis;
   document.getElementById("patch-heatmap-axis").textContent = weightAnalysis
-    ? "decoder layer depth → · effective projection matrix ↓"
+    ? "input → decoder layer depth → output · learned tensor family ↓"
     : "decoder layer depth → · exact tokenizer position, stepping backward ↓";
   document.getElementById("patch-heatmap").setAttribute(
     "aria-label",
     weightAnalysis
-      ? "Effective projection weight alignment heatmap"
+      ? "Complete effective learned-weight alignment heatmap"
       : "Answer-choice activation patching heatmap",
   );
   state.patchCellTokenIndex = Math.max(
@@ -2896,10 +3130,16 @@ function renderPatching() {
   const patchLoading = Boolean(patchReferenceId && !patch.processed && !patchLoadError);
   const heatmap = document.getElementById("patch-heatmap");
   heatmap.replaceChildren();
-  heatmap.style.gridTemplateColumns = `300px repeat(${patch.layers}, minmax(19px, 1fr))`;
+  heatmap.style.gridTemplateColumns = `300px repeat(${patch.layers}, minmax(17px, 1fr))`;
   heatmap.append(el("div"));
   for (let layer = 0; layer < patch.layers; layer += 1) {
-    heatmap.append(el("div", { class: "heatmap-layer" }, layer % 4 === 0 ? String(layer) : "·"));
+    const column = patch.weightColumnAxis?.[layer] ?? null;
+    const label = weightAnalysis
+      ? column?.kind === "decoder_layer" && column.layer % 4 !== 0
+        ? "·"
+        : column?.label ?? "·"
+      : layer % 4 === 0 ? String(layer) : "·";
+    heatmap.append(el("div", { class: "heatmap-layer" }, label));
   }
   patch.tokenPositions.forEach((position, tokenIndex) => {
     const layerOnly = patch.axisKind === "layer_only";
@@ -2914,21 +3154,21 @@ function renderPatching() {
       ? "recipient "
       : "clean/recipient ";
     const sourceCoordinate = weightLayer
-      ? `checkpoint A · ${position.weightName} full effective matrix`
+      ? `checkpoint A · ${position.sourceToken} effective tensor`
       : layerOnly
       ? "donor checkpoint · complete learned block update"
       : position.aggregate
         ? aggregateTokenCoordinate(sourcePrefix, position.sourceToken)
         : tokenCoordinate(sourcePrefix, position.sourceIndex, position.sourceTokenId, position.sourceToken);
     const recipientCoordinate = weightLayer
-      ? `checkpoint B · ${position.weightName} full effective matrix`
+      ? `checkpoint B · ${position.recipientToken} effective tensor`
       : layerOnly
       ? "recipient checkpoint · complete learned block update"
       : position.aggregate
         ? aggregateTokenCoordinate(recipientPrefix, position.recipientToken)
         : tokenCoordinate(recipientPrefix, position.recipientIndex, position.recipientTokenId, position.recipientToken);
     const tokenText = weightLayer
-      ? WEIGHT_MATRIX_LABELS[position.weightName]
+      ? position.sourceToken
       : layerOnly
       ? "All sequence positions · entire decoder block"
       : sameCoordinate
@@ -2938,7 +3178,7 @@ function renderPatching() {
         : `${sourceCoordinate} → ${recipientCoordinate}`;
     const label = el("div", { class: `heatmap-token${!layerOnly && !weightLayer && position.reverseIndex === 0 ? " anchor" : ""}` });
     label.append(el("b", {}, weightLayer
-      ? "matrix"
+      ? position.component.tensor_rank === 2 ? "matrix" : "vector"
       : layerOnly
       ? "all tokens"
       : position.reverseIndex === 0 ? "−0 · end" : `−${position.reverseIndex}`));
@@ -2976,9 +3216,29 @@ function renderPatching() {
         heatmap.append(cell);
         continue;
       }
+      if (weightAnalysis && !Number.isFinite(cellMeasurement)) {
+        cell.classList.add("not-applicable");
+        const column = patch.weightColumnAxis[layer];
+        const component = position.component;
+        const placedHere = (
+          (component.placement === "input" && column.kind === "global_input")
+          || (component.placement === "output" && column.kind === "global_output")
+          || (component.placement === "layer" && column.kind === "decoder_layer")
+        );
+        const reason = placedHere && component.tensor_rank === 1
+          ? "Row/column decompositions are not defined for a one-dimensional norm vector. Select Frobenius cosine or Frobenius L2."
+          : "This tensor family does not exist at this input/layer/output coordinate.";
+        bindHeatTooltip(
+          cell,
+          `<b>Not applicable</b><br>${escapeHtml(position.sourceToken)} · ${escapeHtml(column.label)}<br><br>${reason}`,
+        );
+        cell.setAttribute("aria-label", `${position.weightName}, ${column.label}, not applicable`);
+        heatmap.append(cell);
+        continue;
+      }
       const averagingNote = patch.aggregate ? `<br>cellwise mean over n=${patch.functionCount} functions` : "";
       const coordinate = weightLayer
-        ? `Layer ${layer} · ${position.weightName} effective matrix`
+        ? `${patch.weightColumnAxis[layer].label} · ${position.weightName} effective tensor`
         : layerOnly
         ? `Layer ${layer} · entire decoder block`
         : `Layer ${layer} · reverse token −${position.reverseIndex}`;
@@ -2990,22 +3250,43 @@ function renderPatching() {
         const metric = WEIGHT_VISUALIZATION_METRICS[state.patchVisualization];
         const scale = weightAlignmentScale();
         cell.style.background = colorFor(cellMeasurement, metric, scale?.max ?? null);
+        const varianceMetric = WEIGHT_VISUALIZATION_VARIANCES[state.patchVisualization];
+        const variance = varianceMetric
+          ? patch.weightVarianceMatrices?.[varianceMetric]?.[tokenIndex]?.[layer]
+          : null;
+        const varianceScale = weightVarianceScale();
+        if (Number.isFinite(variance) && varianceScale?.max > 0) {
+          const amount = Math.sqrt(Math.max(0, Math.min(1, variance / varianceScale.max)));
+          const width = .5 + amount * 3.5;
+          const alpha = .2 + amount * .8;
+          cell.style.boxShadow = `inset 0 0 0 ${width.toFixed(2)}px rgba(12, 25, 21, ${alpha.toFixed(3)})`;
+        }
         display = formatAlignmentValue(cellMeasurement);
         const shape = patch.weightShapes?.[tokenIndex]?.[layer] ?? null;
         const scalar = (name) => patch.weightMetricMatrices[name][tokenIndex][layer];
         const degenerate = (name) => (
-          patch.weightDegenerateCounts?.[name]?.[tokenIndex]?.[layer] ?? 0
+          patch.weightDegenerateCounts?.[name]?.[tokenIndex]?.[layer] ?? Number.NaN
         );
         const shapeNote = shape
-          ? `${shape[0].toLocaleString()} output rows × ${shape[1].toLocaleString()} input columns`
-          : "analytic identity; matrix shape not materialized";
+          ? shape.length === 2
+            ? `${shape[0].toLocaleString()} output rows × ${shape[1].toLocaleString()} input columns`
+            : `${shape[0].toLocaleString()} learned scale values`
+          : "tensor shape unavailable";
         const scaleNote = metric.includes("l2") && scale
           ? `<br><small>Heatmap colors saturate at model/metric p95 scale ${formatAlignmentValue(scale.max)}; raw values below are unclipped.</small>`
           : "";
         const zeroNote = patch.analytic
           ? ""
-          : `<br><small>zero-vector audit · rows both-zero ${degenerate("row_both_zero_count")}, exactly-one-zero ${degenerate("row_one_zero_count")} · columns both-zero ${degenerate("column_both_zero_count")}, exactly-one-zero ${degenerate("column_one_zero_count")}. Cosine convention: nonzero/nonzero ordinary; zero/zero = 1; exactly-one-zero = 0.</small>`;
-        const baseTooltip = `<b>${coordinate}</b><br>${escapeHtml(shapeNote)}<br><br><b>full effective weight comparison</b><br>Frobenius cosine: ${formatAlignmentValue(scalar("frobenius_cosine"))}<br>Frobenius L2: ${formatAlignmentValue(scalar("frobenius_l2"))}<br>mean row cosine: ${formatAlignmentValue(scalar("mean_row_cosine"))}<br>mean column cosine: ${formatAlignmentValue(scalar("mean_column_cosine"))}<br>mean row L2: ${formatAlignmentValue(scalar("mean_row_l2"))}<br>mean column L2: ${formatAlignmentValue(scalar("mean_column_l2"))}${scaleNote}${zeroNote}<br><small>Rows are output channels; columns are input channels. This prompt-independent artifact is shared by both checkpoint orientations, so every value is exactly symmetric.</small>`;
+          : Number.isFinite(degenerate("row_both_zero_count"))
+            ? `<br><small>zero-vector audit · rows both-zero ${degenerate("row_both_zero_count")}, exactly-one-zero ${degenerate("row_one_zero_count")} · columns both-zero ${degenerate("column_both_zero_count")}, exactly-one-zero ${degenerate("column_one_zero_count")}. Cosine convention: nonzero/nonzero ordinary; zero/zero = 1; exactly-one-zero = 0.</small>`
+            : "";
+        const varianceNote = Number.isFinite(variance)
+          ? `<br>selected-axis population variance: ${formatAlignmentValue(variance)}${varianceScale ? ` <small>(inset border reaches full strength at cross-cell p95 ${formatAlignmentValue(varianceScale.max)}; raw value shown)</small>` : ""}`
+          : "";
+        const frozenNote = position.component.frozen_during_lora
+          ? "<br><small>This tensor was outside the LoRA target set and is therefore exactly unchanged across these checkpoints; identity values are derived analytically.</small>"
+          : "";
+        const baseTooltip = `<b>${coordinate}</b><br>${escapeHtml(shapeNote)}<br><br><b>full effective weight comparison</b><br>Frobenius cosine: ${formatAlignmentValue(scalar("frobenius_cosine"))}<br>Frobenius L2: ${formatAlignmentValue(scalar("frobenius_l2"))}<br>mean row cosine: ${formatAlignmentValue(scalar("mean_row_cosine"))}<br>mean column cosine: ${formatAlignmentValue(scalar("mean_column_cosine"))}<br>mean row L2: ${formatAlignmentValue(scalar("mean_row_l2"))}<br>mean column L2: ${formatAlignmentValue(scalar("mean_column_l2"))}${varianceNote}${scaleNote}${zeroNote}${frozenNote}<br><small>Rows are output channels; columns are input channels. This prompt-independent artifact is shared by both checkpoint orientations, so every value is exactly symmetric.</small>`;
         bindHeatTooltip(
           cell,
           () => `${baseTooltip}${weightDetailGridHtml(patch, tokenIndex, layer)}`,
@@ -3059,7 +3340,7 @@ function renderPatching() {
         bindHeatTooltip(cell, `<b>${coordinate}</b>${averagingNote}<br>${escapeHtml(sourceCoordinate)}<br>${escapeHtml(recipientCoordinate)}${interventionNote}<br><br><b>clean-correct label</b><br>patched result: ${formatPercent(probability)}<br>unpatched recipient baseline: ${formatPercent(patch.recipient)}<br>unpatched donor/source baseline: ${formatPercent(patch.source)}<br>change from recipient: ${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(2)} pp${sourceTargetNote}${logitLensNote}<br><small>${baselineScope}</small>`);
       }
       cell.setAttribute("aria-label", weightLayer
-        ? `layer ${layer}, ${position.weightName} effective matrix, ${display}`
+        ? `${patch.weightColumnAxis[layer].label}, ${position.weightName} effective tensor, ${display}`
         : layerOnly
         ? `layer ${layer}, entire decoder block, ${display}`
         : `layer ${layer}, reverse token ${position.reverseIndex}, ${display}`);
@@ -3135,9 +3416,16 @@ function renderPatching() {
   const legend = document.getElementById("patch-legend");
   legend.replaceChildren();
   if (patch.processed) {
-    if (state.patchVisualization === "cosine_similarity" || (
-      weightAnalysis && WEIGHT_VISUALIZATION_METRICS[state.patchVisualization].includes("cosine")
-    )) {
+    if (weightAnalysis && WEIGHT_VISUALIZATION_METRICS[state.patchVisualization].includes("cosine")) {
+      legend.append(el("span", {}, "0 unaligned"));
+      const scale = el("i");
+      scale.style.background = "linear-gradient(90deg, #eee8d8, #ef775f)";
+      legend.append(scale);
+      legend.append(el("span", {}, "1 aligned"));
+      if (WEIGHT_VISUALIZATION_VARIANCES[state.patchVisualization]) {
+        legend.append(el("span", {}, "inset border = axis variance (0 → cross-cell p95)"));
+      }
+    } else if (state.patchVisualization === "cosine_similarity") {
       legend.append(el("span", {}, "−1 opposite"));
       const scale = el("i");
       scale.style.background = "linear-gradient(90deg, #5d79b9, #eee8d8, #ef775f)";
@@ -3196,7 +3484,7 @@ function renderPatching() {
   );
   const fn = state.data.functions.find((item) => item.id === state.functionId);
   document.getElementById("clean-question").textContent = weightAnalysis
-    ? `${recipient === 0 ? "frozen base" : `step ${recipient}`} effective projection weights`
+    ? `${recipient === 0 ? "frozen base" : `step ${recipient}`} complete effective learned weights`
     : patch.aggregate
       ? `Mean over all ${patch.functionCount} clean definition questions`
       : `What is the definition of ${fn.alias}?`;
@@ -3206,7 +3494,7 @@ function renderPatching() {
   if (weightAnalysis) {
     document.getElementById("source-question-label").textContent = "checkpoint B";
     document.getElementById("source-question").textContent =
-      `${donor === 0 ? "frozen base" : `step ${donor}`} effective projection weights`;
+      `${donor === 0 ? "frozen base" : `step ${donor}`} complete effective learned weights`;
   } else if (state.patchMode === "checkpoint") {
     const questionCount = patch.aggregate ? `same ${patch.functionCount} clean questions` : "same clean question";
     document.getElementById("source-question-label").textContent = weightPatchSelected()
@@ -3332,9 +3620,9 @@ function renderPatching() {
     } else if (!patch.processed) {
       document.getElementById("patch-explanation").textContent = "This unordered checkpoint pair has not been measured. Purple cells encode no similarity, distance, interpolation, or synthetic value.";
     } else if (patch.analytic) {
-      document.getElementById("patch-explanation").textContent = "The two sliders select the same checkpoint, so every effective matrix is exactly itself: all cosine metrics are 1 and all L2 metrics are 0. This diagonal is analytic and no model was loaded.";
+      document.getElementById("patch-explanation").textContent = "The two sliders select the same checkpoint, so every applicable learned tensor is exactly itself: all cosine metrics are 1 and all L2 metrics are 0. This diagonal is analytic and no model was loaded; row/column views remain N/A for one-dimensional norm vectors.";
     } else {
-      document.getElementById("patch-explanation").textContent = "Each cell compares one full effective projection matrix (frozen base + scaled LoRA B·A) across the two checkpoints. The artifact is stored once for the unordered pair and used in both orientations, guaranteeing exact symmetry. Row and column means weight every output or input channel equally. For exact zero vectors, zero/zero cosine is 1 and exactly-one-zero cosine is 0; hover discloses those counts and loads the selected pair’s per-channel mini-grid on demand.";
+      document.getElementById("patch-explanation").textContent = "The atlas covers every learned tensor: embeddings, decoder projections and norms, final norm, and unembedding. The seven trained projections compare full effective matrices (frozen base + scaled LoRA B·A); non-target tensors are exact analytic identities. Each unordered checkpoint pair is stored once for exact symmetry. Weight-cosine colors always span 0–1, while decomposed views add an inset border for population variance. All four packed row/column detail families prefetch for the selected pair; hover outlines attention-head regions and densely tiles large MLP axes.";
     }
   } else if (representationAlignmentSelected()) {
     if (!patch.applicable) {
@@ -3422,6 +3710,7 @@ async function initialize() {
   state.data.weight_alignment_manifest ??= {};
   state.data.real_weight_alignment_files ??= 0;
   state.data.weight_alignment_scales ??= {};
+  state.data.weight_alignment_axes ??= {};
   patchManifestSignature = patchManifestKey();
   setupStatus();
   buildModelControls();

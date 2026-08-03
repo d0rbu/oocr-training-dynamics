@@ -7,6 +7,7 @@ import pytest
 import torch as t
 
 from oocr_training_dynamics.contracts import RunKey, TrainingCondition
+from oocr_training_dynamics.models import ModelKey
 from oocr_training_dynamics.runtime_weight_alignment import (
     _effective_projection_pair,
     _matrix_weight_alignment,
@@ -16,7 +17,50 @@ from oocr_training_dynamics.runtime_weight_alignment import (
 from oocr_training_dynamics.weight_alignment import (
     canonical_weight_alignment_pair,
     weight_alignment_path,
+    weight_component_specs,
 )
+
+
+@pytest.mark.parametrize(
+    ("model", "layer_count", "tensor_count"),
+    ((ModelKey.OLMO3_7B, 32, 355), (ModelKey.QWEN3_8B, 36, 399)),
+)
+def test_complete_weight_component_axis_covers_every_checkpoint_tensor(
+    model: ModelKey,
+    layer_count: int,
+    tensor_count: int,
+) -> None:
+    components = weight_component_specs(model)
+
+    assert len({component.component_id for component in components}) == len(components)
+    assert (
+        sum(layer_count if component.placement == "layer" else 1 for component in components)
+        == tensor_count
+    )
+    assert sum(not component.frozen_during_lora for component in components) == 7
+    assert {
+        component.component_id for component in components if not component.frozen_during_lora
+    } == {
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
+        "gate_proj",
+        "up_proj",
+        "down_proj",
+    }
+    assert {
+        component.component_id for component in components if component.placement != "layer"
+    } == {
+        "embed_tokens",
+        "final_norm",
+        "lm_head",
+    }
+    by_id = {component.component_id: component for component in components}
+    assert all(by_id[name].row_group_size == 128 for name in ("q_proj", "k_proj", "v_proj"))
+    assert by_id["o_proj"].column_group_size == 128
+    assert all(by_id[name].shape[0] % 128 == 0 for name in ("q_proj", "k_proj", "v_proj"))
+    assert by_id["o_proj"].shape[1] % 128 == 0
 
 
 def test_weight_alignment_path_is_canonical_and_excludes_identity(tmp_path: Path) -> None:
