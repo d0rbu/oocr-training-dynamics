@@ -1,7 +1,7 @@
 "use strict";
 
-const DATA_URL = "data/experiment.json?v=20260803e";
-const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260803e";
+const DATA_URL = "data/experiment.json?v=20260803f";
+const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260803f";
 const CONDITION_LABELS = {
   correct: "Correct I/O",
   wrong_alias: "Wrong alias",
@@ -130,13 +130,14 @@ const INDEPENDENT_PROMPT_CHECKPOINT_MODES = new Set([
 const SLIDER_UNITS = 10000;
 const ALL_FUNCTIONS_ID = "__all__";
 const PATCH_PRELOAD_CONCURRENCY = 4;
-const WEIGHT_DETAIL_CACHE_LIMIT = 8;
+const WEIGHT_DETAIL_PAIR_CACHE_LIMIT = 4;
 const WEIGHT_DETAIL_PREFETCH_CONCURRENCY = 2;
 const PATCH_MANIFEST_POLL_MS = 30000;
 const patchChunks = new Map();
 const patchChunkLoads = new Map();
 const patchChunkErrors = new Map();
 const weightDetailChunks = new Map();
+const weightDetailPairs = new Map();
 const weightDetailLoads = new Map();
 const weightDetailErrors = new Map();
 let patchPreloadQueue = [];
@@ -1446,8 +1447,16 @@ async function loadWeightAlignmentDetails(reference, scalarReference) {
       return response.arrayBuffer();
     })
     .then((buffer) => {
-      while (weightDetailChunks.size >= WEIGHT_DETAIL_CACHE_LIMIT) {
-        weightDetailChunks.delete(weightDetailChunks.keys().next().value);
+      const pairKey = patchReferenceKey(scalarReference);
+      const pairDetails = weightDetailPairs.get(pairKey) ?? new Set();
+      weightDetailPairs.delete(pairKey);
+      weightDetailPairs.set(pairKey, pairDetails);
+      pairDetails.add(key);
+      while (weightDetailPairs.size > WEIGHT_DETAIL_PAIR_CACHE_LIMIT) {
+        const oldestPairKey = weightDetailPairs.keys().next().value;
+        const oldestDetails = weightDetailPairs.get(oldestPairKey);
+        oldestDetails?.forEach((detailKey) => weightDetailChunks.delete(detailKey));
+        weightDetailPairs.delete(oldestPairKey);
       }
       weightDetailChunks.set(
         key,
@@ -1485,8 +1494,25 @@ function scheduleSelectedWeightDetailsLoad() {
   if (!weightAnalysisSelected()) return;
   const scalarReference = selectedPatchReference();
   const scalarKey = patchReferenceKey(scalarReference);
-  if (!scalarKey || !patchChunks.has(scalarKey)) return;
-  Object.values(scalarReference?.details ?? {}).forEach((detailReference) => {
+  if (!scalarKey) return;
+  weightDetailPreloadQueue = weightDetailPreloadQueue.filter((queued) => (
+    patchReferenceKey(queued.scalarReference) === scalarKey
+  ));
+  const cachedPair = weightDetailPairs.get(scalarKey);
+  if (cachedPair) {
+    weightDetailPairs.delete(scalarKey);
+    weightDetailPairs.set(scalarKey, cachedPair);
+  }
+  const detailReferences = Object.values(scalarReference?.details ?? {});
+  detailReferences.forEach((detailReference) => {
+    const key = patchReferenceKey(detailReference);
+    const cached = key ? weightDetailChunks.get(key) : null;
+    if (!cached) return;
+    weightDetailChunks.delete(key);
+    weightDetailChunks.set(key, cached);
+  });
+  if (!patchChunks.has(scalarKey)) return;
+  detailReferences.forEach((detailReference) => {
     const key = patchReferenceKey(detailReference);
     if (
       !key

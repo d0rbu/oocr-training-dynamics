@@ -130,9 +130,11 @@ Effective-weight alignment has a third manifest under `site/data/weight-alignmen
 atlas uses a complete component axis plus input/layer/output columns. Frozen non-target tensors are
 analytic identities, and vector norms mark decomposed metrics N/A. Four packed little-endian float32
 detail chunks remain separate per unordered checkpoint pair. Selecting a pair prefetches all four
-with two concurrent transfers and an eight-chunk (two complete pairs) LRU cache. The browser draws
-large detail grids on canvas and uses exported 128-channel metadata to outline attention heads over
-one contiguous 64-column grid.
+with two concurrent transfers and a sixteen-chunk (four complete pairs) LRU cache. Slider changes
+discard stale queued detail prefetches and touch all cached chunks for the newly selected pair.
+Eviction is atomic at the four-chunk pair boundary, so no pair can remain only partially cached. The
+browser draws large detail grids on canvas and uses exported 128-channel metadata to outline
+attention heads over one contiguous 64-column grid.
 Both recipient/donor orientations reference the same scalar and detail digests; there is no second
 directed computation.
 
