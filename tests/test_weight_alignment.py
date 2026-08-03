@@ -56,11 +56,27 @@ def test_matrix_weight_alignment_is_exact_and_symmetric() -> None:
     assert forward.column_l2_distances == pytest.approx((0.0, 4.0))
     assert forward.mean_row_l2 == pytest.approx(2.0)
     assert forward.mean_column_l2 == pytest.approx(2.0)
+    assert forward.row_both_zero_count == 0
+    assert forward.row_one_zero_count == 0
+    assert forward.column_both_zero_count == 0
+    assert forward.column_one_zero_count == 0
 
 
-def test_matrix_weight_alignment_rejects_zero_vector_axes() -> None:
-    with pytest.raises(RuntimeError, match="nonzero norms"):
-        _matrix_weight_alignment(t.tensor([[1.0, 0.0], [0.0, 0.0]]), t.eye(2))
+def test_matrix_weight_alignment_discloses_extended_zero_vector_cosines() -> None:
+    left = t.tensor([[0.0, 0.0], [0.0, 0.0], [1.0, 0.0]])
+    right = t.tensor([[0.0, 0.0], [0.0, 1.0], [1.0, 0.0]])
+
+    alignment = _matrix_weight_alignment(left, right)
+
+    assert alignment.row_cosines == pytest.approx((1.0, 0.0, 1.0))
+    assert alignment.column_cosines == pytest.approx((1.0, 0.0))
+    assert alignment.mean_row_cosine == pytest.approx(2 / 3)
+    assert alignment.mean_column_cosine == pytest.approx(0.5)
+    assert alignment.row_both_zero_count == 1
+    assert alignment.row_one_zero_count == 1
+    assert alignment.column_both_zero_count == 0
+    assert alignment.column_one_zero_count == 1
+    assert alignment.frobenius_cosine == pytest.approx(1 / 2**0.5)
 
 
 def test_effective_projection_pair_includes_the_shared_base_weight() -> None:

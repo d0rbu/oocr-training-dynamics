@@ -462,6 +462,9 @@ factors. Row metrics average output-channel vectors; column metrics average inpu
 The scalar heatmap remains small, while row/column detail arrays load only for the selected
 checkpoint pair. Hover expands those values into a compact mini-grid so thousands of channels are
 visible without forcing them into one line or preloading every detail atlas into browser memory.
+Because real projection matrices contain dormant zero rows, the weight view defines zero/zero
+cosine as `1` and exactly-one-zero cosine as `0`; each hover discloses both counts. Nonzero pairs use
+ordinary cosine, and all L2 metrics retain their usual definition.
 Because weights do not depend on a prompt, the prompt audit is hidden in this view and the source,
 function, boundary, activation-neighbor, and logit-lens controls are explicitly inapplicable.
 

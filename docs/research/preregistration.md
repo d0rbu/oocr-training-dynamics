@@ -837,11 +837,27 @@ merely expected to agree after two separate floating-point runs.
 Checkpoint-pair execution follows the existing coarse-to-fine order over unordered pairs: the
 `0`/`1500` corner, every remaining pair touching step `96`, every remaining pair touching step `0`
 or `1500`, then a seed-`20260715` shuffle of the remainder. Metrics use float32 effective matrices
-and reductions, finite/nonzero norm checks, atomic complete-pair artifacts, and no synthetic fill.
+and reductions, finite norm checks, atomic complete-pair artifacts, and no synthetic fill.
 Cosines use the fixed `[-1, 1]` color scale. Each L2 family receives its own disclosed robust scale;
 raw hover values remain unclipped. These measurements are descriptive parameter geometry, not a
 causal intervention and not evidence that a changed weight direction is used by a particular
 prompt.
+
+### Zero-vector cosine amendment — 2026-08-02, after the failed smoke and before any artifact
+
+The first `0`/`1500` smoke stopped before writing an artifact because layer 4 `q_proj` contains 25
+output rows that are exactly zero at step 0 and nonzero at step 1500. Thus ordinary row cosine is
+undefined for real model weights, and the earlier nonzero-axis requirement cannot produce the
+requested atlas. This was observed only as a fail-loud diagnostic; no metric artifact existed when
+the convention below was fixed.
+
+For every flattened matrix, row, or column vector pair, cosine now uses the following symmetric
+extension: ordinary cosine when both norms are nonzero, `1` when both vectors are exactly zero, and
+`0` when exactly one vector is zero. The latter case represents a dormant/active transition as
+directionally unaligned rather than dropping it from the mean; the former preserves identity for a
+shared dormant channel. Every cell stores counts of both-zero and exactly-one-zero rows and columns,
+and the website discloses those counts in hover. L2 metrics remain ordinary Euclidean distances and
+need no zero-vector convention.
 
 ## Prior information used for predictions
 

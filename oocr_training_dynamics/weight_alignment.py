@@ -35,6 +35,16 @@ WEIGHT_ALIGNMENT_DETAIL_METRICS = (
     "row_l2_distances",
     "column_l2_distances",
 )
+WEIGHT_ALIGNMENT_DEGENERATE_COUNTS = (
+    "row_both_zero_count",
+    "row_one_zero_count",
+    "column_both_zero_count",
+    "column_one_zero_count",
+)
+WEIGHT_ALIGNMENT_ZERO_NORM_CONVENTION = (
+    "ordinary cosine when both norms are nonzero; 1 when both vectors are zero; "
+    "0 when exactly one vector is zero"
+)
 
 
 @beartype
@@ -70,10 +80,12 @@ def weight_alignment_path(
 __all__ = [
     "WEIGHT_ALIGNMENT_ACCUMULATION_DTYPE",
     "WEIGHT_ALIGNMENT_DETAIL_METRICS",
+    "WEIGHT_ALIGNMENT_DEGENERATE_COUNTS",
     "WEIGHT_ALIGNMENT_KIND",
     "WEIGHT_ALIGNMENT_MATRIX_NAMES",
     "WEIGHT_ALIGNMENT_METRICS",
     "WEIGHT_ALIGNMENT_SCHEMA_VERSION",
+    "WEIGHT_ALIGNMENT_ZERO_NORM_CONVENTION",
     "canonical_weight_alignment_pair",
     "weight_alignment_path",
 ]

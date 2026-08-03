@@ -23,11 +23,13 @@ from oocr_training_dynamics.runtime_patching import (
 )
 from oocr_training_dynamics.weight_alignment import (
     WEIGHT_ALIGNMENT_ACCUMULATION_DTYPE,
+    WEIGHT_ALIGNMENT_DEGENERATE_COUNTS,
     WEIGHT_ALIGNMENT_DETAIL_METRICS,
     WEIGHT_ALIGNMENT_KIND,
     WEIGHT_ALIGNMENT_MATRIX_NAMES,
     WEIGHT_ALIGNMENT_METRICS,
     WEIGHT_ALIGNMENT_SCHEMA_VERSION,
+    WEIGHT_ALIGNMENT_ZERO_NORM_CONVENTION,
     canonical_weight_alignment_pair,
     weight_alignment_path,
 )
@@ -54,6 +56,10 @@ class MatrixWeightAlignment:
     column_cosines: tuple[float, ...]
     row_l2_distances: tuple[float, ...]
     column_l2_distances: tuple[float, ...]
+    row_both_zero_count: int
+    row_one_zero_count: int
+    column_both_zero_count: int
+    column_one_zero_count: int
 
 
 def _matrix_weight_alignment(matrix_a: t.Tensor, matrix_b: t.Tensor) -> MatrixWeightAlignment:
@@ -82,16 +88,40 @@ def _matrix_weight_alignment(matrix_a: t.Tensor, matrix_b: t.Tensor) -> MatrixWe
         left_frobenius_norm.reshape(1),
         right_frobenius_norm.reshape(1),
     )
-    if any(not bool(t.isfinite(values).all()) or bool((values <= 0).any()) for values in norms):
-        raise RuntimeError("effective-weight rows, columns, and matrices require nonzero norms")
+    if any(not bool(t.isfinite(values).all()) for values in norms):
+        raise RuntimeError("effective-weight rows, columns, and matrices require finite norms")
 
-    row_cosines = ((left * right).sum(dim=1) / (left_row_norms * right_row_norms)).clamp(-1.0, 1.0)
-    column_cosines = ((left * right).sum(dim=0) / (left_column_norms * right_column_norms)).clamp(
-        -1.0, 1.0
+    def extended_cosine(
+        dot_products: t.Tensor,
+        left_norms: t.Tensor,
+        right_norms: t.Tensor,
+    ) -> tuple[t.Tensor, int, int]:
+        both_zero = (left_norms == 0) & (right_norms == 0)
+        one_zero = (left_norms == 0) ^ (right_norms == 0)
+        both_nonzero = ~(both_zero | one_zero)
+        result = t.zeros_like(dot_products)
+        result[both_zero] = 1.0
+        result[both_nonzero] = (
+            dot_products[both_nonzero] / (left_norms[both_nonzero] * right_norms[both_nonzero])
+        ).clamp(-1.0, 1.0)
+        return result, int(both_zero.sum().item()), int(one_zero.sum().item())
+
+    row_cosines, row_both_zero_count, row_one_zero_count = extended_cosine(
+        (left * right).sum(dim=1),
+        left_row_norms,
+        right_row_norms,
     )
-    frobenius_cosine = ((left * right).sum() / (left_frobenius_norm * right_frobenius_norm)).clamp(
-        -1.0, 1.0
+    column_cosines, column_both_zero_count, column_one_zero_count = extended_cosine(
+        (left * right).sum(dim=0),
+        left_column_norms,
+        right_column_norms,
     )
+    frobenius_cosine_tensor, _, _ = extended_cosine(
+        (left * right).sum().reshape(1),
+        left_frobenius_norm.reshape(1),
+        right_frobenius_norm.reshape(1),
+    )
+    frobenius_cosine = frobenius_cosine_tensor[0]
     difference = left - right
     row_l2 = t.linalg.vector_norm(difference, dim=1)
     column_l2 = t.linalg.vector_norm(difference, dim=0)
@@ -118,6 +148,10 @@ def _matrix_weight_alignment(matrix_a: t.Tensor, matrix_b: t.Tensor) -> MatrixWe
         column_cosines=column_cosine_values,
         row_l2_distances=row_l2_values,
         column_l2_distances=column_l2_values,
+        row_both_zero_count=row_both_zero_count,
+        row_one_zero_count=row_one_zero_count,
+        column_both_zero_count=column_both_zero_count,
+        column_one_zero_count=column_one_zero_count,
     )
 
 
@@ -236,7 +270,12 @@ def _compare_checkpoint_pair(
             for weight_name in WEIGHT_ALIGNMENT_MATRIX_NAMES:
                 projection = projections[weight_name]
                 low_effective, high_effective = _effective_projection_pair(projection)
-                metrics = _matrix_weight_alignment(low_effective, high_effective)
+                try:
+                    metrics = _matrix_weight_alignment(low_effective, high_effective)
+                except RuntimeError as error:
+                    raise RuntimeError(
+                        f"weight alignment failed at layer {layer} projection {weight_name}: {error}"
+                    ) from error
                 scalar_metrics = {
                     metric: float(getattr(metrics, metric)) for metric in WEIGHT_ALIGNMENT_METRICS
                 }
@@ -251,6 +290,10 @@ def _compare_checkpoint_pair(
                         **{
                             metric: getattr(metrics, metric)
                             for metric in WEIGHT_ALIGNMENT_DETAIL_METRICS
+                        },
+                        **{
+                            metric: getattr(metrics, metric)
+                            for metric in WEIGHT_ALIGNMENT_DEGENERATE_COUNTS
                         },
                     }
                 )
@@ -280,6 +323,8 @@ def _compare_checkpoint_pair(
                 "matrix_orientation": "rows are output channels; columns are input channels",
                 "metrics": WEIGHT_ALIGNMENT_METRICS,
                 "detail_metrics": WEIGHT_ALIGNMENT_DETAIL_METRICS,
+                "degenerate_counts": WEIGHT_ALIGNMENT_DEGENERATE_COUNTS,
+                "cosine_zero_norm_convention": WEIGHT_ALIGNMENT_ZERO_NORM_CONVENTION,
                 "accumulation_dtype": WEIGHT_ALIGNMENT_ACCUMULATION_DTYPE,
                 "summary": {
                     metric: _metric_summary(values) for metric, values in summaries.items()

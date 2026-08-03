@@ -25,9 +25,11 @@ from oocr_training_dynamics.contracts import (
 from oocr_training_dynamics.data import FUNCTIONS
 from oocr_training_dynamics.models import ModelKey
 from oocr_training_dynamics.weight_alignment import (
+    WEIGHT_ALIGNMENT_DEGENERATE_COUNTS,
     WEIGHT_ALIGNMENT_DETAIL_METRICS,
     WEIGHT_ALIGNMENT_MATRIX_NAMES,
     WEIGHT_ALIGNMENT_METRICS,
+    WEIGHT_ALIGNMENT_ZERO_NORM_CONVENTION,
 )
 from scripts.export_site import (
     _compact_activation_neighbor_grid,
@@ -1035,6 +1037,10 @@ def test_weight_alignment_export_is_symmetric_and_splits_hover_details(
                     "column_cosines": [0.6, 0.7, 0.8],
                     "row_l2_distances": [1.0, 2.0],
                     "column_l2_distances": [0.5, 1.0, 1.5],
+                    "row_both_zero_count": 0,
+                    "row_one_zero_count": 1,
+                    "column_both_zero_count": 0,
+                    "column_one_zero_count": 0,
                 }
             )
     artifact_path.write_text(
@@ -1055,6 +1061,8 @@ def test_weight_alignment_export_is_symmetric_and_splits_hover_details(
                     "function_dependent": False,
                     "metrics": list(WEIGHT_ALIGNMENT_METRICS),
                     "detail_metrics": list(WEIGHT_ALIGNMENT_DETAIL_METRICS),
+                    "degenerate_counts": list(WEIGHT_ALIGNMENT_DEGENERATE_COUNTS),
+                    "cosine_zero_norm_convention": WEIGHT_ALIGNMENT_ZERO_NORM_CONVENTION,
                     "accumulation_dtype": "float32",
                     "summary": {
                         metric: {"p95": 0.9 if "cosine" in metric else 2.0, "max": 3.0}
@@ -1085,6 +1093,8 @@ def test_weight_alignment_export_is_symmetric_and_splits_hover_details(
         (tmp_path / "site" / forward["details"]["column_cosines"]["url"]).read_text()
     )
     assert scalar["metrics"]["mean_row_cosine"][0][0] == 0.8
+    assert scalar["degenerate_counts"]["row_one_zero_count"][0][0] == 1
+    assert scalar["cosine_zero_norm_convention"] == WEIGHT_ALIGNMENT_ZERO_NORM_CONVENTION
     assert scalar["shapes"][0][0] == [2, 3]
     assert row_detail["metric"] == "row_cosines"
     assert row_detail["cells"][0]["values"] == [0.7, 0.9]

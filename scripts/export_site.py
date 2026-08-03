@@ -62,11 +62,13 @@ from oocr_training_dynamics.runtime_patching import (
 )
 from oocr_training_dynamics.weight_alignment import (
     WEIGHT_ALIGNMENT_ACCUMULATION_DTYPE,
+    WEIGHT_ALIGNMENT_DEGENERATE_COUNTS,
     WEIGHT_ALIGNMENT_DETAIL_METRICS,
     WEIGHT_ALIGNMENT_KIND,
     WEIGHT_ALIGNMENT_MATRIX_NAMES,
     WEIGHT_ALIGNMENT_METRICS,
     WEIGHT_ALIGNMENT_SCHEMA_VERSION,
+    WEIGHT_ALIGNMENT_ZERO_NORM_CONVENTION,
 )
 
 CurveRow = dict[str, float | int]
@@ -843,6 +845,9 @@ def _export_weight_alignments(
             or measurement.get("function_dependent") is not False
             or measurement.get("metrics") != list(WEIGHT_ALIGNMENT_METRICS)
             or measurement.get("detail_metrics") != list(WEIGHT_ALIGNMENT_DETAIL_METRICS)
+            or measurement.get("degenerate_counts") != list(WEIGHT_ALIGNMENT_DEGENERATE_COUNTS)
+            or measurement.get("cosine_zero_norm_convention")
+            != WEIGHT_ALIGNMENT_ZERO_NORM_CONVENTION
             or measurement.get("accumulation_dtype") != WEIGHT_ALIGNMENT_ACCUMULATION_DTYPE
         ):
             raise ValueError(f"{path}.measurement does not match the weight contract")
@@ -877,6 +882,10 @@ def _export_weight_alignments(
         scalar_matrices: dict[str, list[list[float | None]]] = {
             metric: [[None] * layer_count for _ in matrix_names]
             for metric in WEIGHT_ALIGNMENT_METRICS
+        }
+        degenerate_matrices: dict[str, list[list[int | None]]] = {
+            metric: [[None] * layer_count for _ in matrix_names]
+            for metric in WEIGHT_ALIGNMENT_DEGENERATE_COUNTS
         }
         shapes: list[list[list[int] | None]] = [[None] * layer_count for _ in matrix_names]
         detail_cells: list[dict[str, object]] = []
@@ -917,6 +926,12 @@ def _export_weight_alignments(
                     raise ValueError(f"{path} contains a negative {metric}")
                 scalar_matrices[metric][weight_index][layer] = value
                 scalar_cell[metric] = value
+            for metric in WEIGHT_ALIGNMENT_DEGENERATE_COUNTS:
+                count = cell.get(metric)
+                axis_length = shape_values[0] if metric.startswith("row_") else shape_values[1]
+                if not isinstance(count, int) or not 0 <= count <= axis_length:
+                    raise ValueError(f"{path} contains an invalid {metric}")
+                degenerate_matrices[metric][weight_index][layer] = count
             detail_cell: dict[str, object] = {**scalar_cell, "shape": shape_values}
             for metric in WEIGHT_ALIGNMENT_DETAIL_METRICS:
                 raw_values = cell.get(metric)
@@ -937,9 +952,21 @@ def _export_weight_alignments(
             detail_cells.append(detail_cell)
         if len(seen) != layer_count * len(matrix_names):
             raise ValueError(f"{path} does not cover every layer/projection cell")
-        if any(
-            value is None for matrix in scalar_matrices.values() for row in matrix for value in row
-        ) or any(shape is None for row in shapes for shape in row):
+        if (
+            any(
+                value is None
+                for matrix in scalar_matrices.values()
+                for row in matrix
+                for value in row
+            )
+            or any(
+                value is None
+                for matrix in degenerate_matrices.values()
+                for row in matrix
+                for value in row
+            )
+            or any(shape is None for row in shapes for shape in row)
+        ):
             raise ValueError(f"{path} contains an incomplete scalar grid")
 
         relative_root = (
@@ -978,6 +1005,8 @@ def _export_weight_alignments(
                 "layer_count": layer_count,
                 "shapes": shapes,
                 "metrics": scalar_matrices,
+                "degenerate_counts": degenerate_matrices,
+                "cosine_zero_norm_convention": WEIGHT_ALIGNMENT_ZERO_NORM_CONVENTION,
             },
         )
         reference = {

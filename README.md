@@ -127,7 +127,9 @@ Its seven heatmap rows are Q/K/V/O and gate/up/down matrices; its six views are 
 Frobenius L2, mean row/column cosine, and mean row/column L2. The effective matrix is the frozen
 base plus scaled LoRA `B @ A`, so step 0 is defined. Off-diagonal checkpoint pairs are stored once
 and reused in both directions for exact symmetry. Per-row/column hover mini-grids are split from the
-small scalar atlas and fetched only for the selected metric/pair.
+small scalar atlas and fetched only for the selected metric/pair. Exact zero-vector pairs use the
+disclosed convention zero/zero cosine `1` and exactly-one-zero cosine `0`; hover reports the
+corresponding row/column counts.
 
 Clicking a measured activation cell also selects its exact source and recipient vectors for a
 separate nearest-example audit. Its selectable, size-matched candidate corpora include the original

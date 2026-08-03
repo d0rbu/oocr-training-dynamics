@@ -71,6 +71,7 @@ const WEIGHT_DETAIL_METRICS = {
   weight_mean_row_l2: { artifact: "row_l2_distances", compact: "values" },
   weight_mean_column_l2: { artifact: "column_l2_distances", compact: "values" },
 };
+const WEIGHT_ZERO_NORM_CONVENTION = "ordinary cosine when both norms are nonzero; 1 when both vectors are zero; 0 when exactly one vector is zero";
 const PROMPT_SOURCE_LABELS = {
   across_sample: "Different function name",
   cyclic_choices: "Choices shifted +1",
@@ -1219,7 +1220,9 @@ function compactWeightAlignmentChunk(payload) {
     || !Number.isInteger(payload.layer_count)
     || payload.layer_count <= 0
     || !payload.metrics
+    || !payload.degenerate_counts
     || !Array.isArray(payload.shapes)
+    || payload.cosine_zero_norm_convention !== WEIGHT_ZERO_NORM_CONVENTION
   ) {
     throw new Error("weight-alignment chunk has invalid axes");
   }
@@ -1256,6 +1259,19 @@ function compactWeightAlignmentChunk(payload) {
   Object.values(WEIGHT_VISUALIZATION_METRICS).forEach((metric) => {
     metrics[metric] = flatten(payload.metrics[metric], metric);
   });
+  const degenerateCounts = {};
+  [
+    "row_both_zero_count",
+    "row_one_zero_count",
+    "column_both_zero_count",
+    "column_one_zero_count",
+  ].forEach((metric) => {
+    const values = flatten(payload.degenerate_counts[metric], metric);
+    if (values.some((value) => !Number.isInteger(value))) {
+      throw new Error(`weight-alignment chunk contains an invalid ${metric}`);
+    }
+    degenerateCounts[metric] = values;
+  });
   if (
     payload.shapes.length !== matrixAxis.length
     || payload.shapes.some((row) => (
@@ -1275,6 +1291,7 @@ function compactWeightAlignmentChunk(payload) {
     layerCount,
     matrixAxis,
     metrics,
+    degenerateCounts,
     shapes: payload.shapes,
   };
 }
@@ -1881,6 +1898,7 @@ function analyticOrUnprocessedWeightAlignment() {
     matrix: metricMatrices[selectedMetric],
     weightMetricMatrices: metricMatrices,
     weightShapes: null,
+    weightDegenerateCounts: null,
     sourceTargetMatrix: null,
     target: "effective decoder projection matrices",
     outcomeLabel: PATCH_VISUALIZATION_LABELS[state.patchVisualization],
@@ -1939,6 +1957,9 @@ function measuredWeightAlignment() {
     matrix: metricMatrices[selectedMetric],
     weightMetricMatrices: metricMatrices,
     weightShapes: record.shapes,
+    weightDegenerateCounts: Object.fromEntries(
+      Object.entries(record.degenerateCounts).map(([metric, values]) => [metric, matrixRows(values)]),
+    ),
     analytic: false,
     measured: true,
     processed: true,
@@ -2972,13 +2993,19 @@ function renderPatching() {
         display = formatAlignmentValue(cellMeasurement);
         const shape = patch.weightShapes?.[tokenIndex]?.[layer] ?? null;
         const scalar = (name) => patch.weightMetricMatrices[name][tokenIndex][layer];
+        const degenerate = (name) => (
+          patch.weightDegenerateCounts?.[name]?.[tokenIndex]?.[layer] ?? 0
+        );
         const shapeNote = shape
           ? `${shape[0].toLocaleString()} output rows × ${shape[1].toLocaleString()} input columns`
           : "analytic identity; matrix shape not materialized";
         const scaleNote = metric.includes("l2") && scale
           ? `<br><small>Heatmap colors saturate at model/metric p95 scale ${formatAlignmentValue(scale.max)}; raw values below are unclipped.</small>`
           : "";
-        const baseTooltip = `<b>${coordinate}</b><br>${escapeHtml(shapeNote)}<br><br><b>full effective weight comparison</b><br>Frobenius cosine: ${formatAlignmentValue(scalar("frobenius_cosine"))}<br>Frobenius L2: ${formatAlignmentValue(scalar("frobenius_l2"))}<br>mean row cosine: ${formatAlignmentValue(scalar("mean_row_cosine"))}<br>mean column cosine: ${formatAlignmentValue(scalar("mean_column_cosine"))}<br>mean row L2: ${formatAlignmentValue(scalar("mean_row_l2"))}<br>mean column L2: ${formatAlignmentValue(scalar("mean_column_l2"))}${scaleNote}<br><small>Rows are output channels; columns are input channels. This prompt-independent artifact is shared by both checkpoint orientations, so every value is exactly symmetric.</small>`;
+        const zeroNote = patch.analytic
+          ? ""
+          : `<br><small>zero-vector audit · rows both-zero ${degenerate("row_both_zero_count")}, exactly-one-zero ${degenerate("row_one_zero_count")} · columns both-zero ${degenerate("column_both_zero_count")}, exactly-one-zero ${degenerate("column_one_zero_count")}. Cosine convention: nonzero/nonzero ordinary; zero/zero = 1; exactly-one-zero = 0.</small>`;
+        const baseTooltip = `<b>${coordinate}</b><br>${escapeHtml(shapeNote)}<br><br><b>full effective weight comparison</b><br>Frobenius cosine: ${formatAlignmentValue(scalar("frobenius_cosine"))}<br>Frobenius L2: ${formatAlignmentValue(scalar("frobenius_l2"))}<br>mean row cosine: ${formatAlignmentValue(scalar("mean_row_cosine"))}<br>mean column cosine: ${formatAlignmentValue(scalar("mean_column_cosine"))}<br>mean row L2: ${formatAlignmentValue(scalar("mean_row_l2"))}<br>mean column L2: ${formatAlignmentValue(scalar("mean_column_l2"))}${scaleNote}${zeroNote}<br><small>Rows are output channels; columns are input channels. This prompt-independent artifact is shared by both checkpoint orientations, so every value is exactly symmetric.</small>`;
         bindHeatTooltip(
           cell,
           () => `${baseTooltip}${weightDetailGridHtml(patch, tokenIndex, layer)}`,
@@ -3307,7 +3334,7 @@ function renderPatching() {
     } else if (patch.analytic) {
       document.getElementById("patch-explanation").textContent = "The two sliders select the same checkpoint, so every effective matrix is exactly itself: all cosine metrics are 1 and all L2 metrics are 0. This diagonal is analytic and no model was loaded.";
     } else {
-      document.getElementById("patch-explanation").textContent = "Each cell compares one full effective projection matrix (frozen base + scaled LoRA B·A) across the two checkpoints. The artifact is stored once for the unordered pair and used in both orientations, guaranteeing exact symmetry. Row and column means weight every output or input channel equally; hover loads the selected pair’s per-channel mini-grid on demand.";
+      document.getElementById("patch-explanation").textContent = "Each cell compares one full effective projection matrix (frozen base + scaled LoRA B·A) across the two checkpoints. The artifact is stored once for the unordered pair and used in both orientations, guaranteeing exact symmetry. Row and column means weight every output or input channel equally. For exact zero vectors, zero/zero cosine is 1 and exactly-one-zero cosine is 0; hover discloses those counts and loads the selected pair’s per-channel mini-grid on demand.";
     }
   } else if (representationAlignmentSelected()) {
     if (!patch.applicable) {
