@@ -1,7 +1,7 @@
 "use strict";
 
-const DATA_URL = "data/experiment.json?v=20260803d";
-const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260803d";
+const DATA_URL = "data/experiment.json?v=20260803e";
+const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260803e";
 const CONDITION_LABELS = {
   correct: "Correct I/O",
   wrong_alias: "Wrong alias",
@@ -172,6 +172,8 @@ const state = {
   activationExampleSource: "experiment",
   patchCellTokenIndex: 0,
   patchCellLayer: null,
+  patchTooltipPinned: false,
+  patchTooltipPosition: null,
 };
 
 function svg(name, attributes = {}) {
@@ -2657,26 +2659,66 @@ function formatAlignmentValue(value) {
   return value.toFixed(4);
 }
 
+function positionHeatTooltip(tooltip, point) {
+  const left = Math.min(window.innerWidth - tooltip.offsetWidth - 8, point.clientX + 14);
+  const top = Math.min(window.innerHeight - tooltip.offsetHeight - 8, point.clientY + 14);
+  tooltip.style.left = `${Math.max(8, left)}px`;
+  tooltip.style.top = `${Math.max(8, top)}px`;
+}
+
+function showHeatTooltip(html, point) {
+  const tooltip = document.getElementById("tooltip");
+  tooltip.innerHTML = typeof html === "function" ? html() : html;
+  renderWeightDetailCanvases(tooltip);
+  tooltip.hidden = false;
+  positionHeatTooltip(tooltip, point);
+}
+
+function restorePinnedHeatTooltip() {
+  if (!state.patchTooltipPinned || !state.patchTooltipPosition) return;
+  const selected = document.querySelector(
+    `.heat-cell[data-token-index="${state.patchCellTokenIndex}"]`
+    + `[data-layer="${state.patchCellLayer}"]`,
+  );
+  if (!selected?.heatTooltipHtml) return;
+  showHeatTooltip(selected.heatTooltipHtml, state.patchTooltipPosition);
+}
+
 function bindHeatTooltip(cell, html) {
   const tooltip = document.getElementById("tooltip");
-  const position = (event) => {
-    const left = Math.min(window.innerWidth - tooltip.offsetWidth - 8, event.clientX + 14);
-    const top = Math.min(window.innerHeight - tooltip.offsetHeight - 8, event.clientY + 14);
-    tooltip.style.left = `${Math.max(8, left)}px`;
-    tooltip.style.top = `${Math.max(8, top)}px`;
-  };
+  cell.heatTooltipHtml = html;
   const show = (event) => {
-    tooltip.innerHTML = typeof html === "function" ? html() : html;
-    renderWeightDetailCanvases(tooltip);
-    tooltip.hidden = false;
-    position(event);
+    showHeatTooltip(html, event);
   };
   cell.addEventListener("mouseenter", show);
   cell.addEventListener("mousemove", (event) => {
-    if (!tooltip.hidden) position(event);
+    if (!tooltip.hidden) positionHeatTooltip(tooltip, event);
   });
-  cell.addEventListener("focus", () => show({ clientX: window.innerWidth / 2, clientY: window.innerHeight / 2 }));
-  ["mouseleave", "blur"].forEach((name) => cell.addEventListener(name, () => { tooltip.hidden = true; }));
+  cell.addEventListener("focus", () => {
+    const selected = state.patchTooltipPinned
+      && Number(cell.dataset.tokenIndex) === state.patchCellTokenIndex
+      && Number(cell.dataset.layer) === state.patchCellLayer;
+    showHeatTooltip(
+      html,
+      selected && state.patchTooltipPosition
+        ? state.patchTooltipPosition
+        : { clientX: window.innerWidth / 2, clientY: window.innerHeight / 2 },
+    );
+  });
+  cell.addEventListener("mouseleave", () => {
+    if (!state.patchTooltipPinned) tooltip.hidden = true;
+  });
+  cell.addEventListener("blur", () => {
+    if (!state.patchTooltipPinned) {
+      tooltip.hidden = true;
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      if (!document.activeElement?.classList.contains("heat-cell")) {
+        restorePinnedHeatTooltip();
+      }
+    });
+  });
 }
 
 function renderWeightDetailCanvases(container) {
@@ -3128,6 +3170,11 @@ function renderPatching() {
   const patchLoading = Boolean(patchReferenceId && !patch.processed && !patchLoadError);
   const heatmap = document.getElementById("patch-heatmap");
   heatmap.replaceChildren();
+  if (state.patchTooltipPinned) document.getElementById("tooltip").hidden = true;
+  heatmap.onmouseleave = () => {
+    if (state.patchTooltipPinned) restorePinnedHeatTooltip();
+    else document.getElementById("tooltip").hidden = true;
+  };
   heatmap.style.gridTemplateColumns = `300px repeat(${patch.layers}, minmax(17px, 1fr))`;
   heatmap.append(el("div"));
   for (let layer = 0; layer < patch.layers; layer += 1) {
@@ -3333,22 +3380,29 @@ function renderPatching() {
         : `layer ${layer}, reverse token ${position.reverseIndex}, ${display}`);
       if (
         !layerOnly
-        && !weightLayer
         && state.patchCellTokenIndex === tokenIndex
         && state.patchCellLayer === layer
       ) {
         cell.classList.add("selected");
       }
-      if (!layerOnly && !weightLayer) {
+      if (!layerOnly) {
         cell.dataset.tokenIndex = String(tokenIndex);
         cell.dataset.layer = String(layer);
-        const selectReference = (moveFocus = false) => {
+        const selectReference = (moveFocus = false, event = null) => {
+          const bounds = cell.getBoundingClientRect();
           state.patchCellTokenIndex = tokenIndex;
           state.patchCellLayer = layer;
+          state.patchTooltipPinned = true;
+          state.patchTooltipPosition = event && event.detail > 0
+            ? { clientX: event.clientX, clientY: event.clientY }
+            : {
+              clientX: bounds.left + bounds.width / 2,
+              clientY: bounds.top + bounds.height / 2,
+            };
           renderPatching();
           if (moveFocus) focusSelectedPatchCell();
         };
-        cell.addEventListener("click", () => selectReference(true));
+        cell.addEventListener("click", (event) => selectReference(true, event));
         cell.addEventListener("keydown", (event) => {
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
@@ -3658,6 +3712,9 @@ function renderPatching() {
   scheduleSelectedPatchLoad();
   scheduleSelectedWeightDetailsLoad();
   scheduleFullPatchPreload();
+  if (state.patchTooltipPinned) {
+    window.requestAnimationFrame(restorePinnedHeatTooltip);
+  }
 }
 
 function renderAll() {

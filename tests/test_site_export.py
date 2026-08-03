@@ -435,8 +435,8 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert 'id="curve-rank-select"' in html
     assert "function buildCurveBatchSlider()" in javascript
     assert "function availableBatchSizes()" in javascript
-    assert 'href="styles.css?v=20260803d"' in html
-    assert 'src="app.js?v=20260803d"' in html
+    assert 'href="styles.css?v=20260803e"' in html
+    assert 'src="app.js?v=20260803e"' in html
     assert 'id="letter-propensity-chart"' in html
     assert 'id="letter-propensity-status"' in html
     assert 'id="letter-propensity-value"' in html
@@ -456,8 +456,8 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
         "unrelated_conversational_choices",
     ):
         assert f'"{mode}"' in javascript
-    assert 'const DATA_URL = "data/experiment.json?v=20260803d"' in javascript
-    assert 'const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260803d"' in javascript
+    assert 'const DATA_URL = "data/experiment.json?v=20260803e"' in javascript
+    assert 'const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260803e"' in javascript
     assert "function renderLetterPropensity()" in javascript
     assert "function letterPropensityRows()" in javascript
     assert "missing checkpoints are not connected" in javascript
@@ -488,6 +488,10 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert "function weightVarianceScale()" in javascript
     assert "function weightDetailGridHtml(" in javascript
     assert "function renderWeightDetailCanvases(" in javascript
+    assert "function positionHeatTooltip(" in javascript
+    assert "function restorePinnedHeatTooltip(" in javascript
+    assert "patchTooltipPinned: false" in javascript
+    assert "heatmap.onmouseleave" in javascript
     assert "WEIGHT_DETAIL_CACHE_LIMIT = 8" in javascript
     assert "WEIGHT_DETAIL_PREFETCH_CONCURRENCY = 2" in javascript
     assert "weight_major_then_layer_then_axis_index" in javascript
