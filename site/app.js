@@ -1,7 +1,7 @@
 "use strict";
 
-const DATA_URL = "data/experiment.json?v=20260803f";
-const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260803f";
+const DATA_URL = "data/experiment.json?v=20260803g";
+const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260803g";
 const CONDITION_LABELS = {
   correct: "Correct I/O",
   wrong_alias: "Wrong alias",
@@ -2778,7 +2778,7 @@ function renderWeightDetailCanvases(container) {
         );
       });
       context.strokeStyle = "rgba(204, 255, 0, .95)";
-      context.lineWidth = .5;
+      context.lineWidth = .35;
       for (let group = 0; group < groupCount; group += 1) {
         const start = group * groupSize;
         const end = Math.min(start + groupSize, values.length);

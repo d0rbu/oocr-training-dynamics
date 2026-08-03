@@ -435,8 +435,8 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert 'id="curve-rank-select"' in html
     assert "function buildCurveBatchSlider()" in javascript
     assert "function availableBatchSizes()" in javascript
-    assert 'href="styles.css?v=20260803f"' in html
-    assert 'src="app.js?v=20260803f"' in html
+    assert 'href="styles.css?v=20260803g"' in html
+    assert 'src="app.js?v=20260803g"' in html
     assert 'id="letter-propensity-chart"' in html
     assert 'id="letter-propensity-status"' in html
     assert 'id="letter-propensity-value"' in html
@@ -456,8 +456,8 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
         "unrelated_conversational_choices",
     ):
         assert f'"{mode}"' in javascript
-    assert 'const DATA_URL = "data/experiment.json?v=20260803f"' in javascript
-    assert 'const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260803f"' in javascript
+    assert 'const DATA_URL = "data/experiment.json?v=20260803g"' in javascript
+    assert 'const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260803g"' in javascript
     assert "function renderLetterPropensity()" in javascript
     assert "function letterPropensityRows()" in javascript
     assert "missing checkpoints are not connected" in javascript
@@ -502,7 +502,7 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert "const columns = 64" in javascript
     assert "const midpoint = [255, 255, 255]" in javascript
     assert "rgba(255, 255, 255, .30)" in javascript
-    assert "context.lineWidth = .5" in javascript
+    assert "context.lineWidth = .35" in javascript
     assert "async function refreshPatchManifest()" in javascript
     assert "PATCH_PRELOAD_CONCURRENCY = 4" in javascript
     assert "PATCH_MANIFEST_POLL_MS = 30000" in javascript
