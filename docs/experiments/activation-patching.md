@@ -453,22 +453,24 @@ causal patching maps.
 ## Effective-weight comparison view
 
 The same section also hosts a prompt-independent parameter view. Its rows cover the complete learned
-weight inventory: input embedding, all decoder Q/K/V/O and gate/up/down matrices, every learned
-normalization vector, final norm, and unembedding. Columns are input, decoder layers, and output;
+matrix inventory: input embedding, all decoder Q/K/V/O and gate/up/down matrices, and unembedding.
+Frozen normalization vectors are omitted because they are exact identities in these LoRA runs.
+Columns are input, decoder layers, and output;
 inapplicable crossings are gray. The six visualization choices are Frobenius cosine, Frobenius L2,
 mean row cosine, mean column cosine, mean row L2, and mean column L2. “Effective” means the frozen
 base matrix plus the checkpoint's scaled LoRA product, not a cosine between `A` and `B` factors.
-Non-target tensors were frozen in these LoRA runs and are exact analytic identities. One-dimensional
-norm vectors support only flattened cosine/L2; row and column decompositions are explicitly N/A.
+The displayed non-target matrices were frozen and are exact analytic identities.
 Row metrics average output-channel vectors; column metrics average input-channel vectors.
 
-Weight-cosine colors use a fixed `0..1` range. In the four decomposed views, an inset cell border
-encodes the population variance of the underlying row/column values and reaches full strength at
-the model-wide cross-cell p95; hover retains the raw variance. Packed float32 detail arrays for all
+Weight-cosine colors use a fixed, high-contrast blue-at-0 to red-at-1 range with quadratic color
+interpolation; raw hover values are unchanged. In the four decomposed views, an inset cell border
+encodes the population variance of the underlying row/column values. Its color and opacity remain a
+fixed light shade; only width changes, reaching its maximum at the model-wide cross-cell p95. Hover
+retains the raw variance. Packed float32 detail arrays for all
 four views prefetch as soon as a measured checkpoint pair is selected and remain in a two-pair local
 cache. Hover draws them on a bounded canvas rather than creating one DOM node per neuron. Exact
-128-channel head regions are outlined for Q/K/V row views and O column views; gate/up/down axes use
-an adaptive dense tiling so 11,008 neurons remain on screen.
+128-channel head regions are outlined inside one contiguous 64-column grid for Q/K/V row views and
+O column views; gate/up/down axes use an adaptive dense tiling so 11,008 neurons remain on screen.
 Because real projection matrices contain dormant zero rows, the weight view defines zero/zero
 cosine as `1` and exactly-one-zero cosine as `0`; each hover discloses both counts. Nonzero pairs use
 ordinary cosine, and all L2 metrics retain their usual definition.

@@ -1,7 +1,7 @@
 "use strict";
 
-const DATA_URL = "data/experiment.json?v=20260803a";
-const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260803a";
+const DATA_URL = "data/experiment.json?v=20260803b";
+const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260803b";
 const CONDITION_LABELS = {
   correct: "Correct I/O",
   wrong_alias: "Wrong alias",
@@ -2632,8 +2632,9 @@ function colorFor(value, metric, scaleMax = null) {
     return `rgb(${near.map((channel, index) => Math.round(channel + (far[index] - channel) * amount)).join(",")})`;
   }
   if (metric.includes("cosine") && metric !== "cosine_similarity") {
-    const amount = Math.max(0, Math.min(1, value));
-    const unaligned = [238, 232, 216];
+    const clamped = Math.max(0, Math.min(1, value));
+    const amount = clamped ** 2;
+    const unaligned = [55, 92, 170];
     const aligned = [239, 119, 95];
     return `rgb(${unaligned.map((channel, index) => Math.round(channel + (aligned[index] - channel) * amount)).join(",")})`;
   }
@@ -2686,40 +2687,36 @@ function renderWeightDetailCanvases(container) {
     const context = canvas.getContext("2d");
     if (!context) return;
     if (groupSize > 0) {
-      const innerColumns = 16;
-      const innerRows = Math.ceil(groupSize / innerColumns);
+      const columns = 64;
       const groupCount = Math.ceil(values.length / groupSize);
-      const groupsPerRow = Math.min(8, groupCount);
-      const cellSize = 2;
-      const gap = 4;
-      const groupWidth = innerColumns * cellSize;
-      const groupHeight = innerRows * cellSize;
-      canvas.width = groupsPerRow * (groupWidth + gap) - gap;
-      canvas.height = Math.ceil(groupCount / groupsPerRow) * (groupHeight + gap) - gap;
+      const cellSize = 3;
+      canvas.width = Math.min(columns, values.length) * cellSize;
+      canvas.height = Math.ceil(values.length / columns) * cellSize;
       values.forEach((value, index) => {
-        const group = Math.floor(index / groupSize);
-        const within = index % groupSize;
-        const groupX = group % groupsPerRow;
-        const groupY = Math.floor(group / groupsPerRow);
-        const x = groupX * (groupWidth + gap) + (within % innerColumns) * cellSize;
-        const y = groupY * (groupHeight + gap) + Math.floor(within / innerColumns) * cellSize;
         context.fillStyle = colorFor(
           value,
           cosine ? "weight_detail_cosine" : "l2_distance",
           scale,
         );
-        context.fillRect(x, y, cellSize, cellSize);
+        context.fillRect(
+          (index % columns) * cellSize,
+          Math.floor(index / columns) * cellSize,
+          cellSize,
+          cellSize,
+        );
       });
       context.strokeStyle = "rgba(204, 255, 0, .95)";
       context.lineWidth = 1;
       for (let group = 0; group < groupCount; group += 1) {
-        const groupX = group % groupsPerRow;
-        const groupY = Math.floor(group / groupsPerRow);
+        const start = group * groupSize;
+        const end = Math.min(start + groupSize, values.length);
+        const startRow = Math.floor(start / columns);
+        const endRow = Math.ceil(end / columns);
         context.strokeRect(
-          groupX * (groupWidth + gap) + .5,
-          groupY * (groupHeight + gap) + .5,
-          groupWidth - 1,
-          groupHeight - 1,
+          .5,
+          startRow * cellSize + .5,
+          canvas.width - 1,
+          (endRow - startRow) * cellSize - 1,
         );
       }
     } else {
@@ -2795,7 +2792,7 @@ function weightDetailGridHtml(patch, weightIndex, columnIndex) {
     ? component.row_group_size
     : component.column_group_size;
   const groupNote = groupSize
-    ? `<br><small class="weight-detail-group-note">Each acid-green outlined block is one ${escapeHtml(component.group_label)} (${groupSize} contiguous channels); blocks follow head index order.</small>`
+    ? `<br><small class="weight-detail-group-note">This is one contiguous 64-column neuron grid. Each acid-green outlined region is one ${escapeHtml(component.group_label)} (${groupSize} contiguous channels); regions follow head index order from top to bottom.</small>`
     : "";
   return `<br><br><b>${axis} mini-grid · n=${values.length.toLocaleString()}</b><br><small>left-to-right, top-to-bottom index order · ${scaleNote}</small>${groupNote}<canvas class="weight-detail-grid" data-detail-key="${escapeHtml(detailKey)}" data-cell-key="${escapeHtml(cellKey)}" data-cosine="${cosine}" data-scale="${detailScale ?? 1}" data-group-size="${groupSize ?? 0}"></canvas><small>min ${formatAlignmentValue(sorted[0])} · median ${formatAlignmentValue(quantile(.5))} · p95 ${formatAlignmentValue(quantile(.95))} · max ${formatAlignmentValue(sorted.at(-1))}</small>`;
 }
@@ -3258,8 +3255,7 @@ function renderPatching() {
         if (Number.isFinite(variance) && varianceScale?.max > 0) {
           const amount = Math.sqrt(Math.max(0, Math.min(1, variance / varianceScale.max)));
           const width = .5 + amount * 3.5;
-          const alpha = .2 + amount * .8;
-          cell.style.boxShadow = `inset 0 0 0 ${width.toFixed(2)}px rgba(12, 25, 21, ${alpha.toFixed(3)})`;
+          cell.style.boxShadow = `inset 0 0 0 ${width.toFixed(2)}px rgba(255, 255, 255, .82)`;
         }
         display = formatAlignmentValue(cellMeasurement);
         const shape = patch.weightShapes?.[tokenIndex]?.[layer] ?? null;
@@ -3281,7 +3277,7 @@ function renderPatching() {
             ? `<br><small>zero-vector audit · rows both-zero ${degenerate("row_both_zero_count")}, exactly-one-zero ${degenerate("row_one_zero_count")} · columns both-zero ${degenerate("column_both_zero_count")}, exactly-one-zero ${degenerate("column_one_zero_count")}. Cosine convention: nonzero/nonzero ordinary; zero/zero = 1; exactly-one-zero = 0.</small>`
             : "";
         const varianceNote = Number.isFinite(variance)
-          ? `<br>selected-axis population variance: ${formatAlignmentValue(variance)}${varianceScale ? ` <small>(inset border reaches full strength at cross-cell p95 ${formatAlignmentValue(varianceScale.max)}; raw value shown)</small>` : ""}`
+          ? `<br>selected-axis population variance: ${formatAlignmentValue(variance)}${varianceScale ? ` <small>(fixed light inset; only its width changes, reaching maximum at cross-cell p95 ${formatAlignmentValue(varianceScale.max)}; raw value shown)</small>` : ""}`
           : "";
         const frozenNote = position.component.frozen_during_lora
           ? "<br><small>This tensor was outside the LoRA target set and is therefore exactly unchanged across these checkpoints; identity values are derived analytically.</small>"
@@ -3419,11 +3415,13 @@ function renderPatching() {
     if (weightAnalysis && WEIGHT_VISUALIZATION_METRICS[state.patchVisualization].includes("cosine")) {
       legend.append(el("span", {}, "0 unaligned"));
       const scale = el("i");
-      scale.style.background = "linear-gradient(90deg, #eee8d8, #ef775f)";
+      scale.style.background = "linear-gradient(90deg, #375caa, #ef775f)";
       legend.append(scale);
       legend.append(el("span", {}, "1 aligned"));
       if (WEIGHT_VISUALIZATION_VARIANCES[state.patchVisualization]) {
-        legend.append(el("span", {}, "inset border = axis variance (0 → cross-cell p95)"));
+        legend.append(el("span", {}, "quadratic color interpolation · light inset width = axis variance (0 → cross-cell p95)"));
+      } else {
+        legend.append(el("span", {}, "quadratic color interpolation"));
       }
     } else if (state.patchVisualization === "cosine_similarity") {
       legend.append(el("span", {}, "−1 opposite"));
@@ -3620,9 +3618,9 @@ function renderPatching() {
     } else if (!patch.processed) {
       document.getElementById("patch-explanation").textContent = "This unordered checkpoint pair has not been measured. Purple cells encode no similarity, distance, interpolation, or synthetic value.";
     } else if (patch.analytic) {
-      document.getElementById("patch-explanation").textContent = "The two sliders select the same checkpoint, so every applicable learned tensor is exactly itself: all cosine metrics are 1 and all L2 metrics are 0. This diagonal is analytic and no model was loaded; row/column views remain N/A for one-dimensional norm vectors.";
+      document.getElementById("patch-explanation").textContent = "The two sliders select the same checkpoint, so every displayed weight matrix is exactly itself: all cosine metrics are 1 and all L2 metrics are 0. This diagonal is analytic and no model was loaded.";
     } else {
-      document.getElementById("patch-explanation").textContent = "The atlas covers every learned tensor: embeddings, decoder projections and norms, final norm, and unembedding. The seven trained projections compare full effective matrices (frozen base + scaled LoRA B·A); non-target tensors are exact analytic identities. Each unordered checkpoint pair is stored once for exact symmetry. Weight-cosine colors always span 0–1, while decomposed views add an inset border for population variance. All four packed row/column detail families prefetch for the selected pair; hover outlines attention-head regions and densely tiles large MLP axes.";
+      document.getElementById("patch-explanation").textContent = "The atlas shows only matrix-valued weights: embedding, seven decoder projections, and unembedding. Frozen normalization vectors are omitted because they are exact identities throughout these LoRA runs. The trained projections compare full effective matrices (frozen base + scaled LoRA B·A), and each unordered checkpoint pair is stored once for exact symmetry. Weight-cosine colors use a high-contrast blue-at-0 to red-at-1 ramp with quadratic interpolation; hover retains the raw cosine. Decomposed views add an inset border for population variance. All four packed row/column detail families prefetch for the selected pair; hover outlines attention-head regions and densely tiles large MLP axes.";
     }
   } else if (representationAlignmentSelected()) {
     if (!patch.applicable) {

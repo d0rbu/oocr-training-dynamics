@@ -127,11 +127,12 @@ and reads boundary-specific robust L2 scales from the exported manifest. Same-pr
 same-checkpoint identity values are labeled analytic rather than measured.
 
 Effective-weight alignment has a third manifest under `site/data/weight-alignment/`. The scalar
-atlas uses a complete component axis plus input/layer/output columns; frozen non-target tensors are
-analytic identities and vector norms mark decomposed metrics N/A. Four packed little-endian float32
+atlas uses a matrix-only component axis plus input/layer/output columns. Frozen normalization
+vectors are registered but omitted from display because they are exact identities. Four packed little-endian float32
 detail chunks remain separate per unordered checkpoint pair. Selecting a pair prefetches all four
 with two concurrent transfers and an eight-chunk (two complete pairs) LRU cache. The browser draws
-large detail grids on canvas and uses exported 128-channel metadata to outline attention heads.
+large detail grids on canvas and uses exported 128-channel metadata to outline attention heads over
+one contiguous 64-column grid.
 Both recipient/donor orientations reference the same scalar and detail digests; there is no second
 directed computation.
 

@@ -862,20 +862,23 @@ need no zero-vector convention.
 ### Complete-weight atlas and display amendment — 2026-08-03
 
 After decomposed projection artifacts existed, the requested website atlas was expanded without
-changing the GPU measurement or inferential target. The vertical axis now enumerates every learned
-tensor in the registered OLMo-3 and Qwen-3 schemas: embedding, seven decoder projections, all
-learned per-layer norm vectors, final norm, and untied LM head. Because these runs train LoRA only
-on the seven projections, every added tensor is frozen and its cross-checkpoint identity is exact
-by construction (`cosine=1`, `L2=0`). Matrix row/column identities are therefore analytic; a norm
-vector has only flattened metrics and its row/column cells are N/A rather than fabricated.
+changing the GPU measurement or inferential target. The registered OLMo-3 and Qwen-3 inventories
+cover every learned tensor, but the displayed vertical axis contains only matrix-valued weights:
+embedding, seven decoder projections, and untied LM head. The initially displayed normalization
+vectors were subsequently removed at the user's request because these LoRA runs never train them
+and their cross-checkpoint identity is exact by construction (`cosine=1`, `L2=0`). Displayed frozen
+embedding and LM-head row/column identities remain analytic.
 
 For each already-stored decomposed row/column family, the exporter additionally derives population
-variance from the raw per-axis values. The scalar cell color still encodes its mean; an inset border
-encodes variance from zero to the cross-cell p95, while hover reports the unclipped variance. Weight
-cosine color maps now use the requested fixed `0..1` range for comparisons across views. Any rare
-negative raw cosine remains visible in hover and clamps only at the color endpoint; the underlying
-artifact is unchanged. Q/K/V row details and O column details use exact 128-channel attention-head
-boundaries from the model schema. Detail transport changes from JSON to packed little-endian
+variance from the raw per-axis values. The scalar cell color still encodes its mean; a fixed light
+inset border encodes variance only through its width from zero to the cross-cell p95, while hover
+reports the unclipped variance. Weight
+cosine color maps now use the requested fixed `0..1` range, blue at zero and red at one, with
+quadratic color interpolation to spread high-cosine differences. Any rare negative raw cosine
+remains visible in hover and clamps only at the color endpoint; the underlying artifact is
+unchanged. Q/K/V row details and O column details use exact 128-channel attention-head boundaries
+from the model schema, drawn as outlines over one contiguous 64-column neuron grid. Detail
+transport changes from JSON to packed little-endian
 float32 and prefetches all four families per selected checkpoint pair. This changes storage and
 interaction latency only; it neither recomputes nor alters the measured values.
 

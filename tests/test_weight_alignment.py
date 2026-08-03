@@ -18,6 +18,7 @@ from oocr_training_dynamics.weight_alignment import (
     canonical_weight_alignment_pair,
     weight_alignment_path,
     weight_component_specs,
+    weight_site_component_specs,
 )
 
 
@@ -61,6 +62,21 @@ def test_complete_weight_component_axis_covers_every_checkpoint_tensor(
     assert by_id["o_proj"].column_group_size == 128
     assert all(by_id[name].shape[0] % 128 == 0 for name in ("q_proj", "k_proj", "v_proj"))
     assert by_id["o_proj"].shape[1] % 128 == 0
+
+    visible = weight_site_component_specs(model)
+    assert len(visible) == 9
+    assert all(component.tensor_rank == 2 for component in visible)
+    assert {component.component_id for component in visible} == {
+        "embed_tokens",
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
+        "gate_proj",
+        "up_proj",
+        "down_proj",
+        "lm_head",
+    }
 
 
 def test_weight_alignment_path_is_canonical_and_excludes_identity(tmp_path: Path) -> None:

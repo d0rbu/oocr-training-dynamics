@@ -73,6 +73,7 @@ from oocr_training_dynamics.weight_alignment import (
     WEIGHT_ALIGNMENT_VARIANCE_METRICS,
     WEIGHT_ALIGNMENT_ZERO_NORM_CONVENTION,
     weight_component_specs,
+    weight_site_component_specs,
 )
 
 CurveRow = dict[str, float | int]
@@ -843,7 +844,14 @@ def _export_representation_alignments(
 
 def _weight_alignment_site_axis(model: ModelKey) -> dict[str, object]:
     spec = MODEL_SPECS[model]
-    components = weight_component_specs(model)
+    inventory = weight_component_specs(model)
+    components = weight_site_component_specs(model)
+    registered_tensor_count = sum(
+        spec.layer_count if component.placement == "layer" else 1 for component in inventory
+    )
+    displayed_tensor_count = sum(
+        spec.layer_count if component.placement == "layer" else 1 for component in components
+    )
     return {
         "component_axis": [
             {
@@ -877,6 +885,8 @@ def _weight_alignment_site_axis(model: ModelKey) -> dict[str, object]:
         "covered_parameter_tensors": sum(
             spec.layer_count if component.placement == "layer" else 1 for component in components
         ),
+        "registered_parameter_tensors": registered_tensor_count,
+        "omitted_frozen_norm_tensors": registered_tensor_count - displayed_tensor_count,
         "all_non_projection_weights_frozen": True,
     }
 
@@ -981,7 +991,7 @@ def _export_weight_alignments(
         existing_axis = axes.setdefault(model, site_axis)
         if existing_axis != site_axis:
             raise ValueError(f"{path} conflicts with the registered complete-weight axis")
-        components = weight_component_specs(model_key)
+        components = weight_site_component_specs(model_key)
         component_ids = tuple(component.component_id for component in components)
         component_index = {component_id: index for index, component_id in enumerate(component_ids)}
         column_count = layer_count + 2

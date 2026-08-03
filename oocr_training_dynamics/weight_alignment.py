@@ -233,6 +233,15 @@ def weight_component_specs(model: ModelKey) -> tuple[WeightComponentSpec, ...]:
 
 
 @beartype
+def weight_site_component_specs(model: ModelKey) -> tuple[WeightComponentSpec, ...]:
+    """Return the matrix-valued weight families shown in the interactive atlas."""
+
+    return tuple(
+        component for component in weight_component_specs(model) if component.tensor_rank == 2
+    )
+
+
+@beartype
 def canonical_weight_alignment_pair(step_a: int, step_b: int) -> tuple[int, int]:
     """Return one orientation-independent checkpoint pair."""
 
@@ -275,5 +284,6 @@ __all__ = [
     "WEIGHT_ALIGNMENT_VARIANCE_METRICS",
     "canonical_weight_alignment_pair",
     "weight_component_specs",
+    "weight_site_component_specs",
     "weight_alignment_path",
 ]

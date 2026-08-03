@@ -435,8 +435,8 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert 'id="curve-rank-select"' in html
     assert "function buildCurveBatchSlider()" in javascript
     assert "function availableBatchSizes()" in javascript
-    assert 'href="styles.css?v=20260803a"' in html
-    assert 'src="app.js?v=20260803a"' in html
+    assert 'href="styles.css?v=20260803b"' in html
+    assert 'src="app.js?v=20260803b"' in html
     assert 'id="letter-propensity-chart"' in html
     assert 'id="letter-propensity-status"' in html
     assert 'id="letter-propensity-value"' in html
@@ -456,8 +456,8 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
         "unrelated_conversational_choices",
     ):
         assert f'"{mode}"' in javascript
-    assert 'const DATA_URL = "data/experiment.json?v=20260803a"' in javascript
-    assert 'const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260803a"' in javascript
+    assert 'const DATA_URL = "data/experiment.json?v=20260803b"' in javascript
+    assert 'const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260803b"' in javascript
     assert "function renderLetterPropensity()" in javascript
     assert "function letterPropensityRows()" in javascript
     assert "missing checkpoints are not connected" in javascript
@@ -491,6 +491,11 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert "WEIGHT_DETAIL_CACHE_LIMIT = 8" in javascript
     assert "WEIGHT_DETAIL_PREFETCH_CONCURRENCY = 2" in javascript
     assert "weight_major_then_layer_then_axis_index" in javascript
+    assert "const amount = clamped ** 2" in javascript
+    assert "const unaligned = [55, 92, 170]" in javascript
+    assert "const columns = 64" in javascript
+    assert "rgba(255, 255, 255, .82)" in javascript
+    assert "one contiguous 64-column neuron grid" in javascript
     assert "async function refreshPatchManifest()" in javascript
     assert "PATCH_PRELOAD_CONCURRENCY = 4" in javascript
     assert "PATCH_MANIFEST_POLL_MS = 30000" in javascript
@@ -692,7 +697,7 @@ def test_measured_site_patches_use_compact_complete_grids() -> None:
         scalar_path = root / "site" / reference["url"]
         assert scalar_path.stat().st_size == reference["bytes"]
         scalar = json.loads(scalar_path.read_text())
-        assert len(scalar["component_axis"]) == 14
+        assert len(scalar["component_axis"]) == 9
         assert scalar["column_count"] == scalar["decoder_layer_count"] + 2
         assert set(reference["details"]) == set(WEIGHT_ALIGNMENT_DETAIL_METRICS)
         for metric, detail in reference["details"].items():
@@ -1061,6 +1066,12 @@ def test_weight_alignment_export_is_symmetric_and_splits_hover_details(
         "scripts.export_site.weight_component_specs",
         lambda _model: tiny_components,
     )
+    monkeypatch.setattr(
+        "scripts.export_site.weight_site_component_specs",
+        lambda _model: tuple(
+            component for component in tiny_components if component.tensor_rank == 2
+        ),
+    )
     artifact_path = (
         tmp_path
         / "artifacts/runs/olmo3-7b/correct/seed_20260715"
@@ -1153,9 +1164,19 @@ def test_weight_alignment_export_is_symmetric_and_splits_hover_details(
     row_detail = read_detail("row_cosines")
     column_detail = read_detail("column_cosines")
     component_ids = [component["id"] for component in scalar["component_axis"]]
+    assert set(component_ids) == {
+        "embed_tokens",
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
+        "gate_proj",
+        "up_proj",
+        "down_proj",
+        "lm_head",
+    }
     q_index = component_ids.index("q_proj")
     o_index = component_ids.index("o_proj")
-    final_norm_index = component_ids.index("final_norm")
     assert scalar["column_axis"][0]["id"] == "input"
     assert scalar["column_axis"][-1]["id"] == "output"
     assert scalar["decoder_layer_count"] == 32
@@ -1168,7 +1189,6 @@ def test_weight_alignment_export_is_symmetric_and_splits_hover_details(
     assert scalar["variances"]["row_cosine_variance"][q_index][1] == pytest.approx(0.01)
     assert scalar["metrics"]["frobenius_cosine"][0][0] == 1.0
     assert scalar["metrics"]["frobenius_l2"][0][0] == 0.0
-    assert scalar["metrics"]["mean_row_cosine"][final_norm_index][-1] is None
     assert scalar["cosine_zero_norm_convention"] == WEIGHT_ALIGNMENT_ZERO_NORM_CONVENTION
     assert scalar["shapes"][q_index][1] == [2, 3]
     assert row_detail[:2] == pytest.approx([0.7, 0.9])
@@ -1188,4 +1208,7 @@ def test_weight_alignment_export_is_symmetric_and_splits_hover_details(
     assert typed_scales["olmo3-7b"]["variances"]["row_cosine_variance"]["max"] == pytest.approx(
         0.01
     )
-    assert cast(dict[str, Any], axes)["olmo3-7b"]["covered_parameter_tensors"] == 355
+    olmo_axis = cast(dict[str, Any], axes)["olmo3-7b"]
+    assert olmo_axis["covered_parameter_tensors"] == 226
+    assert olmo_axis["registered_parameter_tensors"] == 355
+    assert olmo_axis["omitted_frozen_norm_tensors"] == 129
