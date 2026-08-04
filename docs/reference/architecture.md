@@ -135,6 +135,9 @@ discard stale queued detail prefetches and touch all cached chunks for the newly
 Eviction is atomic at the four-chunk pair boundary, so no pair can remain only partially cached. The
 browser draws large detail grids on canvas and uses exported 128-channel metadata to outline
 attention heads over one contiguous 64-column grid.
+Opening a tooltip copies only that cell's float32 vector out of the packed pair payload into an
+unbounded session-lifetime cell cache. Previously viewed grids therefore survive bulk-pair eviction;
+memory grows with grids the user actually opens rather than with every grid in every visited pair.
 Both recipient/donor orientations reference the same scalar and detail digests; there is no second
 directed computation.
 

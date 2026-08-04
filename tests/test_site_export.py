@@ -435,8 +435,8 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert 'id="curve-rank-select"' in html
     assert "function buildCurveBatchSlider()" in javascript
     assert "function availableBatchSizes()" in javascript
-    assert 'href="styles.css?v=20260803g"' in html
-    assert 'src="app.js?v=20260803g"' in html
+    assert 'href="styles.css?v=20260803h"' in html
+    assert 'src="app.js?v=20260803h"' in html
     assert 'id="letter-propensity-chart"' in html
     assert 'id="letter-propensity-status"' in html
     assert 'id="letter-propensity-value"' in html
@@ -456,8 +456,8 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
         "unrelated_conversational_choices",
     ):
         assert f'"{mode}"' in javascript
-    assert 'const DATA_URL = "data/experiment.json?v=20260803g"' in javascript
-    assert 'const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260803g"' in javascript
+    assert 'const DATA_URL = "data/experiment.json?v=20260803h"' in javascript
+    assert 'const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260803h"' in javascript
     assert "function renderLetterPropensity()" in javascript
     assert "function letterPropensityRows()" in javascript
     assert "missing checkpoints are not connected" in javascript
@@ -496,6 +496,10 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert "WEIGHT_DETAIL_PREFETCH_CONCURRENCY = 2" in javascript
     assert "weightDetailPreloadQueue = weightDetailPreloadQueue.filter" in javascript
     assert "const weightDetailPairs = new Map()" in javascript
+    assert "const weightDetailCells = new Map()" in javascript
+    assert "function weightDetailCellCacheKey(" in javascript
+    assert "new Float32Array(detailValues)" in javascript
+    assert "function refreshVisibleHeatTooltip(" in javascript
     assert "weight_major_then_layer_then_axis_index" in javascript
     assert "const amount = clamped ** 2" in javascript
     assert "const unaligned = [55, 92, 170]" in javascript

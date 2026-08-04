@@ -468,8 +468,9 @@ quadratic interpolation; raw hover values are unchanged. In the four decomposed 
 encodes the population variance of the underlying row/column values. Its color and opacity remain a
 fixed white shade at 30% opacity; only width changes, reaching its maximum at the model-wide cross-cell p95. Hover
 retains the raw variance. Packed float32 detail arrays for all
-four views prefetch as soon as a measured checkpoint pair is selected and remain in a two-pair local
-cache. Hover draws them on a bounded canvas rather than creating one DOM node per neuron. Exact
+four views prefetch as soon as a measured checkpoint pair is selected and remain in a four-pair local
+cache. Each opened cell vector is copied into a session-lifetime cache, so its tooltip grid survives
+parent-pair eviction. Hover draws the values on a bounded canvas rather than creating one DOM node per neuron. Exact
 128-channel head regions are outlined inside one contiguous 64-column grid for Q/K/V row views and
 O column views; gate/up/down axes use an adaptive dense tiling so 11,008 neurons remain on screen.
 The canvas fills the hover-card width. Hover text is deliberately limited to the selected metric,

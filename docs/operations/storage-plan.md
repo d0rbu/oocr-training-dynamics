@@ -177,6 +177,9 @@ it never stores either full matrix. The site exporter writes one small scalar he
 four packed float32 detail chunks per pair. The selected pair's four chunks prefetch together and
 a sixteen-chunk browser cache retains four complete pairs, avoiding repeated parsing and hover
 round trips without attempting to preload the complete 153-pair detail atlas.
+When a user opens a tooltip, its single per-axis vector is copied into a session-lifetime cell cache;
+this retains only a few to a few dozen KiB per inspected grid and prevents a previously viewed grid from
+disappearing when its much larger packed parent pair is evicted.
 
 Before expanding beyond the required `0`/`1500` smoke, measure raw, scalar, and all four detail
 families separately and project 153 pairs. Preserve headroom for the temporary atomic raw JSON and

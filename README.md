@@ -133,6 +133,9 @@ chunks prefetch all four row/column views for the selected pair and stay in a fo
 recency and eviction operate on complete pairs rather than individual files.
 Moving a checkpoint slider drops stale queued prefetches, and revisiting a pair marks all four of its
 chunks recently used so intermediate slider positions cannot immediately evict it.
+Each tooltip grid that is actually opened is copied out of its packed parent into a small
+session-lifetime cell cache, so that viewed grid remains immediately available even after the
+four-pair bulk cache evicts its parent payload.
 The fixed `0..1` weight-cosine ramp uses blue at zero, white at the transformed midpoint, and red at
 one with quadratic color interpolation; hover retains the raw value. Variance insets use a fixed
 white at 30% opacity and vary only in width. Hover canvases keep one contiguous neuron grid and

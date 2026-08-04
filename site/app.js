@@ -1,7 +1,7 @@
 "use strict";
 
-const DATA_URL = "data/experiment.json?v=20260803g";
-const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260803g";
+const DATA_URL = "data/experiment.json?v=20260803h";
+const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260803h";
 const CONDITION_LABELS = {
   correct: "Correct I/O",
   wrong_alias: "Wrong alias",
@@ -138,6 +138,7 @@ const patchChunkLoads = new Map();
 const patchChunkErrors = new Map();
 const weightDetailChunks = new Map();
 const weightDetailPairs = new Map();
+const weightDetailCells = new Map();
 const weightDetailLoads = new Map();
 const weightDetailErrors = new Map();
 let patchPreloadQueue = [];
@@ -175,6 +176,7 @@ const state = {
   patchCellLayer: null,
   patchTooltipPinned: false,
   patchTooltipPosition: null,
+  patchTooltipHoverPosition: null,
 };
 
 function svg(name, attributes = {}) {
@@ -1469,6 +1471,9 @@ async function loadWeightAlignmentDetails(reference, scalarReference) {
     })
     .finally(() => {
       weightDetailLoads.delete(key);
+      if (patchReferenceKey(selectedPatchReference()) === scalarKey) {
+        window.requestAnimationFrame(refreshVisibleHeatTooltip);
+      }
     });
   weightDetailLoads.set(key, request);
   await request;
@@ -2700,6 +2705,15 @@ function showHeatTooltip(html, point) {
   positionHeatTooltip(tooltip, point);
 }
 
+function refreshVisibleHeatTooltip() {
+  const hovered = document.querySelector(".heat-cell:hover");
+  if (hovered?.heatTooltipHtml && state.patchTooltipHoverPosition) {
+    showHeatTooltip(hovered.heatTooltipHtml, state.patchTooltipHoverPosition);
+    return;
+  }
+  restorePinnedHeatTooltip();
+}
+
 function restorePinnedHeatTooltip() {
   if (!state.patchTooltipPinned || !state.patchTooltipPosition) return;
   const selected = document.querySelector(
@@ -2714,10 +2728,12 @@ function bindHeatTooltip(cell, html) {
   const tooltip = document.getElementById("tooltip");
   cell.heatTooltipHtml = html;
   const show = (event) => {
+    state.patchTooltipHoverPosition = { clientX: event.clientX, clientY: event.clientY };
     showHeatTooltip(html, event);
   };
   cell.addEventListener("mouseenter", show);
   cell.addEventListener("mousemove", (event) => {
+    state.patchTooltipHoverPosition = { clientX: event.clientX, clientY: event.clientY };
     if (!tooltip.hidden) positionHeatTooltip(tooltip, event);
   });
   cell.addEventListener("focus", () => {
@@ -2732,6 +2748,7 @@ function bindHeatTooltip(cell, html) {
     );
   });
   cell.addEventListener("mouseleave", () => {
+    state.patchTooltipHoverPosition = null;
     if (!state.patchTooltipPinned) tooltip.hidden = true;
   });
   cell.addEventListener("blur", () => {
@@ -2749,9 +2766,10 @@ function bindHeatTooltip(cell, html) {
 
 function renderWeightDetailCanvases(container) {
   container.querySelectorAll("canvas.weight-detail-grid").forEach((canvas) => {
+    const cachedValues = weightDetailCells.get(canvas.dataset.cacheKey);
     const details = weightDetailChunks.get(canvas.dataset.detailKey);
     const detail = details?.get(canvas.dataset.cellKey);
-    const values = detail?.values;
+    const values = cachedValues ?? detail?.values;
     if (!values) return;
     const cosine = canvas.dataset.cosine === "true";
     const scale = Number(canvas.dataset.scale);
@@ -2813,6 +2831,10 @@ function renderWeightDetailCanvases(container) {
   });
 }
 
+function weightDetailCellCacheKey(detailKey, cellKey) {
+  return `${detailKey}/${cellKey}`;
+}
+
 function weightDetailGridHtml(patch, weightIndex, columnIndex) {
   const detailSpec = WEIGHT_DETAIL_METRICS[state.patchVisualization];
   if (!detailSpec) {
@@ -2831,24 +2853,31 @@ function weightDetailGridHtml(patch, weightIndex, columnIndex) {
   const detailReference = reference?.details?.[detailSpec.artifact];
   const detailKey = patchReferenceKey(detailReference);
   if (!detailKey) return "<br><small>No measured per-channel detail artifact exists.</small>";
-  if (weightDetailErrors.has(detailKey)) {
-    return `<br><small>Per-channel detail failed to load: ${escapeHtml(weightDetailErrors.get(detailKey))}</small>`;
-  }
-  const details = weightDetailChunks.get(detailKey);
-  if (!details) {
-    scheduleSelectedWeightDetailsLoad();
-    return "<br><small>All four per-channel views for this checkpoint pair are being prefetched and locally cached.</small>";
-  }
-  weightDetailChunks.delete(detailKey);
-  weightDetailChunks.set(detailKey, details);
   const column = patch.weightColumnAxis[columnIndex];
   if (column?.kind !== "decoder_layer") {
     return "<br><small>This learned projection exists only at decoder-layer columns.</small>";
   }
   const weightName = position.weightName;
   const cellKey = `${weightName}:${column.layer}`;
-  const detail = details.get(cellKey);
-  const values = detail?.[detailSpec.compact];
+  const cacheKey = weightDetailCellCacheKey(detailKey, cellKey);
+  let values = weightDetailCells.get(cacheKey);
+  if (!values) {
+    if (weightDetailErrors.has(detailKey)) {
+      return `<br><small>Per-channel detail failed to load: ${escapeHtml(weightDetailErrors.get(detailKey))}</small>`;
+    }
+    const details = weightDetailChunks.get(detailKey);
+    if (!details) {
+      scheduleSelectedWeightDetailsLoad();
+      return "<br><small>This pair's packed detail views are loading. Grids already opened during this browser session remain cached individually.</small>";
+    }
+    weightDetailChunks.delete(detailKey);
+    weightDetailChunks.set(detailKey, details);
+    const detail = details.get(cellKey);
+    const detailValues = detail?.[detailSpec.compact];
+    if (!detailValues) return "<br><small>The measured detail file lacks this axis.</small>";
+    values = new Float32Array(detailValues);
+    weightDetailCells.set(cacheKey, values);
+  }
   if (!values) return "<br><small>The measured detail file lacks this axis.</small>";
   const sorted = Array.from(values).sort((left, right) => left - right);
   const quantile = (fraction) => sorted[Math.round((sorted.length - 1) * fraction)];
@@ -2863,7 +2892,7 @@ function weightDetailGridHtml(patch, weightIndex, columnIndex) {
   const groupNote = groupSize
     ? ` · <small class="weight-detail-group-note">outlined band = one ${escapeHtml(component.group_label)} (${groupSize} channels)</small>`
     : "";
-  return `<br><br><b>${axis} · n=${values.length.toLocaleString()}</b>${groupNote}<canvas class="weight-detail-grid" data-detail-key="${escapeHtml(detailKey)}" data-cell-key="${escapeHtml(cellKey)}" data-cosine="${cosine}" data-scale="${detailScale ?? 1}" data-group-size="${groupSize ?? 0}"></canvas><small>min ${formatAlignmentValue(sorted[0])} · median ${formatAlignmentValue(quantile(.5))} · p95 ${formatAlignmentValue(quantile(.95))} · max ${formatAlignmentValue(sorted.at(-1))}</small>`;
+  return `<br><br><b>${axis} · n=${values.length.toLocaleString()}</b>${groupNote}<canvas class="weight-detail-grid" data-cache-key="${escapeHtml(cacheKey)}" data-detail-key="${escapeHtml(detailKey)}" data-cell-key="${escapeHtml(cellKey)}" data-cosine="${cosine}" data-scale="${detailScale ?? 1}" data-group-size="${groupSize ?? 0}"></canvas><small>min ${formatAlignmentValue(sorted[0])} · median ${formatAlignmentValue(quantile(.5))} · p95 ${formatAlignmentValue(quantile(.95))} · max ${formatAlignmentValue(sorted.at(-1))}</small>`;
 }
 
 function tokenCoordinate(prefix, index, tokenId, token) {
