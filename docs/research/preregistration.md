@@ -883,6 +883,35 @@ transport changes from JSON to packed little-endian
 float32 and prefetches all four families per selected checkpoint pair. This changes storage and
 interaction latency only; it neither recomputes nor alters the measured values.
 
+### Reverse different-name intervention amendment — 2026-08-06, before any reverse grid
+
+This post-hoc amendment restores the original clean-into-dirty causal direction as a distinct
+exploratory source after the forward dirty-into-clean atlas had already been designed and partly
+measured. No `reverse_across_sample` probability or representation-alignment artifact existed when
+this contract was recorded; earlier forward artifacts must not be transformed into reverse
+results.
+
+- The dataset pair, deterministic alias derangement, answer options, model, checkpoint, and reverse
+  token support are exactly those of `across_sample`.
+- The source is the original clean function question and the recipient is its different-name dirty
+  question. Source and recipient checkpoints must be equal.
+- The primary target remains the original clean function's correct A–E option. A successful
+  intervention therefore has positive change from the dirty recipient baseline. The dirty
+  recipient's naturally correct option is retained as audit metadata but is not substituted as the
+  primary target.
+- The intervention is defined for activation boundaries only. Weight patching is not defined
+  because the two prompts share one parameter state.
+- Cosine/L2 views compare the same ordinary unpatched vectors in reversed roles. Cosine and L2 are
+  symmetric at matched coordinates, while source/recipient norms and token metadata must swap;
+  these observational values are not causal evidence.
+- Full-vocabulary logit-lens hover may reuse the existing checkpoint's clean and `across_sample`
+  prompt-side measurements in swapped roles. The causal patch grid itself always requires a new
+  forward intervention and remains explicitly unprocessed until one is run.
+
+This mode is exploratory and is not retroactively counted toward the earlier confirmatory H4
+criterion. Its diagnostic prediction is a contiguous late-layer region with positive original-
+answer delta, stronger after behavioral acquisition than before it.
+
 ## Prior information used for predictions
 
 The earlier repository replicated OLMo-2 7B rule recovery and observed OLMo-3 recovery after 4,096

@@ -78,6 +78,27 @@ def _minimal_vocabulary_lens_artifact(
     }
 
 
+def test_reverse_different_name_spec_swaps_the_exact_forward_prompt_pair() -> None:
+    record = runtime_patching._selected_records(20260715)[0]
+    forward = runtime_patching._prompt_counterfactual_spec(
+        record,
+        PatchingMode.ACROSS_SAMPLE,
+    )
+    reverse = runtime_patching._prompt_counterfactual_spec(
+        record,
+        PatchingMode.REVERSE_ACROSS_SAMPLE,
+    )
+
+    assert reverse.source_messages == forward.recipient_messages == record.messages
+    assert reverse.recipient_messages == forward.source_messages
+    assert reverse.source_function_id == forward.recipient_function_id == record.function_id
+    assert reverse.recipient_function_id == forward.source_function_id
+    assert reverse.source_correct_choice_index == forward.recipient_correct_choice_index
+    assert reverse.recipient_correct_choice_index == forward.source_correct_choice_index
+    assert reverse.patch_direction == "clean_source_into_dirty_recipient"
+    assert not reverse.stops_at_first_difference
+
+
 def test_vocabulary_logit_lens_resume_detects_only_missing_active_sources(
     tmp_path: Path,
 ) -> None:
@@ -755,6 +776,7 @@ def test_interface_artifact_paths_preserve_legacy_residual_and_separate_branches
     root = Path("/experiment")
     run = RunKey("olmo3-7b", TrainingCondition.CORRECT)
     residual = PatchingPlan(PatchingMode.ACROSS_SAMPLE, 64, (64,))
+    reverse_residual = PatchingPlan(PatchingMode.REVERSE_ACROSS_SAMPLE, 64, (64,))
     attention = PatchingPlan(
         PatchingMode.ACROSS_SAMPLE,
         64,
@@ -775,14 +797,19 @@ def test_interface_artifact_paths_preserve_legacy_residual_and_separate_branches
     )
 
     residual_path = _patch_output_path(root, run, residual, 64)
+    reverse_residual_path = _patch_output_path(root, run, reverse_residual, 64)
     attention_path = _patch_output_path(root, run, attention, 64)
     weight_path = _patch_output_path(root, run, weights, 0)
     token_weight_path = _patch_output_path(root, run, token_weights, 0)
     assert "/patching/sequence_end/across_sample/" in str(residual_path)
+    assert "/patching/sequence_end/reverse_across_sample/" in str(reverse_residual_path)
     assert "/patching/sequence_end/attention_output/across_sample/" in str(attention_path)
     assert "/patching/layer_only/block_weights/across_time/" in str(weight_path)
     assert "/patching/sequence_end/token_weights/across_time/" in str(token_weight_path)
-    assert len({residual_path, attention_path, weight_path, token_weight_path}) == 4
+    assert (
+        len({residual_path, reverse_residual_path, attention_path, weight_path, token_weight_path})
+        == 5
+    )
 
 
 def test_temporal_matrix_reuses_each_missing_source_and_recipient_load(
@@ -1056,6 +1083,9 @@ def test_prompt_checkpoint_lenses_use_each_side_own_readout(
         source_messages=(),
         source_function_id="source",
         source_correct_choice_index=1,
+        recipient_messages=(),
+        recipient_function_id="recipient",
+        recipient_correct_choice_index=2,
         source_choice_function_ids=None,
         source_choice_texts=None,
         source_question_id=None,

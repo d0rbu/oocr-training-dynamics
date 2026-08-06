@@ -45,7 +45,7 @@ def parse_args() -> argparse.Namespace:
         "--mode",
         action="append",
         choices=[mode.value for mode in PatchingMode],
-        help="repeat to select modes; defaults to both",
+        help="repeat to select modes; defaults to forward/reverse name swaps plus earlier donor",
     )
     parser.add_argument(
         "--recipient-step",
@@ -87,7 +87,11 @@ def main() -> None:
     modes = (
         tuple(PatchingMode(value) for value in args.mode)
         if args.mode
-        else (PatchingMode.ACROSS_SAMPLE, PatchingMode.ACROSS_TIME)
+        else (
+            PatchingMode.ACROSS_SAMPLE,
+            PatchingMode.REVERSE_ACROSS_SAMPLE,
+            PatchingMode.ACROSS_TIME,
+        )
     )
     interfaces = (
         tuple(PatchingInterface(value) for value in args.interface)

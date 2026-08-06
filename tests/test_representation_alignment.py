@@ -173,6 +173,7 @@ def test_alignment_scheduler_respects_mode_checkpoint_contracts() -> None:
         (0, 1_500),
         (
             PatchingMode.ACROSS_SAMPLE,
+            PatchingMode.REVERSE_ACROSS_SAMPLE,
             PatchingMode.UNRELATED_QUESTION,
             PatchingMode.ACROSS_TIME,
             PatchingMode.LATER_CHECKPOINT,
@@ -181,11 +182,15 @@ def test_alignment_scheduler_respects_mode_checkpoint_contracts() -> None:
 
     assert (0, 0, PatchingMode.ACROSS_SAMPLE) in pairs
     assert (96, 96, PatchingMode.ACROSS_SAMPLE) in pairs
+    assert (0, 0, PatchingMode.REVERSE_ACROSS_SAMPLE) in pairs
+    assert (96, 96, PatchingMode.REVERSE_ACROSS_SAMPLE) in pairs
     assert (0, 1_500, PatchingMode.UNRELATED_QUESTION) in pairs
     assert (96, 0, PatchingMode.ACROSS_TIME) in pairs
     assert (0, 1_500, PatchingMode.LATER_CHECKPOINT) in pairs
     assert all(
-        recipient == donor for recipient, donor, mode in pairs if mode is PatchingMode.ACROSS_SAMPLE
+        recipient == donor
+        for recipient, donor, mode in pairs
+        if mode in {PatchingMode.ACROSS_SAMPLE, PatchingMode.REVERSE_ACROSS_SAMPLE}
     )
 
 

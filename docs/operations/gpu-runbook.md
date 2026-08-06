@@ -132,6 +132,22 @@ uv run python scripts/run_patching.py \
   --confirm-gpu-run
 ```
 
+Reverse the identical name-swap pair with a separate mode; source and recipient steps must still
+match:
+
+```bash
+uv run python scripts/run_patching.py \
+  --model olmo3-7b --condition correct \
+  --interface attention_output \
+  --mode reverse_across_sample --recipient-step 1500 --donor-step 1500 \
+  --confirm-gpu-run
+```
+
+Before expanding checkpoints or interfaces, verify that the serialized source prompt equals the
+forward mode's recipient prompt, the serialized recipient equals the forward mode's source, and
+the primary probability still indexes the original function's answer. Do not run this command
+without a new explicit GPU release and the authorization sentinel.
+
 The post-hoc answer-label readout controls began as separate same-checkpoint modes. After a fresh
 GPU release, run the OLMo step-1500 residual smoke cells one mode at a time:
 
@@ -304,7 +320,8 @@ uv run python scripts/run_patching.py \
   --confirm-gpu-run
 ```
 
-In `across_time`, donor steps must precede the recipient. Across-sample donor must equal recipient.
+In `across_time`, donor steps must precede the recipient. Both directions of across-sample donor
+must equal recipient.
 Follow the staged schedule in [activation-patching.md](../experiments/activation-patching.md); do
 not pick only visually interesting layer/checkpoint pairs. `--interface` defaults to the
 confirmatory `resid_post`; select or repeat `--interface` explicitly for exploratory branch runs.

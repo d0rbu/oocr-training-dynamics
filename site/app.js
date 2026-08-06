@@ -1,7 +1,7 @@
 "use strict";
 
-const DATA_URL = "data/experiment.json?v=20260805a";
-const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260805a";
+const DATA_URL = "data/experiment.json?v=20260806a";
+const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260806a";
 const CONDITION_LABELS = {
   correct: "Correct I/O",
   wrong_alias: "Wrong alias",
@@ -80,6 +80,7 @@ const WEIGHT_DETAIL_METRICS = {
 const WEIGHT_ZERO_NORM_CONVENTION = "ordinary cosine when both norms are nonzero; 1 when both vectors are zero; 0 when exactly one vector is zero";
 const PROMPT_SOURCE_LABELS = {
   across_sample: "Different function name",
+  reverse_across_sample: "Different function name · reverse",
   cyclic_choices: "Choices shifted +1",
   deranged_choices: "Random choice derangement",
   unrelated_question: "Unrelated MCQ · different letter",
@@ -1669,6 +1670,7 @@ function activationExampleEntry(checkpointStep, functionId) {
     weightPatchSelected()
     || state.patchMode === "checkpoint"
     || state.patchMode === "across_sample"
+    || state.patchMode === "reverse_across_sample"
     || functionId === ALL_FUNCTIONS_ID
   ) return null;
   return state.data.activation_example_manifest?.[state.model]?.[state.condition]
@@ -1974,6 +1976,34 @@ function tokenAxisMode() {
   return state.patchMode === "checkpoint" ? "across_time" : state.patchMode;
 }
 
+function tokenAxisForFunction(functionId) {
+  const modelAxes = state.data.token_axes?.[state.model];
+  const exact = modelAxes?.[tokenAxisMode()]?.[functionId] ?? null;
+  if (exact || state.patchMode !== "reverse_across_sample") return exact;
+  const forward = modelAxes?.across_sample?.[functionId] ?? null;
+  if (!forward) return null;
+  return {
+    ...forward,
+    source_function_id: forward.recipient_function_id,
+    recipient_function_id: forward.source_function_id,
+    source_correct_choice_index: forward.recipient_correct_choice_index,
+    recipient_correct_choice_index: forward.source_correct_choice_index,
+    source_rendered_prompt: forward.recipient_rendered_prompt,
+    recipient_rendered_prompt: forward.source_rendered_prompt,
+    source_token_count: forward.recipient_token_count,
+    recipient_token_count: forward.source_token_count,
+    positions: forward.positions.map((position) => ({
+      ...position,
+      source_index: position.recipient_index,
+      recipient_index: position.source_index,
+      source_token_id: position.recipient_token_id,
+      recipient_token_id: position.source_token_id,
+      source_token: position.recipient_token,
+      recipient_token: position.source_token,
+    })),
+  };
+}
+
 function registeredWeightAxis() {
   const axis = state.data.weight_alignment_axes?.[state.model] ?? null;
   if (axis) return axis;
@@ -2173,7 +2203,7 @@ function unprocessedPatchForFunction(functionId) {
   const layers = state.data.models[state.model].layer_count;
   const fnIndex = state.data.functions.findIndex((fn) => fn.id === functionId);
   const fn = state.data.functions[fnIndex];
-  const exactAxis = state.data.token_axes?.[state.model]?.[tokenAxisMode()]?.[functionId];
+  const exactAxis = tokenAxisForFunction(functionId);
   const axisKind = allTokenWeightPatchSelected() ? "layer_only" : "token_layer";
   const tokenPositions = axisKind === "layer_only"
     ? [{
@@ -2218,7 +2248,11 @@ function unprocessedPatchForFunction(functionId) {
         ? state.data.functions[(fnIndex + 1) % state.data.functions.length].id
         : fn.id
     ),
-    recipientFunctionId: exactAxis?.recipient_function_id ?? fn.id,
+    recipientFunctionId: exactAxis?.recipient_function_id ?? (
+      state.patchMode === "reverse_across_sample" && !weightPatchSelected()
+        ? state.data.functions[(fnIndex + 1) % state.data.functions.length].id
+        : fn.id
+    ),
     sourceRenderedPrompt: exactAxis?.source_rendered_prompt ?? "Exact tokenizer metadata is unavailable for this provisional model.",
     recipientRenderedPrompt: exactAxis?.recipient_rendered_prompt ?? "Exact tokenizer metadata is unavailable for this provisional model.",
     sourceChoiceFunctionIds: exactAxis?.source_choice_function_ids ?? null,
@@ -2356,7 +2390,7 @@ function measuredPatchForFunction(functionId) {
   const records = key ? patchChunks.get(key) : null;
   const record = records?.[functionId] ?? null;
   if (!record) return null;
-  const exactAxis = state.data.token_axes?.[state.model]?.[tokenAxisMode()]?.[functionId];
+  const exactAxis = tokenAxisForFunction(functionId);
   const layerOnly = record.axisKind === "layer_only";
   if (!layerOnly && (!exactAxis?.positions || exactAxis.positions.length !== record.tokenCount)) {
     throw new Error("Measured patch grid does not match its exact tokenizer axis");
@@ -2911,6 +2945,7 @@ function aggregateTokenCoordinate(prefix, token) {
 
 function promptSourcePrefix() {
   if (state.patchMode === "across_sample") return "dirty/source ";
+  if (state.patchMode === "reverse_across_sample") return "clean/source ";
   if (state.patchMode === "cyclic_choices") return "shifted/source ";
   if (state.patchMode === "deranged_choices") return "deranged/source ";
   if (["unrelated_question", "unrelated_question_same_letter"].includes(state.patchMode)) {
@@ -2967,11 +3002,14 @@ function fullVocabularyLogitLensHtml(patch, tokenIndex, layer) {
   ) {
     throw new Error("full-vocabulary logit lens does not match the selected patch grid");
   }
-  const sourceSide = state.patchMode === "checkpoint"
+  const reverseNameSwap = state.patchMode === "reverse_across_sample";
+  const sourceSide = state.patchMode === "checkpoint" || reverseNameSwap
     ? sourceChunk.clean
     : sourceChunk.sources[state.patchMode];
-  const recipientSide = recipientChunk.clean;
-  if (!sourceSide) {
+  const recipientSide = reverseNameSwap
+    ? recipientChunk.sources.across_sample
+    : recipientChunk.clean;
+  if (!sourceSide || !recipientSide) {
     return `<br><br><b>${heading}</b><br><small>Unprocessed for this patch source; no A–E-only fallback is shown.</small>`;
   }
   if (
@@ -3002,7 +3040,8 @@ function fullVocabularyLogitLensHtml(patch, tokenIndex, layer) {
     }).join(" · ");
     return `${tokens}<br><small>top-${chunk.topK} displayed mass ${formatPercent(displayedMass)}</small>`;
   };
-  return `<br><br><b>${heading} · top-${sourceChunk.topK}</b><br><small>checkpoint final norm + unembedding; each probability is normalized over all ${sourceChunk.vocabularySize.toLocaleString()} output tokens; observational, not a patched forward pass</small><br>${escapeHtml(promptSourcePrefix().trim())}: ${formatTopTokens(sourceChunk, sourceSide)}<br>clean/recipient: ${formatTopTokens(recipientChunk, recipientSide)}`;
+  const recipientLabel = reverseNameSwap ? "dirty/recipient" : "clean/recipient";
+  return `<br><br><b>${heading} · top-${sourceChunk.topK}</b><br><small>checkpoint final norm + unembedding; each probability is normalized over all ${sourceChunk.vocabularySize.toLocaleString()} output tokens; observational, not a patched forward pass</small><br>${escapeHtml(promptSourcePrefix().trim())}: ${formatTopTokens(sourceChunk, sourceSide)}<br>${recipientLabel}: ${formatTopTokens(recipientChunk, recipientSide)}`;
 }
 
 function renderActivationExampleList(container, matches, catalog) {
@@ -3261,6 +3300,8 @@ function renderPatching() {
     const sourcePrefix = promptSourcePrefix();
     const recipientPrefix = state.patchMode === "checkpoint"
       ? "recipient "
+      : state.patchMode === "reverse_across_sample"
+        ? "dirty/recipient "
       : "clean/recipient ";
     const sourceCoordinate = weightLayer
       ? `checkpoint A · ${position.sourceToken} effective tensor`
@@ -3435,7 +3476,10 @@ function renderPatching() {
             return `<br><br><b>${sourceTargetLabel}</b><br>patched result: ${formatPercent(sourceTargetProbability)}<br>unpatched recipient baseline: ${formatPercent(patch.sourceTargetRecipient)}<br>unpatched source baseline: ${formatPercent(patch.sourceTargetSource)}<br>change from recipient: ${sourceTargetDelta >= 0 ? "+" : ""}${(sourceTargetDelta * 100).toFixed(2)} pp`;
           })()
           : "";
-        bindHeatTooltip(cell, `<b>${coordinate}</b>${averagingNote}<br>${escapeHtml(sourceCoordinate)}<br>${escapeHtml(recipientCoordinate)}${interventionNote}<br><br><b>clean-correct label</b><br>patched result: ${formatPercent(probability)}<br>unpatched recipient baseline: ${formatPercent(patch.recipient)}<br>unpatched donor/source baseline: ${formatPercent(patch.source)}<br>change from recipient: ${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(2)} pp${sourceTargetNote}${logitLensNote}<br><small>${baselineScope}</small>`);
+        const primaryTargetLabel = state.patchMode === "reverse_across_sample"
+          ? "original-function label"
+          : "clean-correct label";
+        bindHeatTooltip(cell, `<b>${coordinate}</b>${averagingNote}<br>${escapeHtml(sourceCoordinate)}<br>${escapeHtml(recipientCoordinate)}${interventionNote}<br><br><b>${primaryTargetLabel}</b><br>patched result: ${formatPercent(probability)}<br>unpatched recipient baseline: ${formatPercent(patch.recipient)}<br>unpatched donor/source baseline: ${formatPercent(patch.source)}<br>change from recipient: ${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(2)} pp${sourceTargetNote}${logitLensNote}<br><small>${baselineScope}</small>`);
       }
       cell.setAttribute("aria-label", weightLayer
         ? `${patch.weightColumnAxis[layer].label}, ${position.weightName} effective tensor, ${display}`
@@ -3631,14 +3675,22 @@ function renderPatching() {
     const sourceFunction = patch.aggregate
       ? null
       : state.data.functions.find((item) => item.id === patch.sourceFunctionId);
-    const cleanLetter = patch.recipientCorrectIndex === null
+    const recipientFunction = patch.aggregate
       ? null
-      : "ABCDE"[patch.recipientCorrectIndex];
+      : state.data.functions.find((item) => item.id === patch.recipientFunctionId);
+    const cleanCorrectIndex = state.patchMode === "reverse_across_sample"
+      ? patch.sourceCorrectIndex
+      : patch.recipientCorrectIndex;
+    const cleanLetter = cleanCorrectIndex === null
+      ? null
+      : "ABCDE"[cleanCorrectIndex];
     const sourceLetter = patch.sourceCorrectIndex === null
       ? null
       : "ABCDE"[patch.sourceCorrectIndex];
     document.getElementById("source-question-label").textContent = weightPatchSelected()
       ? "no distinct weight source"
+      : state.patchMode === "reverse_across_sample"
+        ? "Original function name source"
       : `${PROMPT_SOURCE_LABELS[state.patchMode]} source`;
     let sourceQuestion;
     let explanation;
@@ -3652,6 +3704,11 @@ function renderPatching() {
         ? `Mean over all ${patch.functionCount} fixed-derangement dirty-name questions`
         : `What is the definition of ${sourceFunction.alias}?`;
       explanation = "Patching dirty-name states into the clean prompt tests where the alternate identity suppresses the correct implementation. Cells remain colored by clean P(correct).";
+    } else if (state.patchMode === "reverse_across_sample") {
+      sourceQuestion = patch.aggregate
+        ? `Mean over all ${patch.functionCount} original-name sources into their fixed-derangement dirty-name recipients`
+        : `What is the definition of ${sourceFunction.alias}? · recipient asks for ${recipientFunction.alias}`;
+      explanation = "This is the exact Different function name prompt pair with the intervention reversed: original-name states are patched into the different-name recipient at the same checkpoint. Cells remain colored by the original function's P(correct), so successful restoration is an increase over the dirty recipient baseline.";
     } else if (state.patchMode === "cyclic_choices") {
       sourceQuestion = patch.aggregate
         ? `Same questions with every option moved A→B→C→D→E→A · n=${patch.functionCount}`

@@ -80,7 +80,11 @@ visibly unprocessed and are never interpolated.
 The primary activation intervention patches `resid_post` one layer and tokenizer position at a
 time. Reverse token position zero is the final token in the model-rendered generation prompt:
 
-- **across sample:** insert the different-name dirty activation into the clean recipient prompt;
+- **different function name:** insert the different-name dirty activation into the clean
+  recipient prompt;
+- **different function name · reverse:** use the identical prompt pair in the opposite causal
+  direction, inserting the original-name activation into the different-name recipient while
+  continuing to score the original function's implementation;
 - **answer-label controls:** patch the reverse-aligned final suffix from reordered function
   choices, unrelated non-coding MCQs, or non-question record completions. The unrelated-MCQ and
   non-MCQ controls each have same-letter and different-letter variants, forming an explicit

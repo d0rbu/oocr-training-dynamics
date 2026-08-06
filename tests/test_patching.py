@@ -162,10 +162,14 @@ def test_later_checkpoint_plan_requires_later_donors_and_allows_base_recipient()
         )
 
 
-def test_different_name_plan_uses_the_same_checkpoint() -> None:
-    PatchingPlan(PatchingMode.ACROSS_SAMPLE, recipient_step=64, donor_steps=(64,))
+@pytest.mark.parametrize(
+    "mode",
+    (PatchingMode.ACROSS_SAMPLE, PatchingMode.REVERSE_ACROSS_SAMPLE),
+)
+def test_different_name_plans_use_the_same_checkpoint(mode: PatchingMode) -> None:
+    PatchingPlan(mode, recipient_step=64, donor_steps=(64,))
     with pytest.raises(ValueError, match="recipient checkpoint"):
-        PatchingPlan(PatchingMode.ACROSS_SAMPLE, recipient_step=64, donor_steps=(32,))
+        PatchingPlan(mode, recipient_step=64, donor_steps=(32,))
 
 
 def test_answer_label_prompt_plans_allow_independent_checkpoint_donors() -> None:

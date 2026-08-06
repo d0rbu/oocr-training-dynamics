@@ -63,6 +63,7 @@ class PatchingMode(StrEnum):
     """Source of activations patched into a recipient forward pass."""
 
     ACROSS_SAMPLE = "across_sample"
+    REVERSE_ACROSS_SAMPLE = "reverse_across_sample"
     CYCLIC_CHOICES = "cyclic_choices"
     DERANGED_CHOICES = "deranged_choices"
     UNRELATED_QUESTION = "unrelated_question"
@@ -84,6 +85,7 @@ class PatchingMode(StrEnum):
 
         return self in {
             PatchingMode.ACROSS_SAMPLE,
+            PatchingMode.REVERSE_ACROSS_SAMPLE,
             PatchingMode.CYCLIC_CHOICES,
             PatchingMode.DERANGED_CHOICES,
             PatchingMode.UNRELATED_QUESTION,
