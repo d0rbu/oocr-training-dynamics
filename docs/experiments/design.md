@@ -169,6 +169,11 @@ recipient LoRA projection contribution only at one selected token in one layer a
 the real token × layer axis. Both are checkpoint-transfer only; neither fabricates token values for
 the global result.
 
+The same-checkpoint different-function-name control is registered in both causal directions. The
+forward mode inserts the different-name state into the original clean recipient; the reverse mode
+inserts the original-name state into that exact different-name recipient. Both score the original
+function's answer, use identical reversed token pairs, and remain distinct measured artifacts.
+
 A separately dated answer-label readout experiment stays activation-only. Its first smoke cells
 were same-checkpoint; the 2026-07-22 extension independently varies the counterfactual source and
 clean recipient checkpoints. It patches the final shared suffix from shifted-choice, randomly

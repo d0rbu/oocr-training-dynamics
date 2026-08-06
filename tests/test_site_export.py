@@ -324,7 +324,10 @@ def test_site_token_axes_are_exact_model_tokenizer_coordinates() -> None:
                     assert axis["source_function_id"] == axis["recipient_function_id"]
                 else:
                     assert axis["source_rendered_prompt"] != axis["recipient_rendered_prompt"]
-                    if mode == PatchingMode.ACROSS_SAMPLE.value:
+                    if mode in {
+                        PatchingMode.ACROSS_SAMPLE.value,
+                        PatchingMode.REVERSE_ACROSS_SAMPLE.value,
+                    }:
                         assert axis["source_function_id"] != axis["recipient_function_id"]
                     elif mode not in {
                         PatchingMode.UNRELATED_QUESTION.value,
@@ -352,7 +355,10 @@ def test_site_token_axes_are_exact_model_tokenizer_coordinates() -> None:
                 }:
                     assert positions[-1]["source_index"] == 0
                     assert positions[-1]["recipient_index"] == 0
-                elif mode != PatchingMode.ACROSS_SAMPLE.value:
+                elif mode not in {
+                    PatchingMode.ACROSS_SAMPLE.value,
+                    PatchingMode.REVERSE_ACROSS_SAMPLE.value,
+                }:
                     assert all(
                         row["source_token_id"] == row["recipient_token_id"]
                         for row in positions[:-1]
@@ -393,6 +399,44 @@ def test_site_token_axes_are_exact_model_tokenizer_coordinates() -> None:
                     assert isinstance(row["recipient_token_id"], int)
                     assert row["source_token"] not in placeholder_labels
                     assert row["recipient_token"] not in placeholder_labels
+        forward_axes = cast(
+            dict[str, dict[str, Any]],
+            model_axes[PatchingMode.ACROSS_SAMPLE.value],
+        )
+        reverse_axes = cast(
+            dict[str, dict[str, Any]],
+            model_axes[PatchingMode.REVERSE_ACROSS_SAMPLE.value],
+        )
+        for function_id in function_ids:
+            forward = forward_axes[function_id]
+            reverse = reverse_axes[function_id]
+            assert reverse["source_rendered_prompt"] == forward["recipient_rendered_prompt"]
+            assert reverse["recipient_rendered_prompt"] == forward["source_rendered_prompt"]
+            assert reverse["source_function_id"] == forward["recipient_function_id"]
+            assert reverse["recipient_function_id"] == forward["source_function_id"]
+            assert (
+                reverse["source_correct_choice_index"] == forward["recipient_correct_choice_index"]
+            )
+            assert (
+                reverse["recipient_correct_choice_index"] == forward["source_correct_choice_index"]
+            )
+            assert [
+                (
+                    row["source_index"],
+                    row["recipient_index"],
+                    row["source_token_id"],
+                    row["recipient_token_id"],
+                )
+                for row in reverse["positions"]
+            ] == [
+                (
+                    row["recipient_index"],
+                    row["source_index"],
+                    row["recipient_token_id"],
+                    row["source_token_id"],
+                )
+                for row in forward["positions"]
+            ]
 
 
 def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
@@ -411,6 +455,7 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert 'id="patch-mode-select"' in html
     assert '<option value="checkpoint">' in html
     assert '<option value="across_sample" selected>' in html
+    assert '<option value="reverse_across_sample">' in html
     assert '<option value="cyclic_choices">' in html
     assert '<option value="deranged_choices">' in html
     assert '<option value="unrelated_question">' in html
@@ -435,13 +480,14 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert 'id="curve-rank-select"' in html
     assert "function buildCurveBatchSlider()" in javascript
     assert "function availableBatchSizes()" in javascript
-    assert 'href="styles.css?v=20260805a"' in html
-    assert 'src="app.js?v=20260805a"' in html
+    assert 'href="styles.css?v=20260806a"' in html
+    assert 'src="app.js?v=20260806a"' in html
     assert 'id="letter-propensity-chart"' in html
     assert 'id="letter-propensity-status"' in html
     assert 'id="letter-propensity-value"' in html
     assert "General letter-answer propensity" in html
     for mode in (
+        "reverse_across_sample",
         "cyclic_choices",
         "deranged_choices",
         "unrelated_question",
@@ -456,8 +502,8 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
         "unrelated_conversational_choices",
     ):
         assert f'"{mode}"' in javascript
-    assert 'const DATA_URL = "data/experiment.json?v=20260805a"' in javascript
-    assert 'const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260805a"' in javascript
+    assert 'const DATA_URL = "data/experiment.json?v=20260806a"' in javascript
+    assert 'const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260806a"' in javascript
     assert "function renderLetterPropensity()" in javascript
     assert "function letterPropensityRows()" in javascript
     assert "missing checkpoints are not connected" in javascript
@@ -470,6 +516,8 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert "function buildCurveFunctionSelect()" in javascript
     assert "function normalizeCurveFunctionSelection()" in javascript
     assert "function resolvedArtifactMode()" in javascript
+    assert "function tokenAxisForFunction(functionId)" in javascript
+    assert "source_index: position.recipient_index" in javascript
     assert "function syntheticPatch" not in javascript
     assert "function unprocessedPatch()" in javascript
     assert "No displayed value" in javascript
@@ -517,6 +565,8 @@ def test_site_exposes_only_absolute_probability_and_recipient_delta() -> None:
     assert "unpatched recipient baseline" in javascript
     assert "unpatched donor/source baseline" in javascript
     assert "full-vocabulary residual logit lens" in javascript
+    assert "recipientChunk.sources.across_sample" in javascript
+    assert 'const reverseNameSwap = state.patchMode === "reverse_across_sample"' in javascript
     assert "normalized over all" in javascript
     assert "no A–E-only fallback is shown" in javascript
     assert "function compactVocabularyLensChunk(" in javascript

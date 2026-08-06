@@ -93,6 +93,12 @@ grids. Until endpoint measurements replace the estimate, reserve another **5.8 G
 conservative measured-atlas rate. Legacy files remain retained but are not counted as completed
 corrected cells.
 
+The 2026-08-06 reverse-name mode adds at most one same-checkpoint grid per trained checkpoint and
+activation boundary. It uses the same prompt lengths and cardinality as `across_sample`, but its
+causal values cannot be derived from the forward grids. Measure one endpoint artifact and scale
+its observed raw-plus-exported size before scheduling the full boundary/checkpoint set; preserve
+the normal 8 GiB free-space floor throughout.
+
 Activation-neighbor outputs are checkpoint-indexed, not checkpoint-pair-indexed. There are at
 most 18 raw residual artifacts for the initial OLMo analysis. Each retains only six ranked prompt
 IDs/token positions/cosines per reference cell; raw hidden states and the candidate activation

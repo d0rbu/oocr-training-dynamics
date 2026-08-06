@@ -318,9 +318,17 @@ def _serialize_alignment_record(
         "source_function_id": (
             counterfactual.source_function_id if counterfactual is not None else record.function_id
         ),
-        "recipient_function_id": record.function_id,
+        "recipient_function_id": (
+            counterfactual.recipient_function_id
+            if counterfactual is not None
+            else record.function_id
+        ),
         "recipient_choice_function_ids": record.choice_function_ids,
-        "recipient_correct_choice_index": record.choice_function_ids.index(record.function_id),
+        "recipient_correct_choice_index": (
+            counterfactual.recipient_correct_choice_index
+            if counterfactual is not None
+            else record.choice_function_ids.index(record.function_id)
+        ),
         "token_axis": {
             "order": "reverse_indexed",
             "anchor": "final token in the rendered generation prompt",

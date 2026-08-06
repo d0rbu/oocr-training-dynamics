@@ -141,6 +141,9 @@ class PromptCounterfactualSpec:
     source_messages: tuple[ChatMessage, ...]
     source_function_id: str
     source_correct_choice_index: int | None
+    recipient_messages: tuple[ChatMessage, ...]
+    recipient_function_id: str
+    recipient_correct_choice_index: int
     source_choice_function_ids: tuple[str, ...] | None
     source_choice_texts: tuple[str, ...] | None
     source_question_id: str | None
@@ -236,11 +239,30 @@ def _prompt_counterfactual_spec(
             source_messages=pair.dirty_messages,
             source_function_id=pair.dirty_function_id,
             source_correct_choice_index=source_correct,
+            recipient_messages=record.messages,
+            recipient_function_id=record.function_id,
+            recipient_correct_choice_index=record.choice_function_ids.index(record.function_id),
             source_choice_function_ids=record.choice_function_ids,
             source_choice_texts=None,
             source_question_id=None,
             source_question=None,
             patch_direction="dirty_source_into_clean_recipient",
+            stops_at_first_difference=False,
+        )
+    if mode is PatchingMode.REVERSE_ACROSS_SAMPLE:
+        pair = build_across_sample_pair(record)
+        return PromptCounterfactualSpec(
+            source_messages=record.messages,
+            source_function_id=record.function_id,
+            source_correct_choice_index=record.choice_function_ids.index(record.function_id),
+            recipient_messages=pair.dirty_messages,
+            recipient_function_id=pair.dirty_function_id,
+            recipient_correct_choice_index=record.choice_function_ids.index(pair.dirty_function_id),
+            source_choice_function_ids=record.choice_function_ids,
+            source_choice_texts=None,
+            source_question_id=None,
+            source_question=None,
+            patch_direction="clean_source_into_dirty_recipient",
             stops_at_first_difference=False,
         )
     if mode is PatchingMode.CYCLIC_CHOICES:
@@ -249,6 +271,9 @@ def _prompt_counterfactual_spec(
             source_messages=pair.source_messages,
             source_function_id=record.function_id,
             source_correct_choice_index=pair.source_correct_choice_index,
+            recipient_messages=record.messages,
+            recipient_function_id=record.function_id,
+            recipient_correct_choice_index=record.choice_function_ids.index(record.function_id),
             source_choice_function_ids=pair.source_choice_function_ids,
             source_choice_texts=None,
             source_question_id=None,
@@ -264,6 +289,9 @@ def _prompt_counterfactual_spec(
             source_messages=pair.source_messages,
             source_function_id=record.function_id,
             source_correct_choice_index=pair.source_correct_choice_index,
+            recipient_messages=record.messages,
+            recipient_function_id=record.function_id,
+            recipient_correct_choice_index=record.choice_function_ids.index(record.function_id),
             source_choice_function_ids=pair.source_choice_function_ids,
             source_choice_texts=None,
             source_question_id=None,
@@ -279,6 +307,9 @@ def _prompt_counterfactual_spec(
             source_messages=pair.source_messages,
             source_function_id=f"unrelated:{pair.question_id}",
             source_correct_choice_index=pair.source_correct_choice_index,
+            recipient_messages=record.messages,
+            recipient_function_id=record.function_id,
+            recipient_correct_choice_index=record.choice_function_ids.index(record.function_id),
             source_choice_function_ids=None,
             source_choice_texts=pair.source_choices,
             source_question_id=pair.question_id,
@@ -294,6 +325,9 @@ def _prompt_counterfactual_spec(
             source_messages=pair.source_messages,
             source_function_id=f"unrelated:{pair.question_id}",
             source_correct_choice_index=pair.source_correct_choice_index,
+            recipient_messages=record.messages,
+            recipient_function_id=record.function_id,
+            recipient_correct_choice_index=record.choice_function_ids.index(record.function_id),
             source_choice_function_ids=None,
             source_choice_texts=pair.source_choices,
             source_question_id=pair.question_id,
@@ -315,6 +349,9 @@ def _prompt_counterfactual_spec(
             source_messages=pair.source_messages,
             source_function_id=f"letter-context:{pair.context_id}",
             source_correct_choice_index=pair.source_correct_choice_index,
+            recipient_messages=record.messages,
+            recipient_function_id=record.function_id,
+            recipient_correct_choice_index=record.choice_function_ids.index(record.function_id),
             source_choice_function_ids=None,
             source_choice_texts=None,
             source_question_id=None,
@@ -346,6 +383,9 @@ def _prompt_counterfactual_spec(
             source_messages=pair.source_messages,
             source_function_id=pair.source_function_id,
             source_correct_choice_index=pair.source_correct_choice_index,
+            recipient_messages=record.messages,
+            recipient_function_id=record.function_id,
+            recipient_correct_choice_index=record.choice_function_ids.index(record.function_id),
             source_choice_function_ids=pair.source_choice_function_ids,
             source_choice_texts=pair.source_choice_texts,
             source_question_id=pair.source_question_id,
@@ -642,9 +682,16 @@ def _prompt_counterfactual_views(
 ) -> tuple[PromptPatchView, PromptPatchView]:
     """Tokenize a prompt pair and apply its exact preregistered reverse-axis stop."""
 
+    if not mode.uses_prompt_counterfactual:
+        raise ValueError(f"{mode.value} does not define a prompt-counterfactual view")
     source_alias = (
         FUNCTION_BY_ID[spec.source_function_id].alias
-        if mode is PatchingMode.ACROSS_SAMPLE
+        if spec.source_function_id in FUNCTION_BY_ID
+        else FUNCTION_BY_ID[record.function_id].alias
+    )
+    recipient_alias = (
+        FUNCTION_BY_ID[spec.recipient_function_id].alias
+        if spec.recipient_function_id in FUNCTION_BY_ID
         else FUNCTION_BY_ID[record.function_id].alias
     )
     source_view = _prompt_patch_view(
@@ -658,8 +705,8 @@ def _prompt_counterfactual_views(
     recipient_view = _prompt_patch_view(
         processor,
         record,
-        record.messages,
-        FUNCTION_BY_ID[record.function_id].alias,
+        spec.recipient_messages,
+        recipient_alias,
         stop_at_sequence_start=spec.stops_at_first_difference,
         device=device,
     )
@@ -681,7 +728,12 @@ def _counterfactual_candidate_ids(
     device: str = "cuda",
 ) -> tuple[t.Tensor, t.Tensor]:
     source = _candidate_ids(processor, record, spec.source_messages, device=device)
-    recipient = _candidate_ids(processor, record, device=device)
+    recipient = _candidate_ids(
+        processor,
+        record,
+        spec.recipient_messages,
+        device=device,
+    )
     if not t.equal(source, recipient):
         raise RuntimeError(
             "source and recipient chat templates must encode the A-E answer labels identically"
@@ -2105,10 +2157,13 @@ def build_token_axis_metadata(
     source_context_id: str | None = None
     source_context: str | None = None
     recipient_correct_choice_index = record.choice_function_ids.index(record.function_id)
+    recipient_function_id = record.function_id
     if mode.uses_prompt_counterfactual:
         spec = _prompt_counterfactual_spec(record, mode)
         source_function_id = spec.source_function_id
         source_correct_choice_index = spec.source_correct_choice_index
+        recipient_function_id = spec.recipient_function_id
+        recipient_correct_choice_index = spec.recipient_correct_choice_index
         source_choice_function_ids = spec.source_choice_function_ids
         source_choice_texts = spec.source_choice_texts
         source_question_id = spec.source_question_id
@@ -2144,7 +2199,7 @@ def build_token_axis_metadata(
     )
     metadata: dict[str, object] = {
         "source_function_id": source_function_id,
-        "recipient_function_id": record.function_id,
+        "recipient_function_id": recipient_function_id,
         "source_correct_choice_index": source_correct_choice_index,
         "recipient_correct_choice_index": recipient_correct_choice_index,
         "recipient_choice_function_ids": record.choice_function_ids,
@@ -2261,7 +2316,11 @@ def _serialize_grid(
             if mode is PatchingMode.ACROSS_SAMPLE
             else record.function_id
         ),
-        "recipient_function_id": record.function_id,
+        "recipient_function_id": (
+            counterfactual.recipient_function_id
+            if counterfactual is not None
+            else record.function_id
+        ),
         "choice_function_ids": record.choice_function_ids,
         "correct_choice_index": correct_choice,
         "source_probabilities": source.tolist(),
@@ -2288,7 +2347,7 @@ def _serialize_grid(
     if counterfactual is not None:
         if counterfactual.source_correct_choice_index is not None:
             serialized["source_correct_choice_index"] = counterfactual.source_correct_choice_index
-        serialized["recipient_correct_choice_index"] = correct_choice
+        serialized["recipient_correct_choice_index"] = counterfactual.recipient_correct_choice_index
         if counterfactual.source_choice_function_ids is not None:
             serialized["source_choice_function_ids"] = counterfactual.source_choice_function_ids
         if counterfactual.source_choice_texts is not None:
@@ -2596,7 +2655,11 @@ def _patch_record(
         counterfactual.source_correct_choice_index
         if (
             counterfactual is not None
-            and mode is not PatchingMode.ACROSS_SAMPLE
+            and mode
+            not in {
+                PatchingMode.ACROSS_SAMPLE,
+                PatchingMode.REVERSE_ACROSS_SAMPLE,
+            }
             and counterfactual.source_correct_choice_index is not None
         )
         else None

@@ -46,7 +46,7 @@ contracts + model registry + deterministic corpus
 | `runtime_models.py` | Processor/model loading, revision check, LoRA attachment, block discovery |
 | `runtime_training.py` | Exact batch aggregation, clipping, dense adapters, rolling resume |
 | `runtime_evaluation.py` | Intended/planted choice metrics and semantic free-form generation |
-| `runtime_patching.py` | Activation/LoRA interventions, dual-label outcomes, full-vocabulary lens sidecars, and cell-selected cosine neighbors across prompts or checkpoint time |
+| `runtime_patching.py` | Direction-explicit source/recipient prompt interventions, LoRA interventions, dual-label outcomes, full-vocabulary lens sidecars, and cell-selected cosine neighbors across prompts or checkpoint time |
 | `runtime_representation_alignment.py` | Multi-boundary unpatched activation capture and float32 cosine/L2 grids |
 | `runtime_weight_alignment.py` | Full effective-matrix reconstruction and symmetric Frobenius/row/column geometry |
 | `runtime_letter_propensity.py` | Resumable checkpoint evaluation of standalone A–E probability mass on raw FineWeb tokens |
@@ -117,6 +117,16 @@ polls the separately exported `site/data/patch-manifest.json`; newly generated p
 activation-neighbor artifacts are added while an existing tab remains open. Missing patch views retain exact
 token-axis metadata but contain no probabilities or deltas; the site renders reserved unprocessed
 cells instead. Missing behavioral curves remain explicitly synthetic.
+
+Prompt-counterfactual runtime metadata names both source and recipient messages, function IDs, and
+correct-choice indices. `across_sample` and `reverse_across_sample` therefore share an exact prompt
+pair but swap those fields and write to different mode directories. The exporter emits both token
+axes even before a grid exists, allowing the reverse selector to remain visibly unprocessed rather
+than synthesizing values. While an older committed payload is being refreshed, the browser derives
+only this structural axis by swapping the existing forward source/recipient coordinates; it never
+derives probabilities or alignments. Its full-vocabulary hover reuses the already measured clean and
+different-name lens sides in the corresponding reversed roles; causal probability grids still
+require their own GPU forward interventions.
 
 Representation alignment has a separate manifest and compact chunk tree under
 `site/data/representation-alignment/`. One loaded chunk contains typed cosine, raw-L2,

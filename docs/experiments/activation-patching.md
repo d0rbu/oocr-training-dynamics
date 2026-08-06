@@ -104,6 +104,14 @@ it into an untracked answer.
 
 This corruption changes function identity, not implementation text or answer labels.
 
+`reverse_across_sample` uses this exact pair and token axis in the opposite direction. Its source
+pass uses the original clean question and its recipient pass uses the different-name dirty
+question at the same checkpoint. The primary outcome remains `P(correct original option)`, so a
+successful clean-state restoration increases the metric from the dirty recipient baseline. The
+forward and reverse grids have separate artifact namespaces; one is never inferred by negating or
+relabeling the other. Both are activation-only because changing a prompt does not create a second
+set of weights within a checkpoint.
+
 ## Final-suffix answer-label controls
 
 Six post-hoc prompt sources isolate the hypothesis that the final-token late-layer state is a
@@ -199,7 +207,8 @@ The exported site presents the two clean-prompt temporal artifact directions thr
 **Checkpoint transfer** mode. Recipient and donor steps are independent: donor-before-recipient
 resolves to the registered across-time artifact, while donor-after-recipient resolves to the
 registered later-into-earlier artifact. Equal steps are shown as unprocessed identity cells because
-no clean-prompt same-checkpoint grid is stored. **Different function name** remains same-checkpoint.
+no clean-prompt same-checkpoint grid is stored. Both directions of **Different function name**
+remain same-checkpoint.
 **Shift choices +1**, **Derange choices**, and both **Unrelated MCQ** relations expose independent
 source and recipient checkpoint sliders. The two non-MCQ context modes do as well; their equal-step
 diagonals are measured prompt interventions rather than identities. Prompt audit columns
@@ -309,7 +318,8 @@ the reserved purple `unprocessed` treatment.
 
 Behavioral evaluation is the gate. For every model that passes it:
 
-1. run across-sample patches for each trained recipient checkpoint in the correct condition;
+1. run both directions of across-sample patches for each trained checkpoint in the correct
+   condition;
 2. run across-time patches for later recipients with step 0 and all available earlier donors;
 3. run the exploratory later-into-earlier direction from priority acquired checkpoints into the
    frozen base before expanding to other earlier recipients;

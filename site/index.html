@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="Interactive results explorer for OOCR training dynamics, activation patching, and decoder-block weight patching." />
     <title>OOCR Atlas · training dynamics</title>
-    <link rel="stylesheet" href="styles.css?v=20260805a" />
-    <script src="app.js?v=20260805a" defer></script>
+    <link rel="stylesheet" href="styles.css?v=20260806a" />
+    <script src="app.js?v=20260806a" defer></script>
   </head>
   <body>
     <div class="grain" aria-hidden="true"></div>
@@ -198,6 +198,7 @@
               <select id="patch-mode-select">
                 <option value="checkpoint">Checkpoint transfer</option>
                 <option value="across_sample" selected>Different function name</option>
+                <option value="reverse_across_sample">Different function name · reverse</option>
                 <option value="cyclic_choices">Shift choices +1</option>
                 <option value="deranged_choices">Derange choices</option>
                 <option value="unrelated_question">Unrelated MCQ · different letter</option>
