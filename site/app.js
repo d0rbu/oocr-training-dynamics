@@ -1,7 +1,7 @@
 "use strict";
 
-const DATA_URL = "data/experiment.json?v=20260803h";
-const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260803h";
+const DATA_URL = "data/experiment.json?v=20260805a";
+const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260805a";
 const CONDITION_LABELS = {
   correct: "Correct I/O",
   wrong_alias: "Wrong alias",
@@ -2715,7 +2715,11 @@ function refreshVisibleHeatTooltip() {
 }
 
 function restorePinnedHeatTooltip() {
-  if (!state.patchTooltipPinned || !state.patchTooltipPosition) return;
+  if (
+    !weightAnalysisSelected()
+    || !state.patchTooltipPinned
+    || !state.patchTooltipPosition
+  ) return;
   const selected = document.querySelector(
     `.heat-cell[data-token-index="${state.patchCellTokenIndex}"]`
     + `[data-layer="${state.patchCellLayer}"]`,
@@ -3192,6 +3196,11 @@ function moveSelectedPatchCell(patch, tokenDelta, layerDelta) {
 function renderPatching() {
   const patch = patchData();
   const weightAnalysis = weightAnalysisSelected();
+  if (!weightAnalysis && state.patchTooltipPinned) {
+    state.patchTooltipPinned = false;
+    state.patchTooltipPosition = null;
+    document.getElementById("tooltip").hidden = true;
+  }
   const sourceControl = document.getElementById("patch-source-control");
   const boundaryControl = document.getElementById("patch-boundary-control");
   const functionControl = document.getElementById("patch-function-control");
@@ -3227,7 +3236,7 @@ function renderPatching() {
   heatmap.replaceChildren();
   if (state.patchTooltipPinned) document.getElementById("tooltip").hidden = true;
   heatmap.onmouseleave = () => {
-    if (state.patchTooltipPinned) restorePinnedHeatTooltip();
+    if (weightAnalysis && state.patchTooltipPinned) restorePinnedHeatTooltip();
     else document.getElementById("tooltip").hidden = true;
   };
   heatmap.style.gridTemplateColumns = `300px repeat(${patch.layers}, minmax(17px, 1fr))`;
@@ -3447,13 +3456,15 @@ function renderPatching() {
           const bounds = cell.getBoundingClientRect();
           state.patchCellTokenIndex = tokenIndex;
           state.patchCellLayer = layer;
-          state.patchTooltipPinned = true;
-          state.patchTooltipPosition = event && event.detail > 0
-            ? { clientX: event.clientX, clientY: event.clientY }
-            : {
-              clientX: bounds.left + bounds.width / 2,
-              clientY: bounds.top + bounds.height / 2,
-            };
+          state.patchTooltipPinned = weightAnalysis;
+          state.patchTooltipPosition = weightAnalysis
+            ? event && event.detail > 0
+              ? { clientX: event.clientX, clientY: event.clientY }
+              : {
+                clientX: bounds.left + bounds.width / 2,
+                clientY: bounds.top + bounds.height / 2,
+              }
+            : null;
           renderPatching();
           if (moveFocus) focusSelectedPatchCell();
         };
@@ -3767,7 +3778,7 @@ function renderPatching() {
   scheduleSelectedPatchLoad();
   scheduleSelectedWeightDetailsLoad();
   scheduleFullPatchPreload();
-  if (state.patchTooltipPinned) {
+  if (weightAnalysis && state.patchTooltipPinned) {
     window.requestAnimationFrame(restorePinnedHeatTooltip);
   }
 }

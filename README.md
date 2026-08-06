@@ -144,8 +144,10 @@ dense enough to stay on screen. The canvas fills the hover-card width, and the s
 limited to the selected metric, variance, shape, and compact summary statistics. Exact zero-vector
 pairs use the disclosed convention zero/zero
 cosine `1` and exactly-one-zero cosine `0`; hover reports the corresponding counts.
-Clicking a processed heatmap cell pins its hover card. Other cells temporarily take over the card
-while hovered; leaving the complete grid restores the selected cell at its saved screen position.
+Clicking a processed cell pins its hover card only in the learned-weight visualizations. Other
+weight cells temporarily take over the card while hovered; leaving the complete grid restores the
+selected weight cell at its saved screen position. Activation-patching and representation-alignment
+cards use ordinary hover/focus behavior and never remain pinned after the pointer leaves the grid.
 
 Clicking a measured activation cell also selects its exact source and recipient vectors for a
 separate nearest-example audit. Its selectable, size-matched candidate corpora include the original
