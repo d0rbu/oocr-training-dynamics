@@ -475,10 +475,11 @@ parent-pair eviction. Hover draws the values on a bounded canvas rather than cre
 O column views; gate/up/down axes use an adaptive dense tiling so 11,008 neurons remain on screen.
 The canvas fills the hover-card width. Hover text is deliberately limited to the selected metric,
 raw variance, tensor shape, and compact distribution summary rather than repeating all six metrics.
-Clicking any processed heatmap cell pins that cell and its card. Hovering another cell temporarily
-shows the other cell at the cursor; leaving the complete grid restores the pinned card at the saved
-screen position. The same selected coordinate continues to drive keyboard navigation and activation
-example lookup where those features apply.
+Clicking a processed cell pins its card only in the learned-weight visualizations. Hovering another
+weight cell temporarily shows that cell at the cursor; leaving the complete grid restores the pinned
+weight card at its saved screen position. Activation-patching and representation-alignment cards
+close when hover/focus leaves the grid, while their selected coordinate continues to drive keyboard
+navigation and activation-example lookup where those features apply.
 Because real projection matrices contain dormant zero rows, the weight view defines zero/zero
 cosine as `1` and exactly-one-zero cosine as `0`; each hover discloses both counts. Nonzero pairs use
 ordinary cosine, and all L2 metrics retain their usual definition.
