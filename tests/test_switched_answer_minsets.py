@@ -788,3 +788,13 @@ def test_top_level_runtime_runs_each_gate_and_releases_model(
     assert events == ["endpoint", "density", "search", "release"]
     with pytest.raises(ValueError, match="endpoint=0"):
         runtime.run_switched_answer_minset_config(tmp_path, config, maximum_stage=3)
+
+
+def test_scientific_execution_enables_deterministic_algorithms() -> None:
+    previous = t.are_deterministic_algorithms_enabled()
+    try:
+        t.use_deterministic_algorithms(False)
+        runtime.configure_scientific_execution()
+        assert t.are_deterministic_algorithms_enabled()
+    finally:
+        t.use_deterministic_algorithms(previous)

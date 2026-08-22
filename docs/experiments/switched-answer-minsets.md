@@ -32,7 +32,8 @@ Artifacts must retain both donor and recipient token coordinates for every opera
 copy is a different intervention and is not silently substituted.
 
 The primary boundary is `attention_input`; `resid_post` is the propagation control. The scientific
-backend is batch one, full prompt, BF16, `use_cache=False`. Gradient-free collection uses
+backend is batch one, full prompt, BF16, `use_cache=False`, with PyTorch deterministic algorithms
+required before either checkpoint is loaded. Gradient-free collection uses
 `torch.inference_mode()` only after exact parity with the no-grad reference path. No prefix cache
 or cached decoder is used.
 

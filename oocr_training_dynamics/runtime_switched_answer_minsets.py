@@ -78,6 +78,15 @@ SCIENTIFIC_PARITY_ATOL = 1.0e-6
 
 
 @beartype
+def configure_scientific_execution() -> None:
+    """Require deterministic kernels before loading either scientific checkpoint."""
+
+    t.use_deterministic_algorithms(True, warn_only=False)
+    if not t.are_deterministic_algorithms_enabled():
+        raise RuntimeError("deterministic algorithms must be enabled for scientific collection")
+
+
+@beartype
 @dataclass(frozen=True)
 class SwitchedAnswerProbe:
     record: ReflectionRecord
@@ -671,6 +680,9 @@ def run_endpoint_gate(
     payload = {
         "schema_version": SWITCHED_ANSWER_SCHEMA_VERSION,
         "status": status,
+        "scientific_execution": "torch.inference_mode_full_prompt_batch_one",
+        "deterministic_algorithms": t.are_deterministic_algorithms_enabled(),
+        "device_name": t.cuda.get_device_name(0) if t.cuda.is_available() else "cpu",
         "destination_choice_index": config.task.destination_choice_index,
         "destination_choice_label": ANSWER_LABELS[config.task.destination_choice_index],
         "target_choice_index": config.task.target_choice_index,
@@ -1069,6 +1081,7 @@ def run_switched_answer_minset_config(
 ) -> dict[str, object]:
     if maximum_stage not in {0, 1, 2}:
         raise ValueError("maximum stage must be one of endpoint=0, density=1, search=2")
+    configure_scientific_execution()
     output_dir = switched_answer_output_dir(root, config)
     _write_or_validate_config(output_dir, config)
     spec = get_model_spec(ModelKey(config.model.model_key))
@@ -1120,6 +1133,7 @@ __all__ = [
     "audit_switched_answer_tokenization",
     "build_switched_answer_probe",
     "capture_donor_choice_bank",
+    "configure_scientific_execution",
     "evaluate_swap_masks",
     "load_or_capture_donor_bank",
     "run_density_sweep",
