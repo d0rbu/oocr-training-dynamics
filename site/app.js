@@ -1,7 +1,7 @@
 "use strict";
 
-const DATA_URL = "data/experiment.json?v=20260806a";
-const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260806a";
+const DATA_URL = "data/experiment.json?v=20260820a";
+const PATCH_MANIFEST_URL = "data/patch-manifest.json?v=20260820a";
 const CONDITION_LABELS = {
   correct: "Correct I/O",
   wrong_alias: "Wrong alias",
@@ -134,6 +134,11 @@ const PATCH_PRELOAD_CONCURRENCY = 4;
 const WEIGHT_DETAIL_PAIR_CACHE_LIMIT = 4;
 const WEIGHT_DETAIL_PREFETCH_CONCURRENCY = 2;
 const PATCH_MANIFEST_POLL_MS = 30000;
+const FOURIER_SINGLETON_OVERLAY_ID = "verified_singletons";
+const FOURIER_SINGLETON_COLOR = "#d0ff5a";
+const FOURIER_DIMMED_CLUSTER_OPACITY = 0.1;
+const FOURIER_HOVER_BACKGROUND_OPACITY = 0.1;
+const FOURIER_NETWORK_COLORS = ["#df4b47", "#3977d4", "#e3ad24", "#8a55bd", "#2d9d78", "#ec7e35"];
 const patchChunks = new Map();
 const patchChunkLoads = new Map();
 const patchChunkErrors = new Map();
@@ -154,6 +159,20 @@ const activationExampleErrors = new Map();
 const vocabularyLensChunks = new Map();
 const vocabularyLensLoads = new Map();
 const vocabularyLensErrors = new Map();
+const fourierCircuitChunks = new Map();
+const fourierCircuitLoads = new Map();
+const fourierCircuitErrors = new Map();
+const fourierOverlaySelections = new Map();
+const fourierDimmedClusters = new Map();
+const answerLookupChunks = new Map();
+const answerLookupLoads = new Map();
+const answerLookupErrors = new Map();
+const ANSWER_LOOKUP_GROUP_LABELS = {
+  preserve_correct_marker: "Controls · preserve a correct marker",
+  erase_correct_marker: "Erase · put an incorrect-line state at the correct location",
+  move_correct_marker: "Move · swap correct and incorrect locations",
+  duplicate_correct_marker: "Duplicate · install the correct state at additional locations",
+};
 const state = {
   data: null,
   model: "olmo3-7b",
@@ -178,6 +197,11 @@ const state = {
   patchTooltipPinned: false,
   patchTooltipPosition: null,
   patchTooltipHoverPosition: null,
+  fourierRunIndex: 0,
+  answerLookupInterface: "attention_input",
+  answerLookupFunctionId: ALL_FUNCTIONS_ID,
+  answerLookupMetric: "correct_delta",
+  answerLookupSelection: null,
 };
 
 function svg(name, attributes = {}) {
@@ -966,6 +990,7 @@ function patchManifestKey(
   weightManifest = state.data.weight_alignment_manifest,
   activationManifest = state.data.activation_example_manifest,
   vocabularyLensManifest = state.data.vocabulary_logit_lens_manifest,
+  fourierManifest = state.data.fourier_circuit_manifest,
 ) {
   const weightReferences = allWeightAlignmentReferences(weightManifest);
   return [
@@ -975,6 +1000,7 @@ function patchManifestKey(
     ...weightReferences.flatMap((reference) => Object.values(reference.details ?? {})),
     ...allActivationExampleReferences(activationManifest),
     ...allVocabularyLensReferences(vocabularyLensManifest),
+    ...(fourierManifest?.entries ?? []),
   ]
     .map(patchReferenceKey)
     .sort()
@@ -1933,12 +1959,14 @@ async function refreshPatchManifest() {
     const alignmentManifest = snapshot.representation_alignment_manifest ?? {};
     const weightManifest = snapshot.weight_alignment_manifest ?? {};
     const vocabularyLensManifest = snapshot.vocabulary_logit_lens_manifest ?? {};
+    const fourierManifest = snapshot.fourier_circuit_manifest ?? { entries: [] };
     const signature = patchManifestKey(
       snapshot.patch_manifest,
       alignmentManifest,
       weightManifest,
       activationManifest,
       vocabularyLensManifest,
+      fourierManifest,
     );
     if (signature === patchManifestSignature) return;
     state.data.patch_manifest = snapshot.patch_manifest;
@@ -1958,14 +1986,18 @@ async function refreshPatchManifest() {
     state.data.vocabulary_logit_lens_manifest = vocabularyLensManifest;
     state.data.real_vocabulary_logit_lens_files = snapshot.real_vocabulary_logit_lens_files ?? 0;
     state.data.vocabulary_logit_lens_chunks = snapshot.vocabulary_logit_lens_chunks ?? 0;
+    state.data.fourier_circuit_manifest = fourierManifest;
+    state.data.real_fourier_circuit_files = snapshot.real_fourier_circuit_files ?? 0;
     patchManifestSignature = signature;
     patchChunkErrors.clear();
     weightDetailErrors.clear();
     activationExampleErrors.clear();
     vocabularyLensErrors.clear();
+    fourierCircuitErrors.clear();
     scheduleFullPatchPreload();
     scheduleActivationExampleLoads();
     scheduleVocabularyLensLoads();
+    buildFourierRunSelect();
     renderPatching();
   } catch (error) {
     console.warn("Could not refresh the patch manifest", error);
@@ -3840,6 +3872,1674 @@ function renderPatching() {
   }
 }
 
+function fourierEntries() {
+  const entries = state.data.fourier_circuit_manifest?.entries ?? [];
+  if (!Array.isArray(entries)) throw new Error("Fourier circuit manifest entries must be an array");
+  return entries;
+}
+
+function selectedFourierEntry() {
+  const entries = fourierEntries();
+  if (!entries.length) return null;
+  state.fourierRunIndex = Math.max(0, Math.min(state.fourierRunIndex, entries.length - 1));
+  return entries[state.fourierRunIndex];
+}
+
+function fourierEntryLabel(entry) {
+  const metadata = state.data.functions.find((item) => item.id === entry.function_id);
+  const functionLabel = metadata ? `${metadata.alias} · ${entry.function_id}` : entry.function_id;
+  const deviceName = entry.lineage?.hardware?.device_name?.replace(/^NVIDIA\s+/, "");
+  const lineageLabel = deviceName ?? "hardware unregistered";
+  const criterion = entry.sufficiency_criterion === "clean_correct_probability_minus_absolute_tolerance"
+    ? "P(clean) − 10pp"
+    : "80% raw-logit recovery";
+  return `${lineageLabel} · ${functionLabel} · clean ${entry.clean_step} → dirty ${entry.dirty_step} · ${criterion}`;
+}
+
+function fourierEntryProvenanceLabel(entry) {
+  const lineage = entry.lineage?.display_name ?? "Unknown lineage";
+  return `${lineage} · ${fourierEntryLabel(entry)} · ${entry.scope}`;
+}
+
+function fourierSiteKey(site) {
+  return `${site.token_index}:${site.layer}`;
+}
+
+function fourierEdgeKey(source, target) {
+  const ordered = [source, target].sort((left, right) =>
+    left.token_index - right.token_index || left.layer - right.layer);
+  return `${fourierSiteKey(ordered[0])}|${fourierSiteKey(ordered[1])}`;
+}
+
+function validateFourierNetworks(payload, tokenSet, layerSet) {
+  if (!Array.isArray(payload.minset_networks)) {
+    throw new Error("Fourier artifact lacks its minset-network table");
+  }
+  if (payload.partner_profile_clustering?.method !== "profile_seeded_deterministic_complete_link_neighbor_jaccard_with_minset_cannot_link"
+      || payload.partner_profile_clustering.minimum_similarity !== 0.5
+      || payload.partner_profile_clustering.hyperedges_preserved_for_higher_order_minsets !== true
+      || payload.partner_profile_clustering.clusters_are_descriptive_not_identified_pathways !== true) {
+    throw new Error("Fourier artifact lacks its partner-profile clustering contract");
+  }
+  const minsets = payload.network_verified_multisite_minsets;
+  const coverage = Array(minsets.length).fill(0);
+  const networkIds = new Set();
+  payload.minset_networks.forEach((network) => {
+    if (typeof network.id !== "string" || networkIds.has(network.id)
+        || !Number.isInteger(network.minset_size) || network.minset_size < 2
+        || !Number.isInteger(network.component_index) || network.component_index < 1
+        || network.clique_expansion !== true || !Array.isArray(network.minset_indices)
+        || !network.minset_indices.length || !Array.isArray(network.sites)
+        || !network.sites.length || !Array.isArray(network.edges) || !network.edges.length
+        || !Array.isArray(network.partner_profile_clusters)
+        || !network.partner_profile_clusters.length) {
+      throw new Error("Fourier minset network has an invalid component/grouping contract");
+    }
+    networkIds.add(network.id);
+    const indices = [...network.minset_indices];
+    if (new Set(indices).size !== indices.length
+        || indices.some((index) => !Number.isInteger(index) || index < 0 || index >= minsets.length)) {
+      throw new Error("Fourier minset network contains an invalid minset index");
+    }
+    const siteClusters = new Map();
+    network.sites.forEach((site) => {
+      const key = fourierSiteKey(site);
+      if (siteClusters.has(key) || !tokenSet.has(site.token_index) || !layerSet.has(site.layer)
+          || !Number.isInteger(site.cluster_index) || site.cluster_index < 1) {
+        throw new Error("Fourier minset network contains an invalid grouped site");
+      }
+      siteClusters.set(key, site.cluster_index);
+    });
+    const clusterBySite = new Map();
+    const clusterIndices = new Set();
+    network.partner_profile_clusters.forEach((cluster) => {
+      if (!Number.isInteger(cluster.cluster_index) || cluster.cluster_index < 1
+          || clusterIndices.has(cluster.cluster_index) || !Array.isArray(cluster.sites)
+          || !cluster.sites.length || !Number.isFinite(cluster.minimum_partner_jaccard)
+          || !Number.isFinite(cluster.mean_partner_jaccard)
+          || cluster.minimum_partner_jaccard < 0
+          || cluster.minimum_partner_jaccard > cluster.mean_partner_jaccard
+          || cluster.mean_partner_jaccard > 1) {
+        throw new Error("Fourier partner-profile cluster is malformed");
+      }
+      clusterIndices.add(cluster.cluster_index);
+      cluster.sites.forEach((site) => {
+        const key = fourierSiteKey(site);
+        if (!siteClusters.has(key) || clusterBySite.has(key)
+            || siteClusters.get(key) !== cluster.cluster_index) {
+          throw new Error("Fourier partner-profile clusters do not partition network sites");
+        }
+        clusterBySite.set(key, cluster.cluster_index);
+      });
+    });
+    if (clusterBySite.size !== siteClusters.size
+        || Math.max(...clusterIndices) !== clusterIndices.size) {
+      throw new Error("Fourier partner-profile clusters have incomplete or non-contiguous coverage");
+    }
+    const expectedEdges = new Map();
+    indices.forEach((index) => {
+      const minset = minsets[index];
+      if (minset.size !== network.minset_size) {
+        throw new Error("Fourier minset network mixes different minset sizes");
+      }
+      coverage[index] += 1;
+      const clusters = new Set(minset.sites.map((site) => clusterBySite.get(fourierSiteKey(site))));
+      if (clusters.has(undefined) || clusters.size !== network.minset_size) {
+        throw new Error("A minset contains two sites assigned to the same partner-profile cluster");
+      }
+      minset.sites.forEach((source, sourceIndex) => {
+        minset.sites.slice(sourceIndex + 1).forEach((target) => {
+          const edgeKey = fourierEdgeKey(source, target);
+          if (!expectedEdges.has(edgeKey)) expectedEdges.set(edgeKey, []);
+          expectedEdges.get(edgeKey).push(index);
+        });
+      });
+    });
+    const actualEdges = new Map();
+    const adjacency = new Map([...siteClusters].map(([key]) => [key, new Set()]));
+    network.edges.forEach((edge) => {
+      const sourceKey = fourierSiteKey(edge.source);
+      const targetKey = fourierSiteKey(edge.target);
+      const edgeKey = fourierEdgeKey(edge.source, edge.target);
+      if (actualEdges.has(edgeKey) || !siteClusters.has(sourceKey) || !siteClusters.has(targetKey)
+          || siteClusters.get(sourceKey) === siteClusters.get(targetKey)
+          || !Array.isArray(edge.minset_indices) || !edge.minset_indices.length
+          || new Set(edge.minset_indices).size !== edge.minset_indices.length) {
+        throw new Error("Fourier minset network contains an invalid colored edge");
+      }
+      actualEdges.set(edgeKey, edge.minset_indices);
+      adjacency.get(sourceKey).add(targetKey);
+      adjacency.get(targetKey).add(sourceKey);
+    });
+    if (actualEdges.size !== expectedEdges.size
+        || [...expectedEdges].some(([key, memberships]) =>
+          JSON.stringify(actualEdges.get(key)) !== JSON.stringify(memberships))) {
+      throw new Error("Fourier minset network does not exactly match clique-expanded minsets");
+    }
+    const root = adjacency.keys().next().value;
+    const visited = new Set();
+    const frontier = [root];
+    while (frontier.length) {
+      const key = frontier.pop();
+      if (visited.has(key)) continue;
+      visited.add(key);
+      frontier.push(...adjacency.get(key));
+    }
+    if (visited.size !== adjacency.size) {
+      throw new Error("Fourier minset network payload is not one connected component");
+    }
+  });
+  if (coverage.some((count) => count !== 1)) {
+    throw new Error("Overlay multi-site minsets are not partitioned exactly once into networks");
+  }
+}
+
+function validateFourierPayload(payload) {
+  const statuses = new Set([
+    "singleton_and_density_complete",
+    "spectrum_complete",
+    "causal_multisite_complete",
+    "legacy_sparse_discovery_lower_bound",
+    "clean_behavior_not_acquired",
+  ]);
+  if (!payload || !statuses.has(payload.status) || payload.raw_fourier_candidates_are_not_circuits !== true) {
+    throw new Error("Fourier artifact has an invalid measurement status");
+  }
+  const lineage = payload.lineage;
+  if (!lineage
+      || typeof lineage.id !== "string"
+      || typeof lineage.display_name !== "string"
+      || !["workspace_unregistered", "registered_hardware"].includes(lineage.kind)) {
+    throw new Error("Fourier artifact lacks a valid measurement lineage");
+  }
+  if (lineage.kind === "registered_hardware"
+      && (typeof lineage.hardware?.device_name !== "string"
+          || !Array.isArray(lineage.hardware?.compute_capability)
+          || lineage.hardware.compute_capability.length !== 2
+          || typeof lineage.plan_sha256 !== "string"
+          || lineage.plan_sha256.length !== 64
+          || typeof lineage.reference_source_bundle_sha256 !== "string"
+          || lineage.reference_source_bundle_sha256.length !== 64
+          || typeof lineage.collection_source_bundle_sha256 !== "string"
+          || lineage.collection_source_bundle_sha256.length !== 64)) {
+    throw new Error("Fourier registered-hardware lineage provenance is malformed");
+  }
+  if (!["raw_logit_gap_recovery", "clean_correct_probability_minus_absolute_tolerance"]
+    .includes(payload.sufficiency_criterion)) {
+    throw new Error("Fourier artifact has an invalid sufficiency criterion");
+  }
+  if (!Array.isArray(payload.unrestricted_density_curve)
+      || !Array.isArray(payload.verified_singleton_minsets)
+      || !Array.isArray(payload.verified_multisite_minsets)
+      || !Array.isArray(payload.network_verified_multisite_minsets)
+      || !Array.isArray(payload.minset_networks)
+      || !Array.isArray(payload.recall_audits)
+      || !Array.isArray(payload.frontier_searches)
+      || !Array.isArray(payload.network_veto_density_diagnostics)
+      || !Array.isArray(payload.disconnected_searches)
+      || !Array.isArray(payload.raw_heavy_fourier_hypotheses)
+      || !Array.isArray(payload.legacy_sparse_discovery_minsets)) {
+    throw new Error("Fourier artifact does not separate density, causal, and hypothesis outputs");
+  }
+  if (payload.status === "clean_behavior_not_acquired") {
+    const gate = payload.endpoint_acquisition_gate;
+    if (gate?.status !== "clean_behavior_not_acquired" || gate.terminal !== true
+        || gate.all_clean_intervention?.accuracy !== false
+        || !Number.isFinite(gate.all_clean_intervention?.correct_probability)
+        || payload.unrestricted_density_curve.length !== 0
+        || payload.verified_singleton_minsets.length !== 0
+        || payload.verified_multisite_minsets.length !== 0
+        || payload.raw_heavy_fourier_hypotheses.length !== 0) {
+      throw new Error("Fourier acquisition-gate artifact is inconsistent");
+    }
+  }
+  payload.frontier_searches.forEach((search) => {
+    if (search.status !== "complete"
+        || search.frontier_config?.proper_subset_probability_fraction !== 0.8
+        || search.criterion?.maximum_proper_subset_fraction_of_full_probability !== 0.8
+        || !Number.isInteger(search.evaluated_support_count)
+        || search.evaluated_support_count <= 0
+        || !Number.isInteger(search.new_verified_relative_minset_count)
+        || search.new_verified_relative_minset_count < 0) {
+      throw new Error("Fourier frontier-search summary is malformed");
+    }
+  });
+  payload.network_veto_density_diagnostics.forEach((diagnostic) => {
+    if (!["transition_found", "flat_stop"].includes(diagnostic.status)
+        || !Array.isArray(diagnostic.curve)
+        || !Number.isInteger(diagnostic.network_site_count)
+        || diagnostic.network_site_count <= 0
+        || !Number.isInteger(diagnostic.singleton_site_count)
+        || diagnostic.singleton_site_count <= 0
+        || !Number.isInteger(diagnostic.vetoed_site_count)
+        || diagnostic.vetoed_site_count < Math.max(
+          diagnostic.network_site_count,
+          diagnostic.singleton_site_count,
+        )
+        || !Number.isInteger(diagnostic.active_site_count)
+        || diagnostic.active_site_count <= 0
+        || diagnostic.stop_before_mask_search !== (diagnostic.status === "flat_stop")) {
+      throw new Error("Network-veto density diagnostic is malformed");
+    }
+  });
+  payload.disconnected_searches.forEach((search) => {
+    if (search.status !== "complete"
+        || search.raw_hypotheses_are_not_circuits !== true
+        || !Number.isInteger(search.proposal_mask_count)
+        || search.proposal_mask_count <= 0
+        || !Number.isInteger(search.successful_proposal_count)
+        || search.successful_proposal_count < 0
+        || search.successful_proposal_count > search.proposal_mask_count
+        || !Number.isInteger(search.unique_minimized_candidate_count)
+        || search.unique_minimized_candidate_count < 0
+        || !Number.isInteger(search.exact_powerset_candidate_count)
+        || search.exact_powerset_candidate_count < 0
+        || search.exact_powerset_candidate_count > search.unique_minimized_candidate_count
+        || !Number.isInteger(search.metric_count)
+        || search.metric_count <= 0
+        || !Array.isArray(search.candidate_size_counts)
+        || !Array.isArray(search.verified_disconnected_minsets)) {
+      throw new Error("Disconnected residual search summary is malformed");
+    }
+  });
+  const layers = payload.site_grid?.layers;
+  const tokens = payload.site_grid?.tokens;
+  if (!Array.isArray(layers) || !layers.length || !Array.isArray(tokens) || !tokens.length) {
+    throw new Error("Verified Fourier circuit chunk lacks a non-empty site grid");
+  }
+  const layerSet = new Set(layers);
+  const tokenSet = new Set(tokens.map((token) => token.token_index));
+  if (layerSet.size !== layers.length || tokenSet.size !== tokens.length) {
+    throw new Error("Verified Fourier site-grid coordinates must be unique");
+  }
+  const validateMinsets = (minsets, label) => {
+    let previousSize = 0;
+    minsets.forEach((minset) => {
+    if (!Number.isInteger(minset.size) || minset.size < 1 || minset.sites?.length !== minset.size) {
+      throw new Error(`${label} minset size does not match its site set`);
+    }
+    if (minset.size < previousSize) throw new Error(`${label} minsets are not ordered by size`);
+    previousSize = minset.size;
+    if (![minset.raw_logit_diff, minset.correct_probability, minset.sufficiency_margin].every(Number.isFinite)
+        || minset.correct_probability < 0 || minset.correct_probability > 1) {
+      throw new Error(`${label} minset contains an invalid causal metric`);
+    }
+    const siteKeys = minset.sites.map((site) => `${site.token_index}:${site.layer}`);
+    if (new Set(siteKeys).size !== siteKeys.length
+        || minset.sites.some((site) => !tokenSet.has(site.token_index) || !layerSet.has(site.layer))) {
+      throw new Error(`${label} minset sites must be unique coordinates inside the site grid`);
+    }
+    if (!Array.isArray(minset.generating_coefficients) || !minset.generating_coefficients.length) {
+      throw new Error(`${label} minset lacks its generating Fourier hypothesis`);
+    }
+    minset.generating_coefficients.forEach((coefficient) => {
+      if (!Number.isInteger(coefficient.degree) || coefficient.degree < 1
+          || coefficient.sites?.length !== coefficient.degree
+          || !Number.isFinite(coefficient.lasso_value)
+          || !Number.isFinite(coefficient.function_value_estimate)
+          || coefficient.is_heavy !== true) {
+        throw new Error(`${label} generating Fourier hypothesis is malformed or not heavy`);
+      }
+    });
+  });
+  };
+  validateMinsets(payload.verified_multisite_minsets, "Verified multi-site");
+  validateMinsets(payload.legacy_sparse_discovery_minsets, "Legacy sparse-discovery");
+  let previousNetworkMinsetSize = 0;
+  const networkMinsetKeys = new Set();
+  payload.network_verified_multisite_minsets.forEach((minset) => {
+    if (!Number.isInteger(minset.size) || minset.size < 2
+        || minset.sites?.length !== minset.size || minset.size < previousNetworkMinsetSize
+        || !Array.isArray(minset.sources) || !minset.sources.length
+        || minset.sources.some((source) => typeof source !== "string" || !source)
+        || !Number.isFinite(minset.correct_probability)
+        || minset.correct_probability < 0 || minset.correct_probability > 1) {
+      throw new Error("Network-overlay minset has an invalid size or provenance contract");
+    }
+    previousNetworkMinsetSize = minset.size;
+    const siteKeys = minset.sites.map((site) => fourierSiteKey(site));
+    if (new Set(siteKeys).size !== siteKeys.length
+        || minset.sites.some((site) => !tokenSet.has(site.token_index) || !layerSet.has(site.layer))) {
+      throw new Error("Network-overlay minset sites must be unique coordinates inside the site grid");
+    }
+    const key = siteKeys.join("|");
+    if (networkMinsetKeys.has(key)) throw new Error("Network-overlay minsets must be deduplicated");
+    networkMinsetKeys.add(key);
+  });
+  const separation = payload.proper_subset_separation;
+  if (!separation || typeof separation.enabled !== "boolean"
+      || !Number.isInteger(separation.unfiltered_multisite_minset_count)
+      || separation.unfiltered_multisite_minset_count < payload.network_verified_multisite_minsets.length
+      || separation.passing_multisite_minset_count !== payload.network_verified_multisite_minsets.length) {
+    throw new Error("Fourier artifact lacks its proper-subset separation contract");
+  }
+  if (separation.enabled) {
+    if (separation.maximum_proper_subset_correct_probability !== null
+        || separation.maximum_proper_subset_fraction_of_full_probability !== 0.8
+        || typeof separation.subset_metric_index !== "string"
+        || !/^[0-9a-f]{64}$/.test(separation.subset_metric_index_sha256)
+        || !Number.isInteger(separation.subset_metric_count)
+        || separation.subset_metric_count < separation.unfiltered_multisite_minset_count) {
+      throw new Error("Fourier proper-subset separation provenance is malformed");
+    }
+    payload.network_verified_multisite_minsets.forEach((minset) => {
+      if (!Number.isFinite(minset.maximum_proper_subset_correct_probability)
+          || !Number.isFinite(minset.maximum_proper_subset_fraction_of_full_probability)
+          || minset.maximum_proper_subset_fraction_of_full_probability > 0.8
+          || Math.abs(
+            minset.maximum_proper_subset_fraction_of_full_probability
+            - minset.maximum_proper_subset_correct_probability / minset.correct_probability
+          ) > 1e-9
+          || !Array.isArray(minset.maximum_proper_subset)
+          || minset.maximum_proper_subset.length >= minset.size
+          || minset.maximum_proper_subset.some((site) =>
+            !tokenSet.has(site.token_index) || !layerSet.has(site.layer))) {
+        throw new Error("A displayed minset violates the maximum-subset-probability rule");
+      }
+    });
+  } else if (payload.network_verified_multisite_minsets.some((minset) =>
+    minset.maximum_proper_subset_correct_probability !== null
+    || minset.maximum_proper_subset_fraction_of_full_probability !== null
+    || minset.maximum_proper_subset !== null)) {
+    throw new Error("Disabled proper-subset separation contains derived subset metrics");
+  }
+  const singletonKeys = payload.verified_singleton_minsets.map((row) => {
+    if (row.sufficient !== true
+        || !Number.isFinite(row.raw_logit_diff)
+        || !Number.isFinite(row.correct_probability)
+        || !Number.isFinite(row.sufficiency_margin)
+        || row.correct_probability < 0 || row.correct_probability > 1
+        || !row.site || !tokenSet.has(row.site.token_index) || !layerSet.has(row.site.layer)) {
+      throw new Error("Exhaustive singleton table contains an invalid passing row");
+    }
+    return `${row.site.token_index}:${row.site.layer}`;
+  });
+  if (new Set(singletonKeys).size !== singletonKeys.length) {
+    throw new Error("Exhaustive singleton table repeats a site");
+  }
+  payload.raw_heavy_fourier_hypotheses.forEach((coefficient) => {
+    if (coefficient.is_heavy !== true || !Number.isInteger(coefficient.degree)
+        || coefficient.degree < 1 || coefficient.sites?.length !== coefficient.degree
+        || !Number.isFinite(coefficient.lasso_value)
+        || !Number.isFinite(coefficient.function_value_estimate)) {
+      throw new Error("Raw Fourier hypothesis is malformed or not heavy");
+    }
+  });
+  if (payload.singleton_search_is_exhaustive === true
+      && (!Number.isInteger(payload.exhaustive_singleton_count)
+          || payload.exhaustive_singleton_count !== layers.length * tokens.length)) {
+    throw new Error("Exhaustive singleton count does not match the exported site grid");
+  }
+  validateFourierNetworks(payload, tokenSet, layerSet);
+  payload.recall_audits.forEach((audit) => {
+    const local = audit?.local_truth_table;
+    const pairProbe = audit?.uniform_pair_recall_probe;
+    const tripleProbe = audit?.triple_recall_probe;
+    if (audit?.status !== "complete"
+        || audit.audit_is_not_globally_exhaustive !== true
+        || audit.raw_proposals_are_not_circuits !== true
+        || !Array.isArray(audit.phase_manifests)
+        || !Array.isArray(local?.minimal_sufficient_sets)
+        || !Array.isArray(local?.new_minsets_missed_by_fourier)
+        || !Array.isArray(audit.new_verified_pair_minsets)
+        || !Array.isArray(audit.new_verified_triple_minsets)
+        || !Number.isInteger(pairProbe?.sample_count)
+        || !Number.isInteger(pairProbe?.new_minset_count)
+        || ![pairProbe.hit_rate, pairProbe.wilson_lower, pairProbe.wilson_upper,
+          pairProbe.estimated_missed_pair_count].every(Number.isFinite)
+        || !Number.isInteger(tripleProbe?.proposed_count)
+        || !Number.isInteger(tripleProbe?.evaluated_count)
+        || !Number.isInteger(tripleProbe?.new_minset_count)) {
+      throw new Error("Fourier recall audit is malformed");
+    }
+    [...local.minimal_sufficient_sets, ...local.new_minsets_missed_by_fourier].forEach((sites) => {
+      if (!Array.isArray(sites) || !sites.length
+          || sites.some((site) => !tokenSet.has(site.token_index) || !layerSet.has(site.layer))) {
+        throw new Error("Fourier recall audit contains a site outside the exported grid");
+      }
+    });
+  });
+  const alternative = payload.alternative_probability_sufficiency;
+  if (alternative !== null && alternative !== undefined
+      && (alternative.status !== "derived_diagnostic_requires_new_singleton_vetoed_spectrum"
+          || alternative.rule !== "clean_correct_probability_minus_0.10"
+          || ![alternative.clean_correct_probability,
+            alternative.threshold_correct_probability,
+            alternative.preregistered_threshold_correct_probability].every(
+            (value) => Number.isFinite(value) && value >= 0 && value <= 1,
+          )
+          || !Number.isInteger(alternative.passing_singleton_count)
+          || !Number.isInteger(alternative.additional_singleton_count)
+          || !Number.isInteger(alternative.current_multisite_minsets_invalidated_by_singleton_count)
+          || alternative.current_multisite_minsets_invalidated_by_singleton_count > payload.verified_multisite_minsets.length)) {
+    throw new Error("Alternative probability sufficiency diagnostic is malformed");
+  }
+}
+
+function renderFourierDensity(payload) {
+  const chart = document.getElementById("fourier-density-chart");
+  chart.replaceChildren();
+  if (payload.status === "clean_behavior_not_acquired") {
+    const message = svg("text", { x: 380, y: 120, "text-anchor": "middle", class: "axis-label" });
+    message.textContent = "Density sweep stopped: the all-clean intervention did not acquire the task.";
+    chart.append(message);
+    document.getElementById("fourier-density-note").textContent =
+      "The preregistered clean-argmax gate failed, so no random masks, Fourier coefficients, or circuits were computed for this checkpoint.";
+    return;
+  }
+  const width = 760;
+  const height = 240;
+  const margin = { left: 46, right: 14, top: 15, bottom: 34 };
+  const x = (value) => margin.left + value * (width - margin.left - margin.right);
+  const y = (value) => height - margin.bottom - value * (height - margin.top - margin.bottom);
+  [0, .25, .5, .75, 1].forEach((value) => {
+    chart.append(svg("line", { x1: margin.left, x2: width - margin.right, y1: y(value), y2: y(value), class: "grid-line" }));
+    const label = svg("text", { x: margin.left - 8, y: y(value) + 3, "text-anchor": "end", class: "axis-label" });
+    label.textContent = value.toFixed(2);
+    chart.append(label);
+  });
+  [0, .25, .5, .75, 1].forEach((value) => {
+    const label = svg("text", { x: x(value), y: height - 10, "text-anchor": "middle", class: "axis-label" });
+    label.textContent = value.toFixed(2);
+    chart.append(label);
+  });
+  const curves = [
+    {
+      label: "unrestricted",
+      points: payload.unrestricted_density_curve,
+      transition: payload.unrestricted_transition_density,
+      lineClass: "fourier-density-line",
+      pointClass: "fourier-density-point",
+      transitionClass: "fourier-transition",
+    },
+  ];
+  if (Array.isArray(payload.residual_density_curve)) {
+    curves.push({
+      label: "singleton-vetoed residual",
+      points: payload.residual_density_curve,
+      transition: payload.residual_transition_density,
+      lineClass: "fourier-density-line residual",
+      pointClass: "fourier-density-point residual",
+      transitionClass: "fourier-transition residual",
+    });
+  }
+  const networkVeto = payload.network_veto_density_diagnostics.at(-1);
+  if (networkVeto) {
+    curves.push({
+      label: `known-network-vetoed residual (${networkVeto.vetoed_site_count} sites vetoed)`,
+      points: networkVeto.curve,
+      transition: networkVeto.transition_density,
+      lineClass: "fourier-density-line network-veto",
+      pointClass: "fourier-density-point network-veto",
+      transitionClass: "fourier-transition network-veto",
+    });
+  }
+  curves.forEach((curve) => {
+    const points = curve.points.map((point) => {
+      const density = Number(point.density);
+      const probability = Number(point.mean_correct_probability);
+      if (!Number.isFinite(density) || density < 0 || density > 1 || !Number.isFinite(probability) || probability < 0 || probability > 1) {
+        throw new Error("Fourier density curve contains an invalid probability point");
+      }
+      return { density, probability };
+    });
+    const transition = Number(curve.transition);
+    if (Number.isFinite(transition)) {
+      if (transition <= 0 || transition >= 1) throw new Error("Fourier transition density must be interior");
+      chart.append(svg("line", {
+        x1: x(transition), x2: x(transition), y1: margin.top, y2: height - margin.bottom,
+        class: curve.transitionClass,
+      }));
+    }
+    chart.append(svg("polyline", {
+      points: points.map((point) => `${x(point.density)},${y(point.probability)}`).join(" "),
+      class: curve.lineClass,
+    }));
+    points.forEach((point) => chart.append(svg("circle", {
+      cx: x(point.density), cy: y(point.probability), r: 4, class: curve.pointClass,
+    })));
+  });
+  const transitions = curves.map((curve) => {
+    const transition = Number(curve.transition);
+    return Number.isFinite(transition) ? `${curve.label} p=${transition.toFixed(3)}` : `${curve.label}: flat`;
+  });
+  document.getElementById("fourier-density-note").textContent =
+    `${transitions.join(" · ")}. Lines select maximum raw-logit variance; orange excludes every verified singleton; purple excludes all known singleton and multi-site-network sites.${payload.disconnected_searches.length ? (() => {
+      const search = payload.disconnected_searches.at(-1);
+      return ` The subsequent disconnected search found ${search.successful_proposal_count}/${search.proposal_mask_count} sufficient random masks and ${search.unique_minimized_candidate_count} one-removal-minimal hypotheses; ${search.verified_disconnected_minsets.length} survived complete proper-subset verification.`;
+    })() : ""}`;
+}
+
+function renderFourierThreshold(payload) {
+  const container = document.getElementById("fourier-threshold");
+  container.replaceChildren();
+  if (payload.status === "clean_behavior_not_acquired") {
+    const gate = payload.endpoint_acquisition_gate;
+    const measured = el("article");
+    measured.append(
+      el("small", {}, "terminal acquisition gate"),
+      el("strong", {}, `All-clean P(correct) ${formatPercent(Number(gate.all_clean_intervention.correct_probability))}`),
+      el("p", {}, "The correct answer was not the A–E argmax. The unchanged minset definition therefore stops before singleton or density collection."),
+    );
+    container.append(measured);
+    return;
+  }
+  const sufficiency = payload.sufficiency;
+  if (!sufficiency || !Number.isFinite(sufficiency.threshold_logit_diff)) return;
+  const preregisteredProbability = 1 / (1 + Math.exp(-Number(sufficiency.threshold_logit_diff)));
+  const measured = el("article");
+  const probabilityCriterion = payload.sufficiency_criterion === "clean_correct_probability_minus_absolute_tolerance";
+  measured.append(el("small", {}, "criterion used for the measured minsets"));
+  if (probabilityCriterion) {
+    measured.append(
+      el("strong", {}, `P(correct) ≥ ${(100 * Number(sufficiency.threshold_correct_probability)).toFixed(4)}% · raw logit diff ≥ ${Number(sufficiency.threshold_logit_diff).toFixed(4)}`),
+      el("p", {}, `Within ${(100 * Number(sufficiency.absolute_probability_tolerance)).toFixed(1)} percentage points of the clean A–E-normalized probability, plus the clean-answer argmax. This spectrum was collected after vetoing all ${payload.verified_singleton_minsets.length} singletons sufficient under that exact rule.`),
+    );
+  } else {
+    measured.append(
+      el("strong", {}, `raw logit diff ≥ ${Number(sufficiency.threshold_logit_diff).toFixed(4)} · P(correct) ≥ ${(100 * preregisteredProbability).toFixed(4)}%`),
+      el("p", {}, `${formatPercent(Number(sufficiency.required_recovery_fraction))} recovery of the clean–dirty raw-logit gap, plus the clean-answer argmax. The probability is the exact equivalent because raw logit diff is correct-logit minus logsumexp of A–E alternatives.`),
+    );
+  }
+  container.append(measured);
+  const separation = payload.proper_subset_separation;
+  if (separation.enabled) {
+    const subsetRule = el("article", { class: "reference" });
+    subsetRule.append(
+      el("small", {}, "effect-size requirement for displayed minsets"),
+      el("strong", {}, `max P(correct) over every proper subset ≤ ${(100 * separation.maximum_proper_subset_fraction_of_full_probability).toFixed(1)}% of the full minset's P(correct)`),
+      el("p", {}, `${separation.passing_multisite_minset_count.toLocaleString()} of ${separation.unfiltered_multisite_minset_count.toLocaleString()} previously verified multi-site sets remain. The lookup covers ${separation.subset_metric_count.toLocaleString()} cached subset evaluations; no model forward pass is performed during filtering.`),
+    );
+    container.append(subsetRule);
+  }
+  const alternative = payload.alternative_probability_sufficiency;
+  if (!alternative) return;
+  const reference = el("article", { class: "reference" });
+  const invalidated = alternative.current_multisite_minsets_invalidated_by_singleton_count;
+  reference.append(
+    el("small", {}, "10-percentage-point probability reference"),
+    el("strong", {}, `P(correct) ≥ ${(100 * alternative.threshold_correct_probability).toFixed(4)}%`),
+    el("p", {}, `${alternative.passing_singleton_count} singletons pass (${alternative.additional_singleton_count} more than the measured criterion). ${invalidated} of ${payload.verified_multisite_minsets.length} Fourier-stage multi-site minsets cease to be minimal because one constituent passes alone. A new singleton-vetoed Stage 1 is required before claiming multi-site circuits under this rule.`),
+  );
+  container.append(reference);
+}
+
+function fourierOverlayKey(payload) {
+  return `${payload.model.model_key}:${payload.task.function_id}:${payload.model.clean_step}:${payload.model.dirty_step}:${payload.sufficiency_criterion}`;
+}
+
+function fourierNetworkColor(index, count) {
+  if (!Number.isInteger(index) || index < 0 || !Number.isInteger(count) || index >= count) {
+    throw new Error("Fourier network color index lies outside its structural groups");
+  }
+  if (count <= FOURIER_NETWORK_COLORS.length) return FOURIER_NETWORK_COLORS[index];
+  const hue = (index * 137.50776405003785) % 360;
+  return `hsl(${hue.toFixed(3)} 68% 44%)`;
+}
+
+function fourierNetworkSiteGroup(network, site) {
+  const row = network.sites.find((candidate) => fourierSiteKey(candidate) === fourierSiteKey(site));
+  if (!row) throw new Error("Partner-profile view lacks a network site");
+  return {
+    index: row.cluster_index - 1,
+    label: `neighbor cluster ${row.cluster_index}`,
+  };
+}
+
+function fourierClusterKey(network, clusterIndex) {
+  return `${network.id}:cluster_${clusterIndex}`;
+}
+
+function fourierVisibleNeighborKeys(networks, siteKey) {
+  const keys = new Set([siteKey]);
+  networks.forEach((network) => network.edges.forEach((edge) => {
+    const sourceKey = fourierSiteKey(edge.source);
+    const targetKey = fourierSiteKey(edge.target);
+    if (sourceKey === siteKey) keys.add(targetKey);
+    if (targetKey === siteKey) keys.add(sourceKey);
+  }));
+  return keys;
+}
+
+function drawFourierNetworkOverlay(
+  canvas,
+  payload,
+  selectedIds,
+  dimmedClusters,
+  readout,
+  onToggleCluster,
+  highlightedSiteKey = null,
+) {
+  const layers = payload.site_grid.layers;
+  const tokens = payload.site_grid.tokens;
+  const layerOffset = new Map(layers.map((layer, index) => [layer, index]));
+  const tokenOffset = new Map(tokens.map((token, index) => [token.token_index, index]));
+  const cellWidth = Math.max(5, Math.min(9, Math.floor(960 / tokens.length)));
+  const cellHeight = 18;
+  canvas.width = tokens.length * cellWidth;
+  canvas.height = layers.length * cellHeight;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Browser did not provide a 2D canvas for the network overlay");
+  context.fillStyle = "#e5e8e2";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  tokens.forEach((_token, index) => {
+    context.strokeStyle = "rgba(21,37,31,.07)";
+    context.lineWidth = .5;
+    context.beginPath();
+    context.moveTo(index * cellWidth + .5, 0);
+    context.lineTo(index * cellWidth + .5, canvas.height);
+    context.stroke();
+  });
+  layers.forEach((layer, index) => {
+    const row = layers.length - 1 - index;
+    context.strokeStyle = layer % 4 === 0 ? "rgba(21,37,31,.25)" : "rgba(21,37,31,.08)";
+    context.lineWidth = layer % 4 === 0 ? 1 : .5;
+    context.beginPath();
+    context.moveTo(0, row * cellHeight + .5);
+    context.lineTo(canvas.width, row * cellHeight + .5);
+    context.stroke();
+  });
+  const center = (site) => {
+    const column = tokenOffset.get(site.token_index);
+    const layerIndex = layerOffset.get(site.layer);
+    if (column === undefined || layerIndex === undefined) {
+      throw new Error("Network-overlay site lies outside the exported grid");
+    }
+    const row = layers.length - 1 - layerIndex;
+    return { x: column * cellWidth + cellWidth / 2, y: row * cellHeight + cellHeight / 2, column, row };
+  };
+  const visibleNetworks = payload.minset_networks.filter((network) => selectedIds.has(network.id));
+  const highlightedSiteKeys = highlightedSiteKey === null
+    ? null
+    : fourierVisibleNeighborKeys(visibleNetworks, highlightedSiteKey);
+  visibleNetworks.forEach((network) => {
+    const colors = new Map(network.sites.map((site) => [
+      fourierSiteKey(site),
+      fourierNetworkSiteGroup(network, site).index,
+    ]));
+    network.edges.forEach((edge) => {
+      const source = center(edge.source);
+      const target = center(edge.target);
+      const sourceCluster = colors.get(fourierSiteKey(edge.source));
+      const targetCluster = colors.get(fourierSiteKey(edge.target));
+      const sourceDimmed = dimmedClusters.has(fourierClusterKey(network, sourceCluster + 1));
+      const targetDimmed = dimmedClusters.has(fourierClusterKey(network, targetCluster + 1));
+      const hoverDimmed = highlightedSiteKeys !== null
+        && (!highlightedSiteKeys.has(fourierSiteKey(edge.source))
+          || !highlightedSiteKeys.has(fourierSiteKey(edge.target)));
+      const gradient = context.createLinearGradient(source.x, source.y, target.x, target.y);
+      const groupCount = network.partner_profile_clusters.length;
+      gradient.addColorStop(0, fourierNetworkColor(sourceCluster, groupCount));
+      gradient.addColorStop(1, fourierNetworkColor(targetCluster, groupCount));
+      context.save();
+      context.globalAlpha = sourceDimmed || targetDimmed || hoverDimmed
+        ? 0.5 * FOURIER_DIMMED_CLUSTER_OPACITY
+        : 0.5;
+      context.strokeStyle = gradient;
+      context.lineWidth = 2;
+      context.beginPath();
+      context.moveTo(source.x, source.y);
+      context.lineTo(target.x, target.y);
+      context.stroke();
+      context.restore();
+    });
+  });
+  const contributions = new Map();
+  const addContribution = (site, contribution) => {
+    const key = fourierSiteKey(site);
+    if (!contributions.has(key)) contributions.set(key, []);
+    contributions.get(key).push(contribution);
+  };
+  if (selectedIds.has(FOURIER_SINGLETON_OVERLAY_ID)) {
+    payload.verified_singleton_minsets.forEach((row) => addContribution(row.site, {
+      color: FOURIER_SINGLETON_COLOR,
+      label: "verified singleton",
+      clusterKey: null,
+      dimmed: false,
+    }));
+  }
+  visibleNetworks.forEach((network) => {
+    network.sites.forEach((site) => {
+      const group = fourierNetworkSiteGroup(network, site);
+      const clusterKey = fourierClusterKey(network, group.index + 1);
+      addContribution(site, {
+        color: fourierNetworkColor(group.index, network.partner_profile_clusters.length),
+        label: `${network.minset_size}-site network ${network.component_index} · ${group.label}`,
+        clusterKey,
+        dimmed: dimmedClusters.has(clusterKey),
+      });
+    });
+  });
+  contributions.forEach((items, key) => {
+    const [tokenIndex, layer] = key.split(":").map(Number);
+    const position = center({ token_index: tokenIndex, layer });
+    const bandHeight = cellHeight / items.length;
+    items.forEach((item, index) => {
+      context.save();
+      const hoverDimmed = highlightedSiteKeys !== null && !highlightedSiteKeys.has(key);
+      context.globalAlpha = item.dimmed
+        ? FOURIER_DIMMED_CLUSTER_OPACITY
+        : hoverDimmed
+          ? FOURIER_HOVER_BACKGROUND_OPACITY
+          : 1;
+      context.fillStyle = item.color;
+      context.fillRect(
+        position.column * cellWidth + 1,
+        position.row * cellHeight + index * bandHeight + .5,
+        cellWidth - 1,
+        Math.max(1, bandHeight),
+      );
+      context.restore();
+    });
+    context.strokeStyle = "rgba(21,37,31,.8)";
+    context.lineWidth = 1;
+    context.strokeRect(position.column * cellWidth + 1.5, position.row * cellHeight + 1, cellWidth - 2, cellHeight - 1.5);
+    if (key === highlightedSiteKey) {
+      context.strokeStyle = "rgba(21,37,31,1)";
+      context.lineWidth = 2;
+      context.strokeRect(position.column * cellWidth + 1, position.row * cellHeight + .5, cellWidth - 1, cellHeight - 1);
+    }
+  });
+  const eventCell = (event) => {
+    const bounds = canvas.getBoundingClientRect();
+    const column = Math.max(0, Math.min(tokens.length - 1, Math.floor(((event.clientX - bounds.left) / bounds.width) * tokens.length)));
+    const displayRow = Math.max(0, Math.min(layers.length - 1, Math.floor(((event.clientY - bounds.top) / bounds.height) * layers.length)));
+    const token = tokens[column];
+    const layer = layers[layers.length - 1 - displayRow];
+    const localCellY = ((((event.clientY - bounds.top) / bounds.height) * layers.length) - displayRow) * cellHeight;
+    return { token, layer, localCellY };
+  };
+  canvas.onmousemove = (event) => {
+    const { token, layer } = eventCell(event);
+    const siteKey = `${token.token_index}:${layer}`;
+    const items = contributions.get(siteKey) ?? [];
+    const nextHighlightedSiteKey = items.length ? siteKey : null;
+    if (nextHighlightedSiteKey !== highlightedSiteKey) {
+      drawFourierNetworkOverlay(
+        canvas,
+        payload,
+        selectedIds,
+        dimmedClusters,
+        readout,
+        onToggleCluster,
+        nextHighlightedSiteKey,
+      );
+    }
+    const membership = items.length
+      ? items.map((item) => `${item.label}${item.dimmed ? " (10% opacity)" : ""}`).join(" · ")
+      : "not in a visible overlay";
+    const neighborCount = nextHighlightedSiteKey === null
+      ? 0
+      : fourierVisibleNeighborKeys(visibleNetworks, nextHighlightedSiteKey).size - 1;
+    readout.textContent = `token ${token.token_index} · r${token.reverse_index} · ${JSON.stringify(token.token_label)} · layer ${layer} · ${membership}${items.length ? ` · ${neighborCount} visible graph neighbors` : ""}${items.some((item) => item.clusterKey) ? " · click a colored band to dim or restore its cluster" : ""}`;
+  };
+  canvas.onclick = (event) => {
+    const { token, layer, localCellY } = eventCell(event);
+    const items = contributions.get(`${token.token_index}:${layer}`) ?? [];
+    if (!items.length) return;
+    const itemIndex = Math.max(
+      0,
+      Math.min(items.length - 1, Math.floor(localCellY / (cellHeight / items.length))),
+    );
+    const clusterKey = items[itemIndex].clusterKey;
+    if (clusterKey) onToggleCluster(clusterKey);
+  };
+  canvas.onmouseleave = () => {
+    if (highlightedSiteKey !== null) {
+      drawFourierNetworkOverlay(
+        canvas,
+        payload,
+        selectedIds,
+        dimmedClusters,
+        readout,
+        onToggleCluster,
+      );
+    }
+    readout.textContent = "Hover a cell for its token, layer, color, and visible-network membership.";
+  };
+}
+
+function buildFourierNetworkGrid(payload, selectedIds, dimmedClusters, onToggleCluster) {
+  const frame = el("div", { class: "fourier-grid-frame" });
+  const verticalAxis = el("div", { class: "fourier-grid-axis-y", title: "Layer index increases from bottom to top" });
+  verticalAxis.append(
+    el("span", {}, `L${payload.site_grid.layers.at(-1)}`),
+    el("span", { "aria-hidden": "true" }, "↑"),
+    el("span", {}, `L${payload.site_grid.layers[0]}`),
+  );
+  const plot = el("div", { class: "fourier-grid-plot" });
+  const canvas = el("canvas", {
+    class: "fourier-grid fourier-overlay-canvas",
+    role: "img",
+    "aria-label": "Selectable overlay of singleton and colored multi-site minset networks",
+  });
+  const tokens = payload.site_grid.tokens;
+  const horizontalAxis = el("div", { class: "fourier-grid-axis-x" }, `token index ${tokens[0].token_index} → ${tokens.at(-1).token_index}`);
+  const readout = el("div", { class: "fourier-grid-readout", "aria-live": "polite" }, "Hover a cell for its token, layer, color, and visible-network membership.");
+  drawFourierNetworkOverlay(
+    canvas,
+    payload,
+    selectedIds,
+    dimmedClusters,
+    readout,
+    onToggleCluster,
+  );
+  plot.append(canvas, horizontalAxis, readout);
+  frame.append(verticalAxis, plot);
+  return frame;
+}
+
+function renderFourierNetworkOverlay(payload) {
+  const controls = document.getElementById("fourier-network-controls");
+  const grid = document.getElementById("fourier-network-grid");
+  const summary = document.getElementById("fourier-network-summary");
+  controls.replaceChildren();
+  grid.replaceChildren();
+  const selectionKey = fourierOverlayKey(payload);
+  if (!fourierOverlaySelections.has(selectionKey)) {
+    fourierOverlaySelections.set(selectionKey, new Set([
+      FOURIER_SINGLETON_OVERLAY_ID,
+      ...payload.minset_networks.map((network) => network.id),
+    ]));
+  }
+  if (!fourierDimmedClusters.has(selectionKey)) {
+    fourierDimmedClusters.set(selectionKey, new Set());
+  }
+  const selectedIds = fourierOverlaySelections.get(selectionKey);
+  const dimmedClusters = fourierDimmedClusters.get(selectionKey);
+  const redraw = () => grid.replaceChildren(buildFourierNetworkGrid(
+    payload,
+    selectedIds,
+    dimmedClusters,
+    (clusterKey) => {
+      if (dimmedClusters.has(clusterKey)) dimmedClusters.delete(clusterKey);
+      else dimmedClusters.add(clusterKey);
+      redraw();
+    },
+  ));
+  const addToggle = ({ id, title, detail, colors }) => {
+    const label = el("label", { class: "fourier-network-toggle" });
+    const input = el("input", { type: "checkbox", value: id });
+    input.checked = selectedIds.has(id);
+    const swatches = el("span", { class: "fourier-network-swatches", "aria-hidden": "true" });
+    colors.forEach((color, index) => swatches.append(el("i", {
+      style: `background:${color}`,
+      title: `color ${String.fromCharCode(65 + index)}`,
+    })));
+    const copy = el("span");
+    copy.append(el("b", {}, title), el("small", {}, detail));
+    input.addEventListener("change", () => {
+      if (input.checked) selectedIds.add(id);
+      else selectedIds.delete(id);
+      redraw();
+    });
+    label.append(input, swatches, copy);
+    controls.append(label);
+  };
+  addToggle({
+    id: FOURIER_SINGLETON_OVERLAY_ID,
+    title: "All verified singletons",
+    detail: `${payload.verified_singleton_minsets.length} sites · ${payload.sufficiency_criterion === "clean_correct_probability_minus_absolute_tolerance" ? "P(clean) − 10pp criterion" : "80% raw-logit criterion"}`,
+    colors: [FOURIER_SINGLETON_COLOR],
+  });
+  payload.minset_networks.forEach((network) => addToggle({
+    id: network.id,
+    title: `${network.minset_size}-site network ${network.component_index}`,
+    detail: `${network.minset_indices.length.toLocaleString()} minsets · ${network.sites.length.toLocaleString()} sites · ${network.partner_profile_clusters.length} neighbor clusters`,
+    colors: Array.from(
+      { length: Math.min(6, network.partner_profile_clusters.length) },
+      (_unused, index) => fourierNetworkColor(
+        network.partner_profile_clusters.length <= 6
+          ? index
+          : Math.round(index * (network.partner_profile_clusters.length - 1) / 5),
+        network.partner_profile_clusters.length,
+      ),
+    ),
+  }));
+  const descriptions = payload.minset_networks.map((network) =>
+    `${network.minset_size}-site network ${network.component_index}: ${network.minset_indices.length.toLocaleString()} minsets, ${network.sites.length.toLocaleString()} sites, ${network.partner_profile_clusters.length} neighbor-profile clusters`);
+  summary.textContent = descriptions.length
+    ? `${descriptions.join(" · ")}. Hovering a colored cell keeps that site and all of its visible graph neighbors at full opacity while dimming the remaining cells to 10%. Click a colored band to toggle that neighbor cluster to 10% opacity. Groups use deterministic complete-link neighbor Jaccard ≥ 0.5 with a cannot-link constraint for sites co-occurring in one minset. Higher-order minsets remain hyperedges; groups are descriptive, not identified pathways.`
+    : "No verified multi-site network is available; the singleton overlay remains selectable.";
+  redraw();
+}
+
+function drawFourierMinsetGrid(canvas, payload, minset, readout) {
+  const layers = payload.site_grid?.layers;
+  const tokens = payload.site_grid?.tokens;
+  if (!Array.isArray(layers) || !layers.length || !Array.isArray(tokens) || !tokens.length) {
+    throw new Error("Fourier minset grid lacks token or layer coordinates");
+  }
+  const layerOffset = new Map(layers.map((layer, index) => [layer, index]));
+  const tokenOffset = new Map(tokens.map((token, index) => [token.token_index, index]));
+  const cellWidth = Math.max(4, Math.min(7, Math.floor(800 / tokens.length)));
+  const cellHeight = 12;
+  canvas.width = tokens.length * cellWidth;
+  canvas.height = layers.length * cellHeight;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Browser did not provide a 2D canvas for the minset grid");
+  context.fillStyle = "#dfe4de";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.strokeStyle = "rgba(21,37,31,.08)";
+  context.lineWidth = .5;
+  tokens.forEach((_token, index) => {
+    context.beginPath();
+    context.moveTo(index * cellWidth + .5, 0);
+    context.lineTo(index * cellWidth + .5, canvas.height);
+    context.stroke();
+  });
+  layers.forEach((layer, index) => {
+    const row = layers.length - 1 - index;
+    context.strokeStyle = layer % 4 === 0 ? "rgba(21,37,31,.24)" : "rgba(21,37,31,.1)";
+    context.lineWidth = layer % 4 === 0 ? 1 : .5;
+    context.beginPath();
+    context.moveTo(0, row * cellHeight + .5);
+    context.lineTo(canvas.width, row * cellHeight + .5);
+    context.stroke();
+  });
+  const highlighted = new Set(minset.sites.map((site) => `${site.token_index}:${site.layer}`));
+  minset.sites.forEach((site) => {
+    const column = tokenOffset.get(site.token_index);
+    const layerIndex = layerOffset.get(site.layer);
+    if (column === undefined || layerIndex === undefined) throw new Error("Verified minset site lies outside its exported grid");
+    const row = layers.length - 1 - layerIndex;
+    context.fillStyle = "#d0ff5a";
+    context.fillRect(column * cellWidth + 1, row * cellHeight, cellWidth - 1, cellHeight);
+    context.strokeStyle = "#15422f";
+    context.strokeRect(column * cellWidth + 1.5, row * cellHeight + .5, cellWidth - 2, Math.max(1, cellHeight - 1));
+  });
+  canvas.title = minset.sites.map((site) => `token ${site.token_index}, layer ${site.layer}`).join(" · ");
+  canvas.onmousemove = (event) => {
+    const bounds = canvas.getBoundingClientRect();
+    const column = Math.max(0, Math.min(tokens.length - 1, Math.floor(((event.clientX - bounds.left) / bounds.width) * tokens.length)));
+    const displayRow = Math.max(0, Math.min(layers.length - 1, Math.floor(((event.clientY - bounds.top) / bounds.height) * layers.length)));
+    const layerIndex = layers.length - 1 - displayRow;
+    const token = tokens[column];
+    const layer = layers[layerIndex];
+    const status = highlighted.has(`${token.token_index}:${layer}`) ? "highlighted verified site" : "not in this set";
+    readout.textContent = `token ${token.token_index} · r${token.reverse_index} · ${JSON.stringify(token.token_label)} · layer ${layer} · ${status}`;
+  };
+  canvas.onmouseleave = () => {
+    readout.textContent = "Hover a cell for its exact token, reverse index, label, and layer.";
+  };
+}
+
+function buildFourierGrid(payload, minset, ariaLabel) {
+  const layers = payload.site_grid.layers;
+  const tokens = payload.site_grid.tokens;
+  const frame = el("div", { class: "fourier-grid-frame" });
+  const verticalAxis = el("div", {
+    class: "fourier-grid-axis-y",
+    title: "Layer index increases from bottom to top",
+  });
+  verticalAxis.append(
+    el("span", {}, `L${layers.at(-1)}`),
+    el("span", { "aria-hidden": "true" }, "↑"),
+    el("span", {}, `L${layers[0]}`),
+  );
+  const plot = el("div", { class: "fourier-grid-plot" });
+  const canvas = el("canvas", { class: "fourier-grid", role: "img", "aria-label": ariaLabel });
+  const horizontalAxis = el("div", { class: "fourier-grid-axis-x" }, `token index ${tokens[0].token_index} → ${tokens.at(-1).token_index}`);
+  const readout = el("div", { class: "fourier-grid-readout", "aria-live": "polite" }, "Hover a cell for its exact token, reverse index, label, and layer.");
+  drawFourierMinsetGrid(canvas, payload, minset, readout);
+  plot.append(canvas, horizontalAxis, readout);
+  frame.append(verticalAxis, plot);
+  return frame;
+}
+
+function fourierSiteLabel(payload, site) {
+  const token = payload.site_grid.tokens.find((item) => item.token_index === site.token_index);
+  if (!token) throw new Error("Verified minset token is absent from its site grid");
+  return `r${token.reverse_index} ${JSON.stringify(token.token_label)} × L${site.layer}`;
+}
+
+function renderFourierMinsets(payload, containerId, minsets, { legacy = false } = {}) {
+  const container = document.getElementById(containerId);
+  container.replaceChildren();
+  if (!minsets.length) {
+    container.append(el("p", { class: "fourier-empty" }, legacy
+      ? "The legacy sparse run produced no causal survivor."
+      : payload.status === "causal_multisite_complete"
+        ? "Stage 2 completed, but no higher-order hypothesis survived causal verification."
+        : "Not measured yet: Stage 1 hypothesis generation and Stage 2 causal verification have not both run."));
+    return;
+  }
+  minsets.forEach((minset, index) => {
+    const card = el("article", { class: "fourier-card" });
+    const header = el("header");
+    const title = el("div");
+    title.append(el("small", {}, `${legacy ? "legacy lower-bound survivor" : "verified multi-site minset"} ${String(index + 1).padStart(2, "0")}`));
+    title.append(el("h3", {}, `${minset.size}-site sufficient ${legacy ? "set" : "circuit"}`));
+    header.append(title, el("span", { class: "fourier-size", title: "number of sites" }, String(minset.size)));
+    card.append(header);
+    card.append(buildFourierGrid(payload, minset, `Token-horizontal by layer-vertical grid for verified minset ${index + 1}`));
+    const metrics = el("div", { class: "fourier-metrics" });
+    [
+      ["raw logit diff", Number(minset.raw_logit_diff).toFixed(3)],
+      ["P(correct)", formatPercent(Number(minset.correct_probability))],
+      ["margin", `+${Number(minset.sufficiency_margin).toFixed(3)}`],
+    ].forEach(([label, value]) => {
+      const item = el("div");
+      item.append(el("span", {}, label), el("b", {}, value));
+      metrics.append(item);
+    });
+    card.append(metrics);
+    card.append(el("p", { class: "fourier-sites" }, minset.sites.map((site) => fourierSiteLabel(payload, site)).join(" · ")));
+    const hypotheses = el("div", { class: "fourier-hypotheses" });
+    const details = el("details");
+    const summary = el("summary", {}, `${minset.generating_coefficients.length} generating heavy Fourier ${minset.generating_coefficients.length === 1 ? "coefficient" : "coefficients"}`);
+    details.append(summary);
+    minset.generating_coefficients.forEach((coefficient) => {
+      const sites = coefficient.sites.map((site) => fourierSiteLabel(payload, site)).join(" + ");
+      details.append(el("p", {}, `degree ${coefficient.degree} · LASSO ${Number(coefficient.lasso_value).toFixed(4)} · held-out f-value ${Number(coefficient.function_value_estimate).toFixed(4)} · ${sites}`));
+    });
+    hypotheses.append(details);
+    card.append(hypotheses);
+    container.append(card);
+  });
+}
+
+function renderFourierHypotheses(payload) {
+  const container = document.getElementById("fourier-hypotheses");
+  container.replaceChildren();
+  const rows = payload.raw_heavy_fourier_hypotheses;
+  if (!rows.length) {
+    container.append(el("p", { class: "fourier-empty" }, payload.status === "singleton_and_density_complete"
+      ? "Not measured yet: Stage 1 has not run for this analysis."
+      : "Stage 1 completed without a heavy coefficient."));
+    return;
+  }
+  rows.forEach((coefficient, index) => {
+    const item = el("article");
+    item.append(el("b", {}, `H${String(index + 1).padStart(3, "0")} · degree ${coefficient.degree}`));
+    item.append(el("span", {}, `LASSO ${Number(coefficient.lasso_value).toFixed(4)} · f-value ${Number(coefficient.function_value_estimate).toFixed(4)}`));
+    item.append(el("p", {}, coefficient.sites.map((site) => fourierSiteLabel(payload, site)).join(" + ")));
+    container.append(item);
+  });
+}
+
+function renderFourierRecallAudit(payload) {
+  const container = document.getElementById("fourier-recall-audit");
+  container.replaceChildren();
+  const audits = payload.recall_audits;
+  if (!audits.length) {
+    container.append(el("p", { class: "fourier-empty" }, "Not measured yet: the preregistered non-Fourier recall audit is awaiting GPU collection. No missing-minset rate is inferred from the sparse Fourier output alone."));
+    return;
+  }
+  const audit = audits.at(-1);
+  const prior = audit.prior_fourier_search;
+  const local = audit.local_truth_table;
+  const pair = audit.uniform_pair_recall_probe;
+  const triple = audit.triple_recall_probe;
+  const topSite = (rows) => {
+    const counts = new Map();
+    rows.forEach((row) => row.sites.forEach((site) => {
+      const key = fourierSiteKey(site);
+      const current = counts.get(key) ?? { site, count: 0 };
+      current.count += 1;
+      counts.set(key, current);
+    }));
+    return [...counts.values()].sort((left, right) => right.count - left.count
+      || left.site.token_index - right.site.token_index || left.site.layer - right.site.layer)[0] ?? null;
+  };
+  const pairHub = topSite(audit.new_verified_pair_minsets);
+  const tripleHub = topSite(audit.new_verified_triple_minsets);
+  const probabilityThreshold = Number(audit.sufficiency.threshold_correct_probability);
+  const nearThresholdPairs = audit.new_verified_pair_minsets.filter(
+    (row) => Number(row.correct_probability) - probabilityThreshold <= 0.02,
+  ).length;
+  const nearThresholdTriples = audit.new_verified_triple_minsets.filter(
+    (row) => Number(row.correct_probability) - probabilityThreshold <= 0.02,
+  ).length;
+  const summary = el("div", { class: "fourier-recall-summary" });
+  const summaryCard = (label, value, detail) => {
+    const card = el("article");
+    card.append(el("small", {}, label), el("strong", {}, value), el("p", {}, detail));
+    return card;
+  };
+  summary.append(
+    summaryCard("Fourier search coverage", String(prior.tested_support_count), `${prior.verified_minset_count} verified minsets arose from those tested supports`),
+    summaryCard("Exact local census", `${local.subset_count.toLocaleString()} subsets`, `${local.new_minsets_missed_by_fourier.length} local minsets were absent from Fourier discovery`),
+    summaryCard("Uniform unseen pairs", `${pair.new_minset_count} / ${pair.sample_count}`, `Wilson ${(100 * pair.wilson_lower).toFixed(2)}–${(100 * pair.wilson_upper).toFixed(2)}%`),
+    summaryCard("Independent triples", `${triple.new_minset_count} new`, `${triple.evaluated_count} evaluated after ${triple.pruned_by_sufficient_pair_count} pair-minimality prunes`),
+  );
+  if (pairHub) {
+    summary.append(summaryCard(
+      "Dominant missed-pair hub",
+      `${pairHub.count} / ${audit.new_verified_pair_minsets.length}`,
+      fourierSiteLabel(payload, pairHub.site),
+    ));
+  }
+  container.append(summary);
+
+  const details = el("div", { class: "fourier-recall-details" });
+  const supportList = (title, supports, metricRows = false) => {
+    const card = el("article");
+    card.append(el("h4", {}, title));
+    if (!supports.length) {
+      card.append(el("p", {}, "No newly verified minset in this audit branch."));
+      return card;
+    }
+    const list = el("ul");
+    supports.forEach((row) => {
+      const sites = metricRows ? row.sites : row;
+      const suffix = metricRows
+        ? ` · P ${formatPercent(Number(row.correct_probability))} · logit ${Number(row.raw_logit_diff).toFixed(3)}`
+        : "";
+      list.append(el("li", {}, `${sites.map((site) => fourierSiteLabel(payload, site)).join(" + ")}${suffix}`));
+    });
+    card.append(list);
+    return card;
+  };
+  details.append(
+    supportList("Exact local minsets missed by Fourier", local.new_minsets_missed_by_fourier),
+    supportList("New verified random/proposal pairs", audit.new_verified_pair_minsets, true),
+    supportList("New verified random/proposal triples", audit.new_verified_triple_minsets, true),
+    (() => {
+      const card = el("article");
+      card.append(el("h4", {}, "Concentration and threshold shell"));
+      const pairHubCopy = pairHub
+        ? `${pairHub.count}/${audit.new_verified_pair_minsets.length} new pairs contain ${fourierSiteLabel(payload, pairHub.site)}`
+        : "No new pair hub was measured";
+      const tripleHubCopy = tripleHub
+        ? `${tripleHub.count}/${audit.new_verified_triple_minsets.length} new triples contain ${fourierSiteLabel(payload, tripleHub.site)}`
+        : "no new triple hub was measured";
+      card.append(el("p", {}, `${pairHubCopy}; ${tripleHubCopy}.`));
+      card.append(el("p", {}, `${nearThresholdPairs}/${audit.new_verified_pair_minsets.length} pairs and ${nearThresholdTriples}/${audit.new_verified_triple_minsets.length} triples lie within two probability points above the ${formatPercent(probabilityThreshold)} sufficiency threshold. This is a structured, threshold-sensitive family—not a uniform background of missed circuits.`));
+      return card;
+    })(),
+    (() => {
+      const card = el("article");
+      card.append(el("h4", {}, "Design-based pair estimate"));
+      card.append(el("p", {}, `${pair.untested_pair_universe_size.toLocaleString()} pairs lay outside the prior Fourier search. The uniform sample estimates ${Math.round(pair.estimated_missed_pair_count).toLocaleString()} missed sufficient pairs, with a Wilson-derived range of ${Math.round(pair.estimated_missed_pair_count_lower).toLocaleString()}–${Math.round(pair.estimated_missed_pair_count_upper).toLocaleString()}.`));
+      card.append(el("p", {}, `Local response monotone: ${local.monotone ? "yes" : "no"}; immediate violations: ${local.immediate_monotonicity_violation_count}.`));
+      return card;
+    })(),
+  );
+  container.append(details);
+  container.append(el("p", { class: "fourier-recall-caveat" }, "This substantially probes recall but is not a globally exhaustive minset census. The uniform-pair interval is a design-based prevalence estimate; targeted proposals diagnose additional failure modes and do not support population-frequency claims."));
+}
+
+function renderFourierCircuit() {
+  const entry = selectedFourierEntry();
+  const status = document.getElementById("fourier-status");
+  const summary = document.getElementById("fourier-summary");
+  const warning = document.getElementById("fourier-warning");
+  const threshold = document.getElementById("fourier-threshold");
+  const chart = document.getElementById("fourier-density-chart");
+  const networkControls = document.getElementById("fourier-network-controls");
+  const networkGrid = document.getElementById("fourier-network-grid");
+  const networkSummary = document.getElementById("fourier-network-summary");
+  warning.hidden = true;
+  if (!entry) {
+    status.textContent = "unprocessed";
+    summary.textContent = "No measured Fourier artifact has been exported yet. Empty space is not synthetic data.";
+    threshold.replaceChildren();
+    chart.replaceChildren();
+    networkControls.replaceChildren();
+    networkGrid.replaceChildren();
+    networkSummary.textContent = "No measured network artifact is available.";
+    return;
+  }
+  const key = entry.sha256;
+  const error = fourierCircuitErrors.get(key);
+  const payload = fourierCircuitChunks.get(key);
+  if (error) {
+    status.textContent = "load failed";
+    summary.textContent = error.message;
+    threshold.replaceChildren();
+    chart.replaceChildren();
+    networkControls.replaceChildren();
+    networkGrid.replaceChildren();
+    networkSummary.textContent = "The measured network artifact could not be loaded.";
+    return;
+  }
+  if (!payload) {
+    status.textContent = "loading measured artifact";
+    summary.textContent = fourierCircuitLoads.has(key) ? "Loading the selected staged outputs…" : "Measured artifact is queued.";
+    threshold.replaceChildren();
+    chart.replaceChildren();
+    networkControls.replaceChildren();
+    networkGrid.replaceChildren();
+    networkSummary.textContent = "Loading measured minset networks…";
+    return;
+  }
+  validateFourierPayload(payload);
+  status.textContent = payload.status.replaceAll("_", " ");
+  const separation = payload.proper_subset_separation;
+  const subsetSuffix = separation.enabled
+    ? ` after requiring every proper subset to stay at or below ${(100 * separation.maximum_proper_subset_fraction_of_full_probability).toFixed(1)}% of that minset's P(correct) (${separation.unfiltered_multisite_minset_count.toLocaleString()} sets before this effect-size filter)`
+    : "";
+  const disconnectedSuffix = payload.disconnected_searches.length
+    ? (() => {
+      const search = payload.disconnected_searches.at(-1);
+      return ` A network-vetoed search tested ${search.metric_count.toLocaleString()} additional supports and verified ${search.verified_disconnected_minsets.length} new disconnected minsets.`;
+    })()
+    : "";
+  summary.textContent = payload.status === "clean_behavior_not_acquired"
+    ? `Clean checkpoint ${entry.clean_step} patched into dirty checkpoint ${entry.dirty_step}. The all-clean intervention failed the preregistered correct-letter argmax, so this is a terminal acquisition result—not an empty circuit census.`
+    : `Clean checkpoint ${entry.clean_step} patched into dirty checkpoint ${entry.dirty_step}. The overlay contains ${payload.verified_singleton_minsets.length.toLocaleString()} exhaustive singleton and ${payload.network_verified_multisite_minsets.length.toLocaleString()} deduplicated causally verified multi-site minsets${subsetSuffix}.${disconnectedSuffix}`;
+  if (payload.density_stability_warning) {
+    warning.hidden = false;
+    warning.textContent = payload.density_stability_warning;
+  }
+  renderFourierThreshold(payload);
+  renderFourierDensity(payload);
+  renderFourierNetworkOverlay(payload);
+}
+
+async function loadSelectedFourierCircuit() {
+  const entry = selectedFourierEntry();
+  if (!entry) return;
+  const key = entry.sha256;
+  if (fourierCircuitChunks.has(key) || fourierCircuitLoads.has(key)) return;
+  const request = fetch(`data/${entry.url}?v=${key.slice(0, 16)}`, { cache: "force-cache" })
+    .then((response) => {
+      if (!response.ok) throw new Error(`Could not load Fourier circuit chunk: HTTP ${response.status}`);
+      return response.json();
+    })
+    .then((payload) => {
+      validateFourierPayload(payload);
+      fourierCircuitChunks.set(key, payload);
+      fourierCircuitErrors.delete(key);
+    })
+    .catch((error) => fourierCircuitErrors.set(key, error))
+    .finally(() => {
+      fourierCircuitLoads.delete(key);
+      renderFourierCircuit();
+    });
+  fourierCircuitLoads.set(key, request);
+  renderFourierCircuit();
+  await request;
+}
+
+function buildFourierRunSelect() {
+  const select = document.getElementById("fourier-run-select");
+  const entries = fourierEntries();
+  select.replaceChildren();
+  if (!entries.length) {
+    select.append(el("option", { value: "" }, "No verified outputs yet"));
+    select.disabled = true;
+    renderFourierCircuit();
+    return;
+  }
+  select.disabled = false;
+  entries.forEach((entry, index) => select.append(el("option", {
+    value: String(index),
+    title: fourierEntryProvenanceLabel(entry),
+  }, fourierEntryLabel(entry))));
+  select.value = String(state.fourierRunIndex);
+  select.title = fourierEntryProvenanceLabel(entries[state.fourierRunIndex]);
+  select.onchange = () => {
+    state.fourierRunIndex = Number(select.value);
+    select.title = fourierEntryProvenanceLabel(entries[state.fourierRunIndex]);
+    renderFourierCircuit();
+    void loadSelectedFourierCircuit();
+  };
+  renderFourierCircuit();
+  void loadSelectedFourierCircuit();
+}
+
+function answerLookupManifest() {
+  return state.data.answer_lookup_manifest ?? {
+    layer_count: 32,
+    checkpoint_step: 1500,
+    entries: {},
+  };
+}
+
+function answerLookupEntry(functionId) {
+  return answerLookupManifest().entries?.[state.answerLookupInterface]?.[functionId] ?? {
+    status: "unprocessed",
+  };
+}
+
+function answerLookupRequestedFunctionIds() {
+  return state.answerLookupFunctionId === ALL_FUNCTIONS_ID
+    ? state.data.functions.map((fn) => fn.id)
+    : [state.answerLookupFunctionId];
+}
+
+function validateAnswerLookupArtifact(payload, functionId, expectedInterface) {
+  const manifest = answerLookupManifest();
+  if (
+    payload.schema_version !== manifest.schema_version
+    || payload.checkpoint_step !== manifest.checkpoint_step
+    || payload.interface !== expectedInterface
+    || payload.function_id !== functionId
+    || payload.model?.revision !== "6e5971d9eba42665f5bd5a0fcf047f299ce1dccc"
+    || payload.model?.layer_count !== manifest.layer_count
+    || payload.scientific_backend?.full_prompt !== true
+    || payload.scientific_backend?.use_cache !== false
+    || payload.scientific_backend?.batch_size !== 1
+    || payload.interventions?.length !== 27
+  ) {
+    throw new Error(`Answer-lookup artifact failed its identity contract for ${functionId}`);
+  }
+  const sources = payload.source_prompts ?? {};
+  const expectedSources = ["clean", "shuffled", "unrelated_same_letter", "unrelated_different_letter"];
+  if (expectedSources.some((source) => !sources[source])) {
+    throw new Error(`Answer-lookup artifact lacks a registered source for ${functionId}`);
+  }
+  expectedSources.forEach((source) => {
+    if (sources[source].terminator_sites?.length !== 5 || sources[source].unpatched_probabilities?.length !== 5) {
+      throw new Error(`Answer-lookup source audit is incomplete for ${functionId}/${source}`);
+    }
+  });
+  payload.interventions.forEach((row) => {
+    if (row.probabilities_by_layer !== null && row.probabilities_by_layer?.length !== manifest.layer_count) {
+      throw new Error(`Answer-lookup layer grid is malformed for ${functionId}/${row.intervention_id}`);
+    }
+  });
+}
+
+async function loadAnswerLookupArtifacts() {
+  const requests = [];
+  const expectedInterface = state.answerLookupInterface;
+  answerLookupRequestedFunctionIds().forEach((functionId) => {
+    const entry = answerLookupEntry(functionId);
+    if (!entry.url || answerLookupChunks.has(entry.sha256) || answerLookupLoads.has(entry.sha256)) return;
+    const request = fetch(`${entry.url}?v=${entry.sha256.slice(0, 16)}`, { cache: "force-cache" })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Could not load answer-lookup data: HTTP ${response.status}`);
+        return response.json();
+      })
+      .then((payload) => {
+        validateAnswerLookupArtifact(payload, functionId, expectedInterface);
+        answerLookupChunks.set(entry.sha256, payload);
+        answerLookupErrors.delete(entry.sha256);
+      })
+      .catch((error) => answerLookupErrors.set(entry.sha256, error))
+      .finally(() => {
+        answerLookupLoads.delete(entry.sha256);
+        renderAnswerLookup();
+      });
+    answerLookupLoads.set(entry.sha256, request);
+    requests.push(request);
+  });
+  renderAnswerLookup();
+  await Promise.all(requests);
+}
+
+function answerLookupArtifacts() {
+  return answerLookupRequestedFunctionIds()
+    .map((functionId) => {
+      const entry = answerLookupEntry(functionId);
+      return entry.sha256 ? answerLookupChunks.get(entry.sha256) ?? null : null;
+    })
+    .filter(Boolean);
+}
+
+function average(values) {
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+}
+
+function answerLookupCellMeasurement(artifacts, rowIndex, layer) {
+  const measurements = [];
+  artifacts.forEach((artifact) => {
+    const row = artifact.interventions[rowIndex];
+    const probabilities = row.probabilities_by_layer?.[layer];
+    if (!probabilities) return;
+    const correct = artifact.correct_choice_index;
+    const baseline = artifact.source_prompts.clean.unpatched_probabilities;
+    measurements.push({
+      probabilities,
+      correctProbability: probabilities[correct],
+      baselineCorrectProbability: baseline[correct],
+      targetProbability: row.target_choice_index === null
+        ? null
+        : probabilities[row.target_choice_index],
+      baselineTargetProbability: row.target_choice_index === null
+        ? null
+        : baseline[row.target_choice_index],
+    });
+  });
+  if (!measurements.length) return null;
+  return {
+    count: measurements.length,
+    measurements,
+    correctProbability: average(measurements.map((item) => item.correctProbability)),
+    baselineCorrectProbability: average(measurements.map((item) => item.baselineCorrectProbability)),
+    targetProbability: average(measurements.map((item) => item.targetProbability).filter((value) => value !== null)),
+    baselineTargetProbability: average(measurements.map((item) => item.baselineTargetProbability).filter((value) => value !== null)),
+  };
+}
+
+function answerLookupCellValue(measurement) {
+  if (!measurement) return null;
+  if (state.answerLookupMetric === "correct_delta") {
+    return measurement.correctProbability - measurement.baselineCorrectProbability;
+  }
+  if (state.answerLookupMetric === "correct_probability") return measurement.correctProbability;
+  return measurement.targetProbability;
+}
+
+function answerLookupColor(value) {
+  if (state.answerLookupMetric === "correct_delta") return colorFor(value, "delta");
+  const amount = Math.max(0, Math.min(1, value));
+  const start = amount <= .5 ? [55, 92, 170] : [255, 255, 255];
+  const end = amount <= .5 ? [255, 255, 255] : [239, 119, 95];
+  const segment = amount <= .5 ? amount * 2 : (amount - .5) * 2;
+  return `rgb(${start.map((channel, index) => Math.round(channel + (end[index] - channel) * segment)).join(",")})`;
+}
+
+function answerLookupAverageRowLabel(row, rowIndex) {
+  if (row.group === "preserve_correct_marker") return row.label;
+  if (row.group === "erase_correct_marker") return `Incorrect option ${rowIndex - 3} → correct location`;
+  if (row.group === "move_correct_marker") return `Swap correct ↔ incorrect option ${rowIndex - 7}`;
+  const subsetSize = row.recipient_choice_indices.length;
+  return `Duplicate correct state at ${subsetSize} wrong location${subsetSize === 1 ? "" : "s"}`;
+}
+
+function answerLookupRowLabel(row, rowIndex, aggregate) {
+  return aggregate ? answerLookupAverageRowLabel(row, rowIndex) : row.label;
+}
+
+function renderAnswerLookupProbabilityBars(artifacts, rowIndex, layer, measurement, aggregate) {
+  const container = document.getElementById("answer-lookup-probability-bars");
+  container.replaceChildren();
+  if (!measurement) {
+    container.append(el("p", { class: "answer-site-audit-note" }, "This cell has not been processed."));
+    return;
+  }
+  if (!aggregate) {
+    const artifact = artifacts[0];
+    const probabilities = artifact.interventions[rowIndex].probabilities_by_layer[layer];
+    const baseline = artifact.source_prompts.clean.unpatched_probabilities;
+    "ABCDE".split("").forEach((label, choiceIndex) => {
+      const row = el("div", { class: `answer-probability-row${choiceIndex === artifact.correct_choice_index ? " correct" : ""}` });
+      row.append(el("span", {}, label));
+      const track = el("div", { class: "answer-probability-track" });
+      const fill = el("i");
+      fill.style.width = `${100 * probabilities[choiceIndex]}%`;
+      const marker = el("b");
+      marker.style.left = `${100 * baseline[choiceIndex]}%`;
+      track.append(fill, marker);
+      row.append(track, el("span", {}, formatAdaptivePercent(probabilities[choiceIndex])));
+      container.append(row);
+    });
+    return;
+  }
+  const roles = [
+    ["✓", "intended", measurement.correctProbability, measurement.baselineCorrectProbability],
+  ];
+  if (measurement.targetProbability !== null) {
+    roles.push(["×", "selected wrong", measurement.targetProbability, measurement.baselineTargetProbability]);
+  }
+  roles.forEach(([symbol, label, probability, baseline]) => {
+    const row = el("div", { class: `answer-probability-row${label === "intended" ? " correct" : ""}` });
+    row.append(el("span", { title: label }, symbol));
+    const track = el("div", { class: "answer-probability-track" });
+    const fill = el("i");
+    fill.style.width = `${100 * probability}%`;
+    const marker = el("b");
+    marker.style.left = `${100 * baseline}%`;
+    track.append(fill, marker);
+    row.append(track, el("span", {}, formatAdaptivePercent(probability)));
+    container.append(row);
+  });
+  container.append(el("p", { class: "answer-site-audit-note" }, `Role-aligned mean across ${measurement.count} measured functions. Select one function for its literal A–E distribution.`));
+}
+
+function answerLookupSiteText(site) {
+  return `${site.label} · token ${site.token_index} · ${site.token_label} · chars ${site.token_character_start}:${site.token_character_end}`;
+}
+
+function renderAnswerLookupSiteAudit(artifacts, rowIndex, aggregate) {
+  const container = document.getElementById("answer-lookup-site-audit");
+  container.replaceChildren();
+  if (aggregate) {
+    container.append(el("p", { class: "answer-site-audit-note" }, "Exact token coordinates differ across functions. Select one function to audit its source and recipient sites."));
+    return;
+  }
+  const artifact = artifacts[0];
+  const row = artifact.interventions[rowIndex];
+  const source = artifact.source_prompts[row.source];
+  const recipient = artifact.source_prompts.clean;
+  row.source_choice_indices.forEach((sourceIndex, mappingIndex) => {
+    const sourceSite = source.terminator_sites[sourceIndex];
+    const recipientSite = recipient.terminator_sites[row.recipient_choice_indices[mappingIndex]];
+    const mapping = el("div", { class: "answer-site-map" });
+    mapping.append(
+      el("code", {}, answerLookupSiteText(sourceSite)),
+      el("b", {}, "→"),
+      el("code", {}, answerLookupSiteText(recipientSite)),
+    );
+    container.append(mapping);
+  });
+  const details = el("details");
+  details.innerHTML = `<summary>Inspect exact rendered source and recipient prompts</summary><div class="answer-prompt-pair"><pre>${escapeHtml(source.rendered_prompt)}</pre><pre>${escapeHtml(recipient.rendered_prompt)}</pre></div>`;
+  container.append(details);
+}
+
+function renderAnswerLookupDetail(artifacts, rowIndex, layer, aggregate = false) {
+  const title = document.getElementById("answer-lookup-detail-title");
+  const coordinates = document.getElementById("answer-lookup-detail-coordinates");
+  if (!artifacts.length || rowIndex === null || layer === null) {
+    title.textContent = "Select a measured cell";
+    coordinates.textContent = "Exact token mappings will appear here.";
+    document.getElementById("answer-lookup-probability-bars").replaceChildren();
+    document.getElementById("answer-lookup-site-audit").replaceChildren();
+    return;
+  }
+  const row = artifacts[0].interventions[rowIndex];
+  const measurement = answerLookupCellMeasurement(artifacts, rowIndex, layer);
+  title.textContent = answerLookupRowLabel(row, rowIndex, aggregate);
+  const delta = measurement
+    ? measurement.correctProbability - measurement.baselineCorrectProbability
+    : null;
+  coordinates.textContent = measurement
+    ? `layer ${layer} · ${measurement.count} function${measurement.count === 1 ? "" : "s"} · ΔP(intended) ${delta >= 0 ? "+" : "−"}${formatAdaptivePercent(Math.abs(delta))}`
+    : `layer ${layer} · unprocessed`;
+  renderAnswerLookupProbabilityBars(artifacts, rowIndex, layer, measurement, aggregate);
+  renderAnswerLookupSiteAudit(artifacts, rowIndex, aggregate);
+}
+
+function renderAnswerLookup() {
+  if (!state.data) return;
+  const manifest = answerLookupManifest();
+  const artifacts = answerLookupArtifacts();
+  const requested = answerLookupRequestedFunctionIds();
+  const available = requested.filter((functionId) => answerLookupEntry(functionId).url).length;
+  const loading = requested.filter((functionId) => answerLookupLoads.has(answerLookupEntry(functionId).sha256)).length;
+  const errors = requested.filter((functionId) => answerLookupErrors.has(answerLookupEntry(functionId).sha256));
+  const status = document.getElementById("answer-lookup-status");
+  const summary = document.getElementById("answer-lookup-summary");
+  const heatmap = document.getElementById("answer-lookup-heatmap");
+  const aggregate = state.answerLookupFunctionId === ALL_FUNCTIONS_ID;
+  status.textContent = errors.length
+    ? `load failed · ${errors.length}`
+    : loading
+    ? `loading ${artifacts.length}/${available}`
+    : available
+    ? `${artifacts.length}/${requested.length} artifact${requested.length === 1 ? "" : "s"}`
+    : "unprocessed";
+  summary.textContent = errors.length
+    ? answerLookupErrors.get(answerLookupEntry(errors[0]).sha256).message
+    : available
+    ? `${artifacts.length} of ${requested.length} requested function artifacts are loaded. Partial rows remain visibly unprocessed; averages use only measured cells and report their count.`
+    : "The experiment is implemented and preregistered, but no GPU artifact has been collected. No synthetic cells are shown.";
+  document.getElementById("answer-lookup-boundary-note").textContent = state.answerLookupInterface === "attention_input"
+    ? "Attention-input patching changes the selected option token’s K/V contribution in that layer, allowing later tokens—including the final answer token—to attend to it."
+    : "Residual-post patching changes the selected token after the entire block; its first possible effect on the final token is through the next decoder layer.";
+  const legend = document.getElementById("answer-lookup-legend");
+  legend.innerHTML = state.answerLookupMetric === "correct_delta"
+    ? "<span>suppresses intended</span><i></i><span>boosts intended</span>"
+    : "<span>0 probability</span><i></i><span>1 probability</span>";
+  if (!artifacts.length) {
+    heatmap.style.gridTemplateColumns = "1fr";
+    heatmap.replaceChildren(el("p", { class: "fourier-empty" }, loading ? "Loading measured answer-location artifacts…" : "Unprocessed · awaiting an explicit GPU run"));
+    renderAnswerLookupDetail([], null, null, aggregate);
+    return;
+  }
+  const rows = artifacts[0].interventions;
+  heatmap.style.gridTemplateColumns = `320px repeat(${manifest.layer_count}, minmax(18px, 1fr))`;
+  heatmap.replaceChildren(el("div"));
+  for (let layer = 0; layer < manifest.layer_count; layer += 1) {
+    heatmap.append(el("div", { class: "answer-lookup-layer" }, layer % 4 === 0 || layer === manifest.layer_count - 1 ? String(layer) : "·"));
+  }
+  let previousGroup = null;
+  rows.forEach((row, rowIndex) => {
+    if (row.group !== previousGroup) {
+      heatmap.append(el("div", { class: "answer-lookup-group" }, ANSWER_LOOKUP_GROUP_LABELS[row.group] ?? row.group));
+      previousGroup = row.group;
+    }
+    heatmap.append(el("div", { class: "answer-lookup-row-label", title: answerLookupRowLabel(row, rowIndex, aggregate) }, answerLookupRowLabel(row, rowIndex, aggregate)));
+    for (let layer = 0; layer < manifest.layer_count; layer += 1) {
+      const measurement = answerLookupCellMeasurement(artifacts, rowIndex, layer);
+      const value = answerLookupCellValue(measurement);
+      const cell = el("button", {
+        class: `answer-lookup-cell${value === null ? (state.answerLookupMetric === "target_probability" && row.target_choice_index === null ? " not-applicable" : " unprocessed") : ""}`,
+        "aria-label": `${answerLookupRowLabel(row, rowIndex, aggregate)}, layer ${layer}`,
+      });
+      if (value !== null) cell.style.background = answerLookupColor(value);
+      if (state.answerLookupSelection?.rowIndex === rowIndex && state.answerLookupSelection?.layer === layer) cell.classList.add("selected");
+      cell.addEventListener("mouseenter", () => renderAnswerLookupDetail(artifacts, rowIndex, layer, aggregate));
+      cell.addEventListener("focus", () => renderAnswerLookupDetail(artifacts, rowIndex, layer, aggregate));
+      cell.addEventListener("click", () => {
+        state.answerLookupSelection = { rowIndex, layer };
+        renderAnswerLookup();
+      });
+      heatmap.append(cell);
+    }
+  });
+  heatmap.onmouseleave = () => {
+    const selected = state.answerLookupSelection;
+    renderAnswerLookupDetail(artifacts, selected?.rowIndex ?? null, selected?.layer ?? null, aggregate);
+  };
+  const selected = state.answerLookupSelection;
+  renderAnswerLookupDetail(artifacts, selected?.rowIndex ?? null, selected?.layer ?? null, aggregate);
+}
+
+function buildAnswerLookupControls() {
+  const functionSelect = document.getElementById("answer-lookup-function-select");
+  functionSelect.replaceChildren(el("option", { value: ALL_FUNCTIONS_ID }, "Average over measured functions"));
+  state.data.functions.forEach((fn) => functionSelect.append(el("option", { value: fn.id }, `${fn.alias} · ${fn.definition}`)));
+  functionSelect.value = state.answerLookupFunctionId;
+  functionSelect.addEventListener("change", () => {
+    state.answerLookupFunctionId = functionSelect.value;
+    state.answerLookupSelection = null;
+    renderAnswerLookup();
+    void loadAnswerLookupArtifacts();
+  });
+  const interfaceSelect = document.getElementById("answer-lookup-interface-select");
+  interfaceSelect.value = state.answerLookupInterface;
+  interfaceSelect.addEventListener("change", () => {
+    state.answerLookupInterface = interfaceSelect.value;
+    state.answerLookupSelection = null;
+    renderAnswerLookup();
+    void loadAnswerLookupArtifacts();
+  });
+  const metricSelect = document.getElementById("answer-lookup-metric-select");
+  metricSelect.value = state.answerLookupMetric;
+  metricSelect.addEventListener("change", () => {
+    state.answerLookupMetric = metricSelect.value;
+    renderAnswerLookup();
+  });
+  renderAnswerLookup();
+  void loadAnswerLookupArtifacts();
+}
+
 function renderAll() {
   normalizeCurveAxisSelections();
   normalizeCurveFunctionSelection();
@@ -3861,6 +5561,7 @@ function renderAll() {
   );
   renderCurve();
   renderPatching();
+  renderAnswerLookup();
 }
 
 async function initialize() {
@@ -3880,6 +5581,11 @@ async function initialize() {
   state.data.real_weight_alignment_files ??= 0;
   state.data.weight_alignment_scales ??= {};
   state.data.weight_alignment_axes ??= {};
+  state.data.fourier_circuit_manifest ??= { entries: [] };
+  state.data.real_fourier_circuit_files ??= 0;
+  state.data.answer_lookup_manifest ??= { layer_count: 32, checkpoint_step: 1500, entries: {} };
+  state.data.real_answer_lookup_files ??= 0;
+  state.data.complete_answer_lookup_files ??= 0;
   patchManifestSignature = patchManifestKey();
   setupStatus();
   buildModelControls();
@@ -3888,6 +5594,8 @@ async function initialize() {
   buildCurveBatchSlider();
   buildCurveFunctionSelect();
   buildFunctionSelect();
+  buildAnswerLookupControls();
+  buildFourierRunSelect();
   renderCheckpointTicks();
   const checkpoint = document.getElementById("checkpoint-slider");
   checkpoint.max = SLIDER_UNITS;

@@ -25,9 +25,30 @@ The tests cover:
 - metrics, patch-plan constraints, atomic artifacts, and the GPU double gate;
 - branch-interface target resolution plus positional and keyword input/output replacement hooks;
 - an explicit synthetic-status contract for the committed site payload.
+- exhaustive p-biased Fourier references for majority and monotone DNF, exact synthetic minterms,
+- exact connected-component and hyperedge partitioning, reference minimum graph coloring for small
+  cases, and scalable cannot-link structural-equivalence clustering for verified minset networks;
+- deterministic non-Fourier recall proposals, exact local minset/monotonicity extraction, uniform
+  pair Wilson intervals, triple child-minimality, and digest-exact shard resume;
+- persistent subset-metric indexing, duplicate-measurement parity, stale-source rejection, and
+  exhaustive maximum-proper-subset lookup for the network effect-size filter;
+- candidate-relative subset-ratio boundaries, mixed-order hypergraph components, exact network
+  chord completion, blocker-before-missing-child pruning, deterministic degree-balanced unseen
+  pairs, and digest-validated frontier metric-index round trips;
+  continuous-patch gradients, deterministic mask-trie ordering, inference/no-grad parity,
+  singleton-veto masks, KKT-certified FISTA and maximum-violation coordinate solvers, resumable raw Stage-1 corner checkpoints,
+  and exact deduplication of exhaustive singletons, Fourier survivors, and recall-verified minsets
+  in export.
 
 The package threshold is 92% branch-aware coverage. Live runtime modules are omitted from that
 threshold and must not be treated as tested merely because the CPU suite passes.
+
+The Fourier model path has mandatory live gates: exact `pyalvt` semantic prompt identity,
+reproduction of the endpoint and broad final-token layer-19-through-31 singleton region, exact
+inference/no-grad scientific parity, and exact Hugging Face-native versus manual-cache equality on
+the same unpatched prompt. The full-sequence/cache difference is retained as a diagnostic and never
+enters scientific values. See
+[Fourier redundant-circuit discovery](../experiments/fourier-circuits.md).
 
 Token-local weight-kernel optimizations also follow the bit-exact GPU parity ladder in
 [token-weight-performance.md](token-weight-performance.md). A faster timing or a close floating-

@@ -193,6 +193,55 @@ compact files plus the normal 8 GiB floor. If a full atlas violates that gate, r
 unordered pair artifacts and stage projection/detail export; never discard decomposed values or
 replace unprocessed cells with synthetic data.
 
+## Fourier circuit stages — 2026-08-08
+
+Each function and site scope owns an independent config directory. The exhaustive singleton stage
+stores every single-site raw result, and Stage 0 stores every Boolean mask and five candidate logits
+for separate unrestricted and singleton-vetoed sweeps. Stage 1 additionally stores every raw logit difference and the
+full per-corner alpha-gradient matrix; for the default 512 by roughly 3,200-site full prompt this
+is only several MiB in float32, while the temporary float64 degree-four feature design may be much
+larger in RAM. Stage 2 stores only the causally evaluated subsets and metrics. Clean residual banks
+are transient and must not be retained as redundant checkpoint-sized artifacts.
+
+Measure one authorized run before projecting all 19 functions. Preserve JSON/Torch sidecar pairs
+and their digests together. The exporter copies compact density curves, every passing exhaustive
+singleton, verified multi-site minsets, and only the heavy Stage-1 coefficient rows into the site;
+it never copies Stage 1's design matrix or gradients. The ordinary 8 GiB free-space floor still
+applies.
+
+Hardware-native cluster lineages keep their raw sidecars on the cluster. The local website syncs
+only lineage-namespaced compact chunks plus a small import manifest containing their byte counts,
+chunk digests, exporter-source digest, registered science-plan digest, and hardware fingerprint.
+Do not mirror checkpoint adapters, Stage-1 corner/gradient tensors, recall shards, or frontier
+shards merely to render the website. Publish the import manifest only after every referenced chunk
+has arrived and passed its digest check, so an interrupted transfer remains invisible rather than
+appearing as partial or synthetic data.
+
+The independently versioned recall audit adds a `recall_audit_config_<digest>/` child beneath the
+source Fourier scope. Its 512-support phase shards retain Boolean masks, five candidate logits, raw
+logit differences, probabilities, and accuracies. The registered roughly 34k initial proposals plus
+child-checked triples remain far smaller than a checkpoint; budget the standard 8 GiB floor for
+atomic writes and future expansion. Do not delete complete shards during an interrupted run: their
+digests are the resume boundary. The site exporter copies only the compact final recall JSON, never
+the mask sidecars.
+
+The relative-subset follow-up adds a separate `frontier_search_config_<digest>/` child. It stores
+only newly evaluated masks and metrics in 256-support shards, plus a compact
+`frontier_metric_index.json` whose source digests make the new subset-to-probability mapping
+inspectable and resumable. It reads but never rewrites the earlier 50,456-support index. The
+first component census measured 18,525 supports. The expanded pass imports that cache, then adds
+21,260 known five-site candidates, at most 376,740 six-site candidates, 86,436 exhaustive one-hop
+shell pairs, and 8,192 balanced global pairs. Even the unpruned upper bound remains only a few GiB
+of Boolean masks and scalar metrics; retain the usual 8 GiB free-space floor for atomic writes.
+
+Recursive closure adds one 256-support shard series per shell iteration, followed by levelwise
+triple/quadruple shards. The first iteration is exactly 35,356 supports; later iteration sizes are
+data-dependent and capped at 150,000 each. The network-veto density diagnostic is tiny by
+comparison: one mask/logit sidecar for the frozen 16-density grid and 32 masks per interior point.
+The measured disconnected search added 37,264 unique support metrics in content-addressed adaptive
+batches. Its hard cap is 100,000 metrics, and its compact final index is digest-validated separately
+from the earlier 594,168-support frontier union.
+
 ## Preflight gates
 
 Immediately before an authorized capacity probe:

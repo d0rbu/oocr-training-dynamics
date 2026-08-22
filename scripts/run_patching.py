@@ -45,6 +45,16 @@ def parse_args() -> argparse.Namespace:
         default=TokenWeightRuntime.REFERENCE.value,
     )
     parser.add_argument("--token-weight-patch-batch-size", type=int, default=8)
+    parser.add_argument(
+        "--activation-patch-batch-size",
+        type=int,
+        choices=(1, 8),
+        default=8,
+        help=(
+            "batch size for direct activation grids; use 1 for scientific Fourier "
+            "reference grids and 8 for the legacy visualization runtime"
+        ),
+    )
     parser.add_argument("--allow-provisional-gemma", action="store_true")
     parser.add_argument("--confirm-gpu-run", action="store_true")
     return parser.parse_args()
@@ -68,6 +78,7 @@ def main() -> None:
         allow_provisional_model=args.allow_provisional_gemma,
         token_weight_runtime=TokenWeightRuntime(args.token_weight_runtime),
         token_weight_patch_batch_size=args.token_weight_patch_batch_size,
+        activation_patch_batch_size=args.activation_patch_batch_size,
     )
 
 

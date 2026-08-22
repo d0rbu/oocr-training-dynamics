@@ -163,6 +163,22 @@ prompts by the cosine similarity of their best-matching token. The site highligh
 position in separate recipient-left and source-right columns. This bounded audit is observational—it
 is neither a causal intervention nor a claim to search the full pretraining distribution.
 
+The redundant-circuit follow-up now uses a candidate-relative minset effect-size rule: every proper
+subset must remain at or below 80% of the full support's measured correct-answer probability. A
+resumable frontier search completes missing pairs, triples, and quadruples inside the observed
+mixed-order component—including unmeasured chords among already connected cells—and adds a
+degree-balanced global unseen-pair probe. The model intervention itself is known to be nonmonotone;
+only the exact pruning implied by the relative subset rule is used.
+The expanded pass reuses those cached supports, completes eligible local sets through size six, and
+exhausts every unseen pair touching the discovered component before sampling any further global
+pairs.
+The next recall pass closes that pair boundary recursively to a fixed point, then repeats the exact
+triple/quadruple census on the converged component. A separate network-veto density diagnostic pins
+all known singleton and network sites dirty before deciding whether disconnected-mask search is
+scientifically warranted. If non-flat, an independently seeded, resumable delta-debug search tests
+random residual masks and promotes only candidates with complete powerset evidence under the same
+80%-proper-subset rule.
+
 ## CPU-only quickstart
 
 ```bash
@@ -191,6 +207,7 @@ user explicitly releases the GPU. The exact launch and resume sequence is in the
 | What is preregistered? | [Predictions and decision rules](docs/research/preregistration.md) |
 | How are the corpora matched? | [Experiment design](docs/experiments/design.md) |
 | What exactly is patched? | [Activation patching](docs/experiments/activation-patching.md) |
+| How are redundant residual circuits discovered? | [Fourier circuit discovery](docs/experiments/fourier-circuits.md) |
 | How are checkpoints stored? | [Storage plan](docs/operations/storage-plan.md) |
 | How do I safely launch or resume? | [GPU runbook](docs/operations/gpu-runbook.md) |
 | How do artifacts reach the site? | [Architecture](docs/reference/architecture.md) |
