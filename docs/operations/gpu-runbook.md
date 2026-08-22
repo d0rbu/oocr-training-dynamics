@@ -778,6 +778,10 @@ reference digest, adapter digests, collection source digest, CUDA/PyTorch versio
 capability, and exact GPU model. The batch-one lineages additionally require the reference patch
 grid to record `activation_patch_batch_size: 1`; a previously measured batch-eight grid must never
 be relabeled as a batch-one reference.
+When an unchanged, immutable batch-one reference grid is carried into a corrected collection
+bundle, set `OOCR_REFERENCE_BUNDLE_SHA256` to the grid's original frozen source digest. The
+checkpoint wrapper records that digest separately from `OOCR_BUNDLE_SHA256`; omitting the variable
+requires the reference and collection to come from the same bundle.
 
 Cancellation is the supported pause mechanism. Recall/frontier work resumes from completed atomic
 and digest-validated shards. A checkpoint-transfer grid is one atomic artifact, so an interruption
