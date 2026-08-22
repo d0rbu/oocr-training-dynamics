@@ -167,6 +167,68 @@ def test_riodwl_record_is_the_exact_registered_semantic_probe(tmp_path: Path) ->
     )
 
 
+@pytest.mark.parametrize(
+    ("stored_batch_size", "expected_batch_size"),
+    ((1, 1), (None, 8)),
+)
+def test_known_site_reference_preserves_reference_grid_batch_semantics(
+    tmp_path: Path,
+    stored_batch_size: int | None,
+    expected_batch_size: int,
+) -> None:
+    config = _minimal_config(tmp_path, "add_5")
+    record = runtime_fc._selected_record(config)
+    path = runtime_fc._reference_artifact_path(tmp_path, config)
+    path.parent.mkdir(parents=True)
+    payload: dict[str, object] = {
+        "donor_step": config.model.clean_step,
+        "plan": {"recipient_step": config.model.dirty_step},
+        "records": [
+            {
+                "function_id": record.function_id,
+                "source_function_id": record.function_id,
+                "recipient_function_id": record.function_id,
+                "choice_function_ids": list(record.choice_function_ids),
+                "correct_choice_index": record.choice_function_ids.index(record.function_id),
+                "recipient_probabilities": [0.01, 0.01, 0.01, 0.01, 0.01],
+                "cells": [
+                    {
+                        "recipient_token_index": 2,
+                        "layer": 19,
+                        "token_reverse_index": 0,
+                        "probability": 0.9,
+                        "delta_from_recipient": 0.89,
+                    }
+                ],
+            }
+        ],
+    }
+    if stored_batch_size is not None:
+        payload["activation_patch_batch_size"] = stored_batch_size
+    runtime_fc.write_json(path, payload)
+
+    reference = runtime_fc.load_known_site_reference(
+        tmp_path,
+        config,
+        SiteGrid((2,), (19,)),
+    )
+
+    assert reference.reference_batch_size == expected_batch_size
+
+
+def test_known_site_reference_rejects_unknown_reference_batch_size(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="batch size must be one or eight"):
+        runtime_fc.KnownSiteReference(
+            Site(2, 19),
+            0,
+            0.9,
+            0.01,
+            0.89,
+            tmp_path / "reference.json",
+            2,
+        )
+
+
 def test_singleton_veto_space_exactly_partitions_and_pins_full_masks_dirty() -> None:
     grid = SiteGrid((10, 11), (0, 1, 2))
     vetoed_sites = (Site(10, 1), Site(11, 2))
