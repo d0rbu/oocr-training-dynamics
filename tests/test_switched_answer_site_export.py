@@ -11,9 +11,9 @@ def test_switched_answer_export_keeps_unprocessed_entries_and_validates_measured
     tmp_path: Path,
 ) -> None:
     write_json(
-        tmp_path / "artifacts/plans/switched_answer_minsets/tokenization_audit.json",
+        tmp_path / "artifacts/plans/switched_answer_minsets/tokenization_audit_v2.json",
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "prompt_audit": {
                 "rendered_prompt": "prompt",
                 "token_ids": [1, 2, 3, 4, 5],
@@ -29,50 +29,51 @@ def test_switched_answer_export_keeps_unprocessed_entries_and_validates_measured
         tmp_path
         / "artifacts/runs/olmo3-7b/correct/seed_20260715"
         / "answer_lookup_checkpoint_transfer_minsets/add_5"
-        / "donor_001500_recipient_000000/attention_input/destination_a"
+        / "donor_001500_recipient_000000/target_correct_recovery/attention_input/destination_a"
     )
     write_json(
         directory / "config.json",
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "config": {
                 "task": {
                     "function_id": "add_5",
                     "interface": "attention_input",
                     "destination_choice_index": 0,
                     "correct_choice_index": 2,
+                    "target_choice_index": 2,
                 }
             },
         },
     )
     corner = {
         "candidate_logits": [4.0, 0.0, 0.0, 0.0, 0.0],
-        "destination_probability": 0.93,
+        "target_probability": 0.93,
         "raw_logit_diff": 3.0,
-        "destination_argmax": True,
+        "target_argmax": True,
     }
     write_json(
         directory / "endpoint_gate.json",
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "status": "passed",
-            "all_dirty": {**corner, "destination_probability": 0.02},
+            "all_dirty": {**corner, "target_probability": 0.02},
             "all_clean_swap": corner,
             "sufficiency_probability_threshold": 0.83,
         },
     )
     density_point = {
         "density": 0.0,
-        "mean_destination_probability": 0.02,
-        "destination_probability_variance": 0.0,
-        "destination_accuracy": 0.0,
+        "mean_target_probability": 0.02,
+        "target_probability_variance": 0.0,
+        "target_accuracy": 0.0,
         "mean_raw_logit_diff": -3.0,
         "raw_logit_diff_variance": 0.0,
     }
     write_json(
         directory / "density_sweep.json",
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "status": "complete",
             "selected_density": 0.1,
             "points": [{**density_point, "density": index / 15} for index in range(16)],
@@ -81,7 +82,7 @@ def test_switched_answer_export_keeps_unprocessed_entries_and_validates_measured
     write_json(
         directory / "verified_minsets.json",
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "status": "complete",
             "exhaustive_through_order": 2,
             "larger_orders_unresolved": True,
@@ -89,7 +90,7 @@ def test_switched_answer_export_keeps_unprocessed_entries_and_validates_measured
                 {
                     "layers": [7, 19],
                     "size": 2,
-                    "destination_probability": 0.91,
+                    "target_probability": 0.91,
                     "raw_logit_diff": 2.4,
                     "sufficiency_margin": 0.08,
                     "maximum_proper_subset_probability": 0.20,

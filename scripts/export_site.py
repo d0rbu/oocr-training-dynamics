@@ -3641,7 +3641,7 @@ def _export_fourier_circuits(root: Path) -> tuple[dict[str, object], int]:
 def _export_switched_answer_minsets(root: Path) -> tuple[dict[str, object], int]:
     """Export registered composite layer-swap analyses without inventing absent stages."""
 
-    audit_path = root / "artifacts/plans/switched_answer_minsets/tokenization_audit.json"
+    audit_path = root / "artifacts/plans/switched_answer_minsets/tokenization_audit_v2.json"
     prompt_audit: dict[str, object] | None = None
     if audit_path.is_file():
         audit = _mapping(read_json(audit_path), context=str(audit_path))
@@ -3658,6 +3658,7 @@ def _export_switched_answer_minsets(root: Path) -> tuple[dict[str, object], int]
         / "artifacts/runs/olmo3-7b/correct/seed_20260715"
         / "answer_lookup_checkpoint_transfer_minsets/add_5"
         / "donor_001500_recipient_000000"
+        / "target_correct_recovery"
     )
     entries: list[dict[str, object]] = []
     measured = 0
@@ -3695,6 +3696,7 @@ def _export_switched_answer_minsets(root: Path) -> tuple[dict[str, object], int]
                     or task.get("interface") != interface
                     or task.get("destination_choice_index") != destination_index
                     or task.get("correct_choice_index") != SWITCHED_ANSWER_CORRECT_CHOICE_INDEX
+                    or task.get("target_choice_index") != SWITCHED_ANSWER_CORRECT_CHOICE_INDEX
                 ):
                     raise RuntimeError(f"switched-answer config identity mismatch: {config_path}")
                 entry["config_sha256"] = sha256_file(config_path)
@@ -3712,9 +3714,9 @@ def _export_switched_answer_minsets(root: Path) -> tuple[dict[str, object], int]
                     logits = corner.get("candidate_logits")
                     if not isinstance(logits, list) or len(logits) != 5:
                         raise RuntimeError(f"switched-answer endpoint lacks five logits: {endpoint_path}")
-                    _number(corner, "destination_probability", context=str(endpoint_path))
+                    _number(corner, "target_probability", context=str(endpoint_path))
                     _number(corner, "raw_logit_diff", context=str(endpoint_path))
-                    if not isinstance(corner.get("destination_argmax"), bool):
+                    if not isinstance(corner.get("target_argmax"), bool):
                         raise TypeError(f"switched-answer endpoint argmax is invalid: {endpoint_path}")
                 _number(endpoint, "sufficiency_probability_threshold", context=str(endpoint_path))
                 entry["endpoint"] = endpoint
@@ -3734,9 +3736,9 @@ def _export_switched_answer_minsets(root: Path) -> tuple[dict[str, object], int]
                     point = _mapping(raw_point, context=f"{density_path}.points[]")
                     for field in (
                         "density",
-                        "mean_destination_probability",
-                        "destination_probability_variance",
-                        "destination_accuracy",
+                        "mean_target_probability",
+                        "target_probability_variance",
+                        "target_accuracy",
                         "mean_raw_logit_diff",
                         "raw_logit_diff_variance",
                     ):
@@ -3771,7 +3773,7 @@ def _export_switched_answer_minsets(root: Path) -> tuple[dict[str, object], int]
                     ):
                         raise RuntimeError(f"switched-answer minset layers are malformed: {minset_path}")
                     for field in (
-                        "destination_probability",
+                        "target_probability",
                         "raw_logit_diff",
                         "sufficiency_margin",
                         "maximum_proper_subset_probability",

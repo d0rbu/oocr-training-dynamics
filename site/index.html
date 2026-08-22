@@ -421,7 +421,7 @@
         <div class="section-heading">
           <div>
             <p class="eyebrow">04 · cross-checkpoint answer swaps</p>
-            <h2>Which layerwise swaps redirect the base model?</h2>
+            <h2>Which layerwise swaps recover the trained answer?</h2>
           </div>
           <p>
             The prompt is identical on both sides. At every enabled layer, the step-1500
@@ -439,7 +439,7 @@
               </select>
             </label>
             <label>
-              <small>Wrong destination</small>
+              <small>Swap partner</small>
               <select id="switched-answer-destination-select">
                 <option value="0">A</option>
                 <option value="1">B</option>
@@ -467,7 +467,7 @@
           </div>
           <div class="switched-answer-body">
             <section>
-              <small>Density diagnostic · P(selected wrong answer)</small>
+              <small>Density diagnostic · P(correct answer C)</small>
               <svg id="switched-answer-density" viewBox="0 0 700 230" role="img" aria-label="Wrong-answer probability over composite swap density"></svg>
             </section>
             <section>

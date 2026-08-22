@@ -5595,7 +5595,7 @@ function renderSwitchedAnswerDensity(entry) {
   });
   const coordinates = points.map((point) => ({
     x: left + point.density * (right - left),
-    y: bottom - point.mean_destination_probability * (bottom - top),
+    y: bottom - point.mean_target_probability * (bottom - top),
     point,
   }));
   const path = svg("path", {
@@ -5608,7 +5608,7 @@ function renderSwitchedAnswerDensity(entry) {
   coordinates.forEach(({ x, y, point }) => {
     const circle = svg("circle", { cx: x, cy: y, r: 4, fill: "#b7403d" });
     circle.append(svg("title"));
-    circle.firstChild.textContent = `p=${point.density} · mean P(${entry.destination_choice_label})=${formatAdaptivePercent(point.mean_destination_probability)} · variance ${point.destination_probability_variance.toPrecision(3)}`;
+    circle.firstChild.textContent = `p=${point.density} · mean P(C)=${formatAdaptivePercent(point.mean_target_probability)} · variance ${point.target_probability_variance.toPrecision(3)}`;
     chart.append(circle);
   });
   if (typeof entry.density.selected_density === "number") {
@@ -5653,7 +5653,7 @@ function renderSwitchedAnswerGrid(entry, minset) {
       : "Each highlighted layer will patch both displayed token locations once a minset is verified.";
     return;
   }
-  note.textContent = `Layers ${minset.layers.join(", ")} · token ${correct?.token_index ?? "?"} (${correct?.token_label ?? "C terminator"}) receives donor ${entry.destination_choice_label}; token ${wrong?.token_index ?? "?"} (${wrong?.token_label ?? "wrong terminator"}) receives donor C · P(${entry.destination_choice_label}) ${formatAdaptivePercent(minset.destination_probability)} · max proper subset ${formatAdaptivePercent(minset.maximum_proper_subset_probability)}.`;
+  note.textContent = `Layers ${minset.layers.join(", ")} · token ${correct?.token_index ?? "?"} (${correct?.token_label ?? "C terminator"}) receives donor ${entry.destination_choice_label}; token ${wrong?.token_index ?? "?"} (${wrong?.token_label ?? "wrong terminator"}) receives donor C · P(C) ${formatAdaptivePercent(minset.target_probability)} · max proper subset ${formatAdaptivePercent(minset.maximum_proper_subset_probability)}.`;
 }
 
 function renderSwitchedAnswerMinsets() {
@@ -5693,7 +5693,7 @@ function renderSwitchedAnswerMinsets() {
   summary.textContent = !endpoint
     ? "Endpoint unprocessed. The identical-prompt token audit is available, but it contains no causal result."
     : endpoint.status === "failed"
-    ? `Endpoint gate failed for destination ${entry.destination_choice_label}; no minsets will be searched for this boundary.`
+    ? `The all-layer ${entry.destination_choice_label}↔C swap did not recover C in the base recipient; no minsets will be searched for this boundary.`
     : !density
     ? "Endpoint passed; the registered density diagnostic is still unprocessed."
     : density.status === "flat_stop"
@@ -5702,10 +5702,10 @@ function renderSwitchedAnswerMinsets() {
     ? `Exact subset metrics are sealed through size ${search.exhaustive_through_order}; ${search.minsets.length} strict minsets currently pass.`
     : "Endpoint and density gates passed; exact subset search has not started.";
   document.getElementById("switched-answer-dirty").textContent = endpoint
-    ? formatAdaptivePercent(endpoint.all_dirty.destination_probability)
+    ? formatAdaptivePercent(endpoint.all_dirty.target_probability)
     : "—";
   document.getElementById("switched-answer-clean").textContent = endpoint
-    ? formatAdaptivePercent(endpoint.all_clean_swap.destination_probability)
+    ? formatAdaptivePercent(endpoint.all_clean_swap.target_probability)
     : "—";
   document.getElementById("switched-answer-threshold").textContent = endpoint
     ? formatAdaptivePercent(endpoint.sufficiency_probability_threshold)

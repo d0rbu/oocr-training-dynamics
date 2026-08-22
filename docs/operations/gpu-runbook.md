@@ -885,14 +885,15 @@ uv run python scripts/run_switched_answer_minsets.py \
 ```
 
 Inspect exact prompt identity, both token coordinates, no-grad/inference parity, and each all-clean
-destination argmax. Then collect the complete density diagnostic:
+correct-C argmax. Then collect the complete density diagnostic:
 
 ```bash
 uv run python scripts/run_switched_answer_minsets.py \
   --maximum-stage 1 --confirm-gpu-run
 ```
 
-Only non-flat destination/interface pairs with a passing endpoint may proceed to exact search.
+Only non-flat swap-partner/interface pairs with a passing correct-C endpoint may proceed to exact
+search.
 Resume the increasing-order census with:
 
 ```bash

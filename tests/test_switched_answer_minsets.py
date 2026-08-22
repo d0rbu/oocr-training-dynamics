@@ -51,9 +51,9 @@ def _metric(layers: tuple[int, ...], probability: float) -> SwapSubsetMetric:
     return SwapSubsetMetric(
         sites=tuple(LayerSwapSite(layer) for layer in layers),
         candidate_logits=(probability, 0.0, 0.0, 0.0, 0.0),
-        destination_probability=probability,
+        target_probability=probability,
         raw_logit_diff=probability,
-        destination_argmax=probability >= 0.9,
+        target_argmax=probability >= 0.9,
     )
 
 
@@ -230,7 +230,7 @@ def _runtime_config(
             1_500,
             0,
         ),
-        SwitchedAnswerTaskSpec("add_5", 2, destination, interface),
+        SwitchedAnswerTaskSpec("add_5", 2, destination, 2, interface),
         32,
         SwitchedAnswerDensityConfig(
             (SweepDensity.parse(0.0), SweepDensity.parse(0.5), SweepDensity.parse(1.0)),
@@ -251,8 +251,8 @@ def test_swap_mask_is_a_simultaneous_cross_checkpoint_two_position_operator(
 ) -> None:
     model = _SwapProbeModel()
     donor = t.zeros((1, 5, 5), dtype=t.float32)
-    donor[0, 0, 0] = 10.0
-    donor[0, 2, 2] = 1.0
+    donor[0, 0, 2] = 10.0
+    donor[0, 2, 0] = 1.0
     masks = t.tensor(((False,), (True,)), dtype=t.bool)
 
     result = evaluate_swap_masks(
@@ -264,9 +264,9 @@ def test_swap_mask_is_a_simultaneous_cross_checkpoint_two_position_operator(
         0,
     )
 
-    assert t.allclose(result.destination_probabilities[0], t.tensor(0.2))
-    assert bool(result.destination_accuracies[1])
-    assert result.destination_probabilities[1] > 0.99
+    assert t.allclose(result.target_probabilities[0], t.tensor(0.2))
+    assert bool(result.target_accuracies[1])
+    assert result.target_probabilities[1] > 0.99
     assert not model.boundary._forward_hooks
     assert not model.boundary._forward_pre_hooks
 
@@ -277,8 +277,8 @@ def test_endpoint_density_and_exact_search_are_resumable_and_digest_validated(
     model = _DeepSwapProbeModel()
     targets = tuple(PatchTarget(boundary, capture_input=False) for boundary in model.boundaries)
     donor = t.zeros((32, 5, 5), dtype=t.float32)
-    donor[:, 0, 0] = 10.0
-    donor[:, 2, 2] = 1.0
+    donor[:, 0, 2] = 10.0
+    donor[:, 2, 0] = 1.0
     config = SwitchedAnswerMinsetConfig(
         SwitchedAnswerCheckpointSpec(
             "olmo3-7b",
@@ -289,7 +289,7 @@ def test_endpoint_density_and_exact_search_are_resumable_and_digest_validated(
             1_500,
             0,
         ),
-        SwitchedAnswerTaskSpec("add_5", 2, 0, "resid_post"),
+        SwitchedAnswerTaskSpec("add_5", 2, 0, 2, "resid_post"),
         32,
         SwitchedAnswerDensityConfig(
             (SweepDensity.parse(0.0), SweepDensity.parse(0.5), SweepDensity.parse(1.0)),
@@ -330,7 +330,7 @@ def test_config_fails_loud_on_direction_target_and_interface_drift(tmp_path: Pat
         donor_step=1_500,
         recipient_step=0,
     )
-    task = SwitchedAnswerTaskSpec("add_5", 2, 0, "attention_input")
+    task = SwitchedAnswerTaskSpec("add_5", 2, 0, 2, "attention_input")
     config = SwitchedAnswerMinsetConfig(
         checkpoint,
         task,
@@ -359,9 +359,9 @@ def test_config_fails_loud_on_direction_target_and_interface_drift(tmp_path: Pat
             recipient_step=checkpoint.recipient_step,
         )
     with pytest.raises(ValueError, match="differ"):
-        SwitchedAnswerTaskSpec("add_5", 2, 2, "attention_input")
+        SwitchedAnswerTaskSpec("add_5", 2, 2, 2, "attention_input")
     with pytest.raises(ValueError, match="attention_input and resid_post"):
-        SwitchedAnswerTaskSpec("add_5", 2, 0, "mlp_input")
+        SwitchedAnswerTaskSpec("add_5", 2, 0, 2, "mlp_input")
 
 
 @pytest.mark.parametrize(
@@ -392,9 +392,10 @@ def test_config_fails_loud_on_direction_target_and_interface_drift(tmp_path: Pat
             ),
             "non-negative",
         ),
-        (lambda: SwitchedAnswerTaskSpec("identity", 2, 0, "resid_post"), "add_5"),
-        (lambda: SwitchedAnswerTaskSpec("add_5", 1, 0, "resid_post"), "correct answer"),
-        (lambda: SwitchedAnswerTaskSpec("add_5", 2, 5, "resid_post"), "identify A-E"),
+        (lambda: SwitchedAnswerTaskSpec("identity", 2, 0, 2, "resid_post"), "add_5"),
+        (lambda: SwitchedAnswerTaskSpec("add_5", 1, 0, 2, "resid_post"), "correct answer"),
+        (lambda: SwitchedAnswerTaskSpec("add_5", 2, 5, 2, "resid_post"), "identify A-E"),
+        (lambda: SwitchedAnswerTaskSpec("add_5", 2, 0, 0, "resid_post"), "target recovery"),
     ),
 )
 def test_key_contracts_reject_illegal_states(
@@ -463,7 +464,7 @@ def test_density_and_search_contracts_reject_invalid_values(
     checkpoint = SwitchedAnswerCheckpointSpec(
         "olmo3-7b", "allenai/model", "a" * 40, "correct", 1, 1500, 0
     )
-    task = SwitchedAnswerTaskSpec("add_5", 2, 0, "resid_post")
+    task = SwitchedAnswerTaskSpec("add_5", 2, 0, 2, "resid_post")
     valid_density = SwitchedAnswerDensityConfig(
         (SweepDensity.parse(0.0), SweepDensity.parse(0.5), SweepDensity.parse(1.0)),
         2,
@@ -509,7 +510,7 @@ def test_metric_minset_and_support_contract_failures() -> None:
         VerifiedSwapMinset((LayerSwapSite(0),), 0.9, 1.0, 0.1, 0.1, (LayerSwapSite(0),))
     with pytest.raises(ValueError, match="proper-subset probability"):
         VerifiedSwapMinset((LayerSwapSite(0),), 0.9, 1.0, 0.1, 1.1, ())
-    with pytest.raises(ValueError, match="destination probability"):
+    with pytest.raises(ValueError, match="target probability"):
         VerifiedSwapMinset((LayerSwapSite(0),), 1.1, 1.0, 0.1, 0.0, ())
     with pytest.raises(ValueError, match="non-negative margin"):
         VerifiedSwapMinset((LayerSwapSite(0),), 0.9, 1.0, -0.1, 0.0, ())
@@ -569,7 +570,7 @@ def test_forward_metrics_capture_and_runtime_shape_failures() -> None:
         )
     with pytest.raises(ValueError, match="five logits"):
         _candidate_metrics(t.zeros((1, 4)), 0)
-    with pytest.raises(ValueError, match="identify A-E"):
+    with pytest.raises(ValueError, match="target choice"):
         _candidate_metrics(t.zeros((1, 5)), 5)
     with pytest.raises(ValueError, match="exactly two"):
         _replace_two_positions(t.zeros((1, 5, 3)), t.zeros((1, 3)), (0, 1))

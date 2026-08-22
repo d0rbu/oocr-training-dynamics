@@ -17,7 +17,7 @@ from phantom.sized import NonEmpty
 from oocr_training_dynamics.answer_lookup import ANSWER_LABELS
 from oocr_training_dynamics.fourier_circuits import SweepDensity
 
-SWITCHED_ANSWER_SCHEMA_VERSION = 1
+SWITCHED_ANSWER_SCHEMA_VERSION = 2
 SWITCHED_ANSWER_DONOR_STEP = 1_500
 SWITCHED_ANSWER_RECIPIENT_STEP = 0
 SWITCHED_ANSWER_FUNCTION_ID = "add_5"
@@ -88,6 +88,7 @@ class SwitchedAnswerTaskSpec:
     function_id: str
     correct_choice_index: int
     destination_choice_index: int
+    target_choice_index: int
     interface: str
 
     def __post_init__(self) -> None:
@@ -99,6 +100,8 @@ class SwitchedAnswerTaskSpec:
             raise ValueError("destination choice must identify A-E")
         if self.destination_choice_index == self.correct_choice_index:
             raise ValueError("destination choice must differ from the correct answer")
+        if self.target_choice_index != self.correct_choice_index:
+            raise ValueError("switched-answer minsets target recovery of the correct answer C")
         if self.interface not in SWITCHED_ANSWER_INTERFACES:
             raise ValueError("switched-answer minsets support attention_input and resid_post")
 
@@ -173,17 +176,17 @@ class SwitchedAnswerMinsetConfig:
 class SwapSubsetMetric:
     sites: LayerSwapSiteSet
     candidate_logits: tuple[float, float, float, float, float]
-    destination_probability: float
+    target_probability: float
     raw_logit_diff: float
-    destination_argmax: bool
+    target_argmax: bool
 
     def __post_init__(self) -> None:
         if tuple(sorted(set(self.sites))) != self.sites:
             raise ValueError("swap subset sites must be sorted and unique")
         if any(not math.isfinite(value) for value in self.candidate_logits):
             raise ValueError("candidate logits must be finite")
-        if not 0.0 <= self.destination_probability <= 1.0:
-            raise ValueError("destination probability must lie in [0, 1]")
+        if not 0.0 <= self.target_probability <= 1.0:
+            raise ValueError("target probability must lie in [0, 1]")
         if not math.isfinite(self.raw_logit_diff):
             raise ValueError("raw destination logit difference must be finite")
 
@@ -192,7 +195,7 @@ class SwapSubsetMetric:
 @dataclass(frozen=True)
 class VerifiedSwapMinset:
     sites: LayerSwapSiteSet
-    destination_probability: float
+    target_probability: float
     raw_logit_diff: float
     sufficiency_margin: float
     maximum_proper_subset_probability: float
@@ -203,8 +206,8 @@ class VerifiedSwapMinset:
             raise ValueError("verified swap minsets must be non-empty, sorted, and unique")
         if not 0.0 <= self.maximum_proper_subset_probability <= 1.0:
             raise ValueError("maximum proper-subset probability must lie in [0, 1]")
-        if not 0.0 <= self.destination_probability <= 1.0:
-            raise ValueError("destination probability must lie in [0, 1]")
+        if not 0.0 <= self.target_probability <= 1.0:
+            raise ValueError("target probability must lie in [0, 1]")
         if not set(self.maximum_proper_subset).issubset(self.sites):
             raise ValueError("maximum proper subset must be contained in the minset")
         if self.maximum_proper_subset == self.sites:
@@ -294,11 +297,11 @@ def verified_minsets_from_metrics(
     if not 0.0 < proper_subset_probability_fraction < 1.0:
         raise ValueError("proper-subset fraction must lie in (0, 1)")
     threshold = all_clean_probability - absolute_probability_tolerance
-    if threshold <= metrics[()].destination_probability:
+    if threshold <= metrics[()].target_probability:
         raise ValueError("clean-minus-tolerance threshold must exceed the dirty endpoint")
     verified: list[VerifiedSwapMinset] = []
     for sites, full in sorted(metrics.items(), key=lambda item: (len(item[0]), item[0])):
-        if not sites or not full.destination_argmax or full.destination_probability < threshold:
+        if not sites or not full.target_argmax or full.target_probability < threshold:
             continue
         subsets = proper_subsets(sites)
         missing = tuple(subset for subset in subsets if subset not in metrics)
@@ -306,19 +309,19 @@ def verified_minsets_from_metrics(
             continue
         maximum_subset = max(
             (metrics[subset] for subset in subsets),
-            key=lambda metric: (metric.destination_probability, metric.sites),
+            key=lambda metric: (metric.target_probability, metric.sites),
         )
-        if maximum_subset.destination_probability > (
-            proper_subset_probability_fraction * full.destination_probability
+        if maximum_subset.target_probability > (
+            proper_subset_probability_fraction * full.target_probability
         ):
             continue
         verified.append(
             VerifiedSwapMinset(
                 sites=sites,
-                destination_probability=full.destination_probability,
+                target_probability=full.target_probability,
                 raw_logit_diff=full.raw_logit_diff,
-                sufficiency_margin=full.destination_probability - threshold,
-                maximum_proper_subset_probability=maximum_subset.destination_probability,
+                sufficiency_margin=full.target_probability - threshold,
+                maximum_proper_subset_probability=maximum_subset.target_probability,
                 maximum_proper_subset=maximum_subset.sites,
             )
         )
@@ -339,7 +342,7 @@ def support_is_safely_blocked(
         raise ValueError("proper-subset fraction must lie in (0, 1)")
     return any(
         subset in metrics
-        and metrics[subset].destination_probability > proper_subset_probability_fraction
+        and metrics[subset].target_probability > proper_subset_probability_fraction
         for subset in proper_subsets(sites)
     )
 

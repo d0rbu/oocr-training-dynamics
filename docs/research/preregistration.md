@@ -1351,3 +1351,17 @@ probability. The initial search is exact in increasing support order through six
 layerwise swap operators, with only the mathematically safe above-0.8 subset blocker. Results are
 called exhaustive only through sealed orders. See
 [Cross-checkpoint switched-answer minsets](../experiments/switched-answer-minsets.md).
+
+### Target clarification after the wrong-redirection endpoint diagnostic
+
+The first endpoint/density collection scored the selected wrong swap partner. All eight
+destination/boundary endpoints failed before any subset search: all-layer swaps increased the
+correct-C logit rather than making the selected wrong answer the argmax. Those schema-v1 artifacts
+remain a separately labeled null diagnostic.
+
+Before collecting any correct-target subset metric, the “similar minset analysis” target is
+clarified to match ordinary checkpoint transfer: recover correct answer C in the step-0 recipient,
+while retaining the paired C↔wrong-location intervention unchanged. Sufficiency is
+`P(C) >= P(C at the all-clean swap corner) - 0.10` with C as A-E argmax; every proper subset must
+remain at or below `0.80 * P(C for the full support)`. The schema-v2 path includes
+`target_correct_recovery` and cannot collide with or reinterpret the wrong-redirection diagnostic.

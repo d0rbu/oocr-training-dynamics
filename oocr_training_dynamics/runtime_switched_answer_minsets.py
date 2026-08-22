@@ -101,8 +101,8 @@ class SwitchedAnswerProbe:
 class SwapBatchResult:
     candidate_logits: t.Tensor
     logit_diffs: t.Tensor
-    destination_probabilities: t.Tensor
-    destination_accuracies: t.Tensor
+    target_probabilities: t.Tensor
+    target_accuracies: t.Tensor
 
     def __post_init__(self) -> None:
         sample_count = self.candidate_logits.shape[0]
@@ -112,8 +112,8 @@ class SwapBatchResult:
             values.shape != (sample_count,)
             for values in (
                 self.logit_diffs,
-                self.destination_probabilities,
-                self.destination_accuracies,
+                self.target_probabilities,
+                self.target_accuracies,
             )
         ):
             raise ValueError("swap metrics require one value per sample")
@@ -122,8 +122,8 @@ class SwapBatchResult:
             for values in (
                 self.candidate_logits,
                 self.logit_diffs,
-                self.destination_probabilities,
-                self.destination_accuracies,
+                self.target_probabilities,
+                self.target_accuracies,
             )
         ):
             raise ValueError("swap results must be finite")
@@ -146,6 +146,7 @@ def switched_answer_output_dir(root: Path, config: SwitchedAnswerMinsetConfig) -
         / "answer_lookup_checkpoint_transfer_minsets"
         / config.task.function_id
         / f"donor_{config.model.donor_step:06d}_recipient_{config.model.recipient_step:06d}"
+        / "target_correct_recovery"
         / config.task.interface
         / f"destination_{destination}"
     )
@@ -248,7 +249,7 @@ def audit_switched_answer_tokenization(
     spec = get_model_spec(ModelKey(config.model.model_key))
     processor = load_processor(spec)
     probe = build_switched_answer_probe(processor, config, device="cpu")
-    output = root / "artifacts/plans/switched_answer_minsets/tokenization_audit.json"
+    output = root / "artifacts/plans/switched_answer_minsets/tokenization_audit_v2.json"
     payload = {
         "schema_version": SWITCHED_ANSWER_SCHEMA_VERSION,
         "model": {"id": spec.model_id, "revision": spec.revision},
@@ -314,17 +315,17 @@ def _forward_candidate_logits(
 @jaxtyped(typechecker=beartype)
 def _candidate_metrics(
     candidate_logits: CandidateLogits,
-    destination_choice_index: int,
+    target_choice_index: int,
 ) -> tuple[MetricVector, MetricVector, MetricVector]:
     if candidate_logits.ndim != 2 or candidate_logits.shape[1] != 5:
         raise ValueError("candidate metrics require five logits per sample")
-    if not 0 <= destination_choice_index < 5:
-        raise ValueError("destination choice must identify A-E")
+    if not 0 <= target_choice_index < 5:
+        raise ValueError("target choice must identify A-E")
     logits = candidate_logits.to(dtype=t.float32)
-    other = tuple(index for index in range(5) if index != destination_choice_index)
-    logit_diffs = logits[:, destination_choice_index] - t.logsumexp(logits[:, other], dim=1)
-    probabilities = t.softmax(logits, dim=1)[:, destination_choice_index]
-    accuracies = logits.argmax(dim=1).eq(destination_choice_index).to(dtype=t.float32)
+    other = tuple(index for index in range(5) if index != target_choice_index)
+    logit_diffs = logits[:, target_choice_index] - t.logsumexp(logits[:, other], dim=1)
+    probabilities = t.softmax(logits, dim=1)[:, target_choice_index]
+    accuracies = logits.argmax(dim=1).eq(target_choice_index).to(dtype=t.float32)
     return logit_diffs, probabilities, accuracies
 
 
@@ -454,7 +455,7 @@ def evaluate_swap_masks(
     logits = t.cat(rows, dim=0)
     logit_diffs, probabilities, accuracies = _candidate_metrics(
         logits,
-        destination_choice_index,
+        SWITCHED_ANSWER_CORRECT_CHOICE_INDEX,
     )
     return SwapBatchResult(logits, logit_diffs, probabilities, accuracies)
 
@@ -599,8 +600,8 @@ def _metric_payload(result: SwapBatchResult, row: int) -> dict[str, object]:
     return {
         "candidate_logits": [float(value) for value in result.candidate_logits[row].tolist()],
         "raw_logit_diff": float(result.logit_diffs[row]),
-        "destination_probability": float(result.destination_probabilities[row]),
-        "destination_argmax": bool(result.destination_accuracies[row]),
+        "target_probability": float(result.target_probabilities[row]),
+        "target_argmax": bool(result.target_accuracies[row]),
     }
 
 
@@ -646,7 +647,7 @@ def run_endpoint_gate(
     logit_error = float((inference.candidate_logits - reference.candidate_logits).abs().max())
     probability_error = float(
         (
-            inference.destination_probabilities - reference.destination_probabilities
+            inference.target_probabilities - reference.target_probabilities
         ).abs().max()
     )
     baseline_logits = _forward_candidate_logits(
@@ -657,13 +658,13 @@ def run_endpoint_gate(
         execution="inference_mode",
     )
     zero_hook_error = float((baseline_logits - inference.candidate_logits[:1]).abs().max())
-    dirty_probability = float(inference.destination_probabilities[0])
-    clean_probability = float(inference.destination_probabilities[1])
+    dirty_probability = float(inference.target_probabilities[0])
+    clean_probability = float(inference.target_probabilities[1])
     threshold = clean_probability - config.search.absolute_probability_tolerance
     status = (
         "passed"
         if max(logit_error, probability_error, zero_hook_error) <= SCIENTIFIC_PARITY_ATOL
-        and bool(inference.destination_accuracies[1])
+        and bool(inference.target_accuracies[1])
         and threshold > dirty_probability
         else "failed"
     )
@@ -672,6 +673,8 @@ def run_endpoint_gate(
         "status": status,
         "destination_choice_index": config.task.destination_choice_index,
         "destination_choice_label": ANSWER_LABELS[config.task.destination_choice_index],
+        "target_choice_index": config.task.target_choice_index,
+        "target_choice_label": ANSWER_LABELS[config.task.target_choice_index],
         "paired_swap": {
             "donor_source_choice_indices": [
                 config.task.destination_choice_index,
@@ -696,7 +699,7 @@ def run_endpoint_gate(
 
 @beartype
 def _density_point(density: float, result: SwapBatchResult) -> DensityPoint:
-    probabilities = result.destination_probabilities.to(dtype=t.float64)
+    probabilities = result.target_probabilities.to(dtype=t.float64)
     logit_diffs = result.logit_diffs.to(dtype=t.float64)
     return DensityPoint(
         density=cast(Any, density),
@@ -705,7 +708,7 @@ def _density_point(density: float, result: SwapBatchResult) -> DensityPoint:
         correct_probability_variance=(
             float(probabilities.var(unbiased=True)) if probabilities.numel() > 1 else 0.0
         ),
-        accuracy=float(result.destination_accuracies.to(dtype=t.float64).mean()),
+        accuracy=float(result.target_accuracies.to(dtype=t.float64).mean()),
         mean_logit_diff=LogitDiff.parse(float(logit_diffs.mean())),
         logit_diff_variance=(
             float(logit_diffs.var(unbiased=True)) if logit_diffs.numel() > 1 else 0.0
@@ -779,9 +782,9 @@ def run_density_sweep(
             {
                 "density": float(point.density),
                 "sample_count": point.sample_count,
-                "mean_destination_probability": point.mean_correct_probability,
-                "destination_probability_variance": point.correct_probability_variance,
-                "destination_accuracy": point.accuracy,
+                "mean_target_probability": point.mean_correct_probability,
+                "target_probability_variance": point.correct_probability_variance,
+                "target_accuracy": point.accuracy,
                 "mean_raw_logit_diff": float(point.mean_logit_diff),
                 "raw_logit_diff_variance": point.logit_diff_variance,
             }
@@ -808,9 +811,9 @@ def _result_to_metrics(
                 tuple[float, float, float, float, float],
                 tuple(float(value) for value in result.candidate_logits[row].tolist()),
             ),
-            destination_probability=float(result.destination_probabilities[row]),
+            target_probability=float(result.target_probabilities[row]),
             raw_logit_diff=float(result.logit_diffs[row]),
-            destination_argmax=bool(result.destination_accuracies[row]),
+            target_argmax=bool(result.target_accuracies[row]),
         )
         for row, support in enumerate(supports)
     )
@@ -848,9 +851,9 @@ def _load_search_metrics(output_dir: Path) -> dict[LayerSwapSiteSet, SwapSubsetM
 
     def endpoint_metric(sites: LayerSwapSiteSet, payload: dict[str, object]) -> SwapSubsetMetric:
         logits = payload.get("candidate_logits")
-        probability = payload.get("destination_probability")
+        probability = payload.get("target_probability")
         logit_diff = payload.get("raw_logit_diff")
-        argmax = payload.get("destination_argmax")
+        argmax = payload.get("target_argmax")
         if (
             not isinstance(logits, list)
             or len(logits) != 5
@@ -896,7 +899,7 @@ def _minset_payload(minset: VerifiedSwapMinset) -> dict[str, object]:
     return {
         "layers": [site.layer for site in minset.sites],
         "size": len(minset.sites),
-        "destination_probability": minset.destination_probability,
+        "target_probability": minset.target_probability,
         "raw_logit_diff": minset.raw_logit_diff,
         "sufficiency_margin": minset.sufficiency_margin,
         "maximum_proper_subset_probability": minset.maximum_proper_subset_probability,
@@ -925,11 +928,11 @@ def run_exhaustive_search(
         }
     clean = endpoint.get("all_clean_swap")
     if not isinstance(clean, dict):
-        raise TypeError("endpoint lacks all-clean destination probability")
+        raise TypeError("endpoint lacks all-clean target probability")
     clean_map = cast(dict[str, object], clean)
-    clean_probability_value = clean_map.get("destination_probability")
+    clean_probability_value = clean_map.get("target_probability")
     if not isinstance(clean_probability_value, int | float):
-        raise TypeError("endpoint lacks all-clean destination probability")
+        raise TypeError("endpoint lacks all-clean target probability")
     all_clean_probability = float(clean_probability_value)
     search_dir = output_dir / "search"
     search_dir.mkdir(parents=True, exist_ok=True)
@@ -988,8 +991,8 @@ def run_exhaustive_search(
                     "masks": masks,
                     "candidate_logits": result.candidate_logits,
                     "logit_diffs": result.logit_diffs,
-                    "probabilities": result.destination_probabilities,
-                    "accuracies": result.destination_accuracies,
+                    "probabilities": result.target_probabilities,
+                    "accuracies": result.target_accuracies,
                 },
             )
             write_json(
@@ -1040,7 +1043,8 @@ def run_exhaustive_search(
                 "exhaustive_through_order": order,
                 "larger_orders_unresolved": order < config.layer_count,
                 "destination_choice_label": ANSWER_LABELS[config.task.destination_choice_index],
-                "all_clean_destination_probability": all_clean_probability,
+                "target_choice_label": ANSWER_LABELS[config.task.target_choice_index],
+                "all_clean_target_probability": all_clean_probability,
                 "sufficiency_probability_threshold": (
                     all_clean_probability - config.search.absolute_probability_tolerance
                 ),
