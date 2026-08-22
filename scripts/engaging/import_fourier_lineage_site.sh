@@ -25,24 +25,44 @@ from pathlib import Path
 manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 lineage_id = sys.argv[2]
 prefix = f"fourier-circuits/lineage_{lineage_id}/"
+schema_version = manifest.get("schema_version")
+lineage = manifest.get("lineage", {})
 if (
-    manifest.get("schema_version") != 1
+    schema_version not in {1, 2}
     or manifest.get("kind") != "fourier_lineage_export"
-    or manifest.get("lineage", {}).get("id") != lineage_id
-    or manifest.get("lineage", {}).get("kind") != "registered_hardware"
+    or lineage.get("id") != lineage_id
+    or lineage.get("kind") != "registered_hardware"
     or not manifest.get("entries")
 ):
     raise RuntimeError("remote Fourier lineage manifest failed its identity gate")
+if schema_version == 2 and lineage.get("plan_sha256") is not None:
+    raise RuntimeError("multi-plan remote Fourier lineage retained a run-specific plan digest")
+stable_fields = (
+    "id",
+    "kind",
+    "display_name",
+    "hardware",
+    "reference_source_bundle_sha256",
+    "collection_source_bundle_sha256",
+)
 for entry in manifest["entries"]:
     relative = entry.get("url")
+    entry_lineage = entry.get("lineage", {})
+    same_lineage = (
+        entry_lineage == lineage
+        if schema_version == 1
+        else all(entry_lineage.get(field) == lineage.get(field) for field in stable_fields)
+    )
     if (
-        entry.get("lineage") != manifest["lineage"]
+        not same_lineage
         or not isinstance(relative, str)
         or not relative.startswith(prefix)
         or Path(relative).is_absolute()
         or ".." in Path(relative).parts
     ):
         raise RuntimeError("remote Fourier lineage manifest contains an unsafe entry")
+    if schema_version == 2 and not isinstance(entry_lineage.get("plan_sha256"), str):
+        raise RuntimeError("multi-plan remote Fourier entry lacks its plan digest")
 PY
 
 local_chunks="${local_root}/site/data/fourier-circuits/lineage_${OOCR_LINEAGE_ID}"
