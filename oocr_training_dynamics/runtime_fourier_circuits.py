@@ -115,7 +115,7 @@ IndexVector = Int64[t.Tensor, "batch"]
 BitVector = Bool[t.Tensor, "batch"]
 
 FOURIER_SCHEMA_VERSION = 1
-KNOWN_SITE_REFERENCE_BATCH_SIZE = 8
+LEGACY_KNOWN_SITE_REFERENCE_BATCH_SIZE = 8
 
 
 @beartype
@@ -205,10 +205,13 @@ class KnownSiteReference:
     recipient_probability: float
     expected_delta: float
     artifact_path: Path
+    reference_batch_size: int
 
     def __post_init__(self) -> None:
         if self.token_reverse_index < 0:
             raise ValueError("known-site reverse index must be non-negative")
+        if self.reference_batch_size not in (1, LEGACY_KNOWN_SITE_REFERENCE_BATCH_SIZE):
+            raise ValueError("known-site reference batch size must be one or eight")
         if any(
             not math.isfinite(value)
             for value in (
@@ -1492,10 +1495,16 @@ def load_known_site_reference(
     token_index = selected.get("recipient_token_index")
     layer = selected.get("layer")
     reverse_index = selected.get("token_reverse_index")
+    reference_batch_size = raw.get(
+        "activation_patch_batch_size",
+        LEGACY_KNOWN_SITE_REFERENCE_BATCH_SIZE,
+    )
     if not all(isinstance(value, int | float) for value in (probability, delta)):
         raise TypeError("known patch probability and delta must be numeric")
     if not all(isinstance(value, int) for value in (token_index, layer, reverse_index)):
         raise TypeError("known patch coordinates must be integers")
+    if not isinstance(reference_batch_size, int):
+        raise TypeError("known patch activation batch size must be an integer")
     return KnownSiteReference(
         Site(cast(int, token_index), cast(int, layer)),
         cast(int, reverse_index),
@@ -1503,6 +1512,7 @@ def load_known_site_reference(
         float(recipient_probability),
         float(cast(int | float, delta)),
         path,
+        reference_batch_size,
     )
 
 
@@ -1521,9 +1531,9 @@ def _known_site_reference_probability(
     if reference.site.token_index != expected_token_index:
         raise RuntimeError("known-site forward/reverse token coordinates disagree")
     chunk_start = (
-        reference.token_reverse_index // KNOWN_SITE_REFERENCE_BATCH_SIZE
-    ) * KNOWN_SITE_REFERENCE_BATCH_SIZE
-    chunk_stop = min(chunk_start + KNOWN_SITE_REFERENCE_BATCH_SIZE, sequence_length)
+        reference.token_reverse_index // reference.reference_batch_size
+    ) * reference.reference_batch_size
+    chunk_stop = min(chunk_start + reference.reference_batch_size, sequence_length)
     reverse_indices = tuple(range(chunk_start, chunk_stop))
     positions = tuple(sequence_length - reverse_index - 1 for reverse_index in reverse_indices)
     selected_row = reference.token_reverse_index - chunk_start
@@ -1602,7 +1612,9 @@ def verify_known_site_harness(
         "observed_probability": observed_probability,
         "absolute_error": error,
         "tolerance": config.harness_check.reference_probability_tolerance,
-        "reference_execution": "batch_8_token_chunk_full_sequence_logits",
+        "reference_execution": (
+            f"batch_{reference.reference_batch_size}_token_chunk_full_sequence_logits"
+        ),
         "expected_delta": reference.expected_delta,
     }
 

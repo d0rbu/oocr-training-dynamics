@@ -21,6 +21,11 @@ fi
 
 lineage_root="$(realpath -e "${OOCR_LINEAGE_ROOT}")"
 repo="${lineage_root}/repo"
+reference_bundle_sha256="${OOCR_REFERENCE_BUNDLE_SHA256:-${OOCR_BUNDLE_SHA256}}"
+if [[ ! "${reference_bundle_sha256}" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "OOCR reference source bundle digest must be a lowercase SHA-256 digest" >&2
+  exit 2
+fi
 test -f "${repo}/.gpu-runs-enabled"
 cd "${repo}"
 export PYTHONPATH="${repo}${PYTHONPATH:+:${PYTHONPATH}}"
@@ -81,7 +86,7 @@ if [[ ! -f "${plan_relative}" ]]; then
   "${repo}/.venv/bin/python" scripts/register_fourier_hardware_lineage.py \
     --lineage-id "${OOCR_LINEAGE_ID}" \
     --artifact-identity-root "${OOCR_ARTIFACT_IDENTITY_ROOT}" \
-    --reference-source-bundle-sha256 "${OOCR_BUNDLE_SHA256}" \
+    --reference-source-bundle-sha256 "${reference_bundle_sha256}" \
     --collection-source-bundle-sha256 "${OOCR_BUNDLE_SHA256}" \
     --function-id "${OOCR_FUNCTION_ID}" \
     --clean-step "${OOCR_CLEAN_STEP}" \
