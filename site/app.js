@@ -202,6 +202,9 @@ const state = {
   answerLookupFunctionId: ALL_FUNCTIONS_ID,
   answerLookupMetric: "correct_delta",
   answerLookupSelection: null,
+  switchedAnswerInterface: "attention_input",
+  switchedAnswerDestination: 0,
+  switchedAnswerMinsetIndex: 0,
 };
 
 function svg(name, attributes = {}) {
@@ -991,6 +994,7 @@ function patchManifestKey(
   activationManifest = state.data.activation_example_manifest,
   vocabularyLensManifest = state.data.vocabulary_logit_lens_manifest,
   fourierManifest = state.data.fourier_circuit_manifest,
+  switchedAnswerManifest = state.data.switched_answer_minset_manifest,
 ) {
   const weightReferences = allWeightAlignmentReferences(weightManifest);
   return [
@@ -1001,6 +1005,10 @@ function patchManifestKey(
     ...allActivationExampleReferences(activationManifest),
     ...allVocabularyLensReferences(vocabularyLensManifest),
     ...(fourierManifest?.entries ?? []),
+    ...(switchedAnswerManifest?.entries ?? []).map((entry) => ({
+      url: `switched:${entry.interface}:${entry.destination_choice_index}`,
+      sha256: entry.search_sha256 ?? entry.density_sha256 ?? entry.endpoint_sha256 ?? entry.status,
+    })),
   ]
     .map(patchReferenceKey)
     .sort()
@@ -1960,6 +1968,7 @@ async function refreshPatchManifest() {
     const weightManifest = snapshot.weight_alignment_manifest ?? {};
     const vocabularyLensManifest = snapshot.vocabulary_logit_lens_manifest ?? {};
     const fourierManifest = snapshot.fourier_circuit_manifest ?? { entries: [] };
+    const switchedAnswerManifest = snapshot.switched_answer_minset_manifest ?? { entries: [] };
     const signature = patchManifestKey(
       snapshot.patch_manifest,
       alignmentManifest,
@@ -1967,6 +1976,7 @@ async function refreshPatchManifest() {
       activationManifest,
       vocabularyLensManifest,
       fourierManifest,
+      switchedAnswerManifest,
     );
     if (signature === patchManifestSignature) return;
     state.data.patch_manifest = snapshot.patch_manifest;
@@ -1988,6 +1998,9 @@ async function refreshPatchManifest() {
     state.data.vocabulary_logit_lens_chunks = snapshot.vocabulary_logit_lens_chunks ?? 0;
     state.data.fourier_circuit_manifest = fourierManifest;
     state.data.real_fourier_circuit_files = snapshot.real_fourier_circuit_files ?? 0;
+    state.data.switched_answer_minset_manifest = switchedAnswerManifest;
+    state.data.real_switched_answer_minset_files =
+      snapshot.real_switched_answer_minset_files ?? 0;
     patchManifestSignature = signature;
     patchChunkErrors.clear();
     weightDetailErrors.clear();
@@ -1998,6 +2011,7 @@ async function refreshPatchManifest() {
     scheduleActivationExampleLoads();
     scheduleVocabularyLensLoads();
     buildFourierRunSelect();
+    renderSwitchedAnswerMinsets();
     renderPatching();
   } catch (error) {
     console.warn("Could not refresh the patch manifest", error);
@@ -5540,6 +5554,187 @@ function buildAnswerLookupControls() {
   void loadAnswerLookupArtifacts();
 }
 
+function selectedSwitchedAnswerEntry() {
+  const entries = state.data.switched_answer_minset_manifest?.entries ?? [];
+  return entries.find((entry) => (
+    entry.interface === state.switchedAnswerInterface
+    && entry.destination_choice_index === state.switchedAnswerDestination
+  )) ?? null;
+}
+
+function renderSwitchedAnswerDensity(entry) {
+  const chart = document.getElementById("switched-answer-density");
+  chart.replaceChildren();
+  const points = entry?.density?.points ?? [];
+  if (!points.length) {
+    chart.append(svg("text", {
+      x: 350,
+      y: 118,
+      "text-anchor": "middle",
+      fill: "#687168",
+      "font-size": 13,
+    })).textContent = "Unprocessed · density sweep awaiting GPU collection";
+    return;
+  }
+  const left = 52;
+  const right = 674;
+  const top = 20;
+  const bottom = 192;
+  chart.append(
+    svg("line", { x1: left, y1: bottom, x2: right, y2: bottom, stroke: "#8d918a" }),
+    svg("line", { x1: left, y1: top, x2: left, y2: bottom, stroke: "#8d918a" }),
+  );
+  [0, 0.5, 1].forEach((value) => {
+    const x = left + value * (right - left);
+    const y = bottom - value * (bottom - top);
+    const xLabel = svg("text", { x, y: 214, "text-anchor": "middle", fill: "#687168", "font-size": 10 });
+    xLabel.textContent = String(value);
+    const yLabel = svg("text", { x: 44, y: y + 3, "text-anchor": "end", fill: "#687168", "font-size": 10 });
+    yLabel.textContent = String(value);
+    chart.append(xLabel, yLabel);
+  });
+  const coordinates = points.map((point) => ({
+    x: left + point.density * (right - left),
+    y: bottom - point.mean_target_probability * (bottom - top),
+    point,
+  }));
+  const path = svg("path", {
+    d: coordinates.map((coordinate, index) => `${index ? "L" : "M"}${coordinate.x},${coordinate.y}`).join(" "),
+    fill: "none",
+    stroke: "#b7403d",
+    "stroke-width": 2.5,
+  });
+  chart.append(path);
+  coordinates.forEach(({ x, y, point }) => {
+    const circle = svg("circle", { cx: x, cy: y, r: 4, fill: "#b7403d" });
+    circle.append(svg("title"));
+    circle.firstChild.textContent = `p=${point.density} · mean P(C)=${formatAdaptivePercent(point.mean_target_probability)} · variance ${point.target_probability_variance.toPrecision(3)}`;
+    chart.append(circle);
+  });
+  if (typeof entry.density.selected_density === "number") {
+    const x = left + entry.density.selected_density * (right - left);
+    chart.append(svg("line", {
+      x1: x,
+      y1: top,
+      x2: x,
+      y2: bottom,
+      stroke: "#315c49",
+      "stroke-width": 1.5,
+      "stroke-dasharray": "5 4",
+    }));
+  }
+}
+
+function renderSwitchedAnswerGrid(entry, minset) {
+  const grid = document.getElementById("switched-answer-grid");
+  const note = document.getElementById("switched-answer-grid-note");
+  grid.replaceChildren(
+    el("span", { class: "column-label" }, "layer"),
+    el("span", { class: "column-label wrong-location" }, `recipient ${entry?.destination_choice_label ?? "wrong"}`),
+    el("span", { class: "column-label correct-location" }, "recipient C"),
+  );
+  const activeLayers = new Set(minset?.layers ?? []);
+  for (let layer = 31; layer >= 0; layer -= 1) {
+    grid.append(el("span", { class: "layer-label" }, String(layer)));
+    for (const location of ["wrong-location", "correct-location"]) {
+      const active = activeLayers.has(layer);
+      grid.append(el("span", {
+        class: `swap-cell ${location}${active ? " active" : ""}`,
+        title: `layer ${layer} · ${active ? "paired swap enabled" : "not in selected minset"}`,
+      }));
+    }
+  }
+  const terminators = entry?.prompt_audit?.terminator_sites ?? [];
+  const wrong = terminators[entry?.destination_choice_index];
+  const correct = terminators[2];
+  if (!minset) {
+    note.textContent = entry?.search
+      ? `No verified minset is available through exact order ${entry.search.exhaustive_through_order}.`
+      : "Each highlighted layer will patch both displayed token locations once a minset is verified.";
+    return;
+  }
+  note.textContent = `Layers ${minset.layers.join(", ")} · token ${correct?.token_index ?? "?"} (${correct?.token_label ?? "C terminator"}) receives donor ${entry.destination_choice_label}; token ${wrong?.token_index ?? "?"} (${wrong?.token_label ?? "wrong terminator"}) receives donor C · P(C) ${formatAdaptivePercent(minset.target_probability)} · max proper subset ${formatAdaptivePercent(minset.maximum_proper_subset_probability)}.`;
+}
+
+function renderSwitchedAnswerMinsets() {
+  if (!state.data) return;
+  const entry = selectedSwitchedAnswerEntry();
+  const status = document.getElementById("switched-answer-status");
+  const summary = document.getElementById("switched-answer-summary");
+  const select = document.getElementById("switched-answer-minset-select");
+  const minsets = entry?.search?.minsets ?? [];
+  state.switchedAnswerMinsetIndex = Math.max(
+    0,
+    Math.min(state.switchedAnswerMinsetIndex, Math.max(0, minsets.length - 1)),
+  );
+  select.replaceChildren();
+  if (minsets.length) {
+    minsets.forEach((minset, index) => select.append(el(
+      "option",
+      { value: String(index) },
+      `#${index + 1} · size ${minset.size} · layers ${minset.layers.join(", ")}`,
+    )));
+    select.value = String(state.switchedAnswerMinsetIndex);
+    select.disabled = false;
+  } else {
+    select.append(el("option", { value: "0" }, entry?.search
+      ? `No verified minsets through order ${entry.search.exhaustive_through_order}`
+      : "Awaiting exact search"));
+    select.disabled = true;
+  }
+  select.onchange = () => {
+    state.switchedAnswerMinsetIndex = Number(select.value);
+    renderSwitchedAnswerMinsets();
+  };
+  status.textContent = (entry?.status ?? "unprocessed").replaceAll("_", " ");
+  const endpoint = entry?.endpoint;
+  const density = entry?.density;
+  const search = entry?.search;
+  summary.textContent = !endpoint
+    ? "Endpoint unprocessed. The identical-prompt token audit is available, but it contains no causal result."
+    : endpoint.status === "failed"
+    ? `The all-layer ${entry.destination_choice_label}↔C swap did not recover C in the base recipient; no minsets will be searched for this boundary.`
+    : !density
+    ? "Endpoint passed; the registered density diagnostic is still unprocessed."
+    : density.status === "flat_stop"
+    ? "The density response was flat under the frozen gate, so the minset search stopped."
+    : search
+    ? `Exact subset metrics are sealed through size ${search.exhaustive_through_order}; ${search.minsets.length} strict minsets currently pass.`
+    : "Endpoint and density gates passed; exact subset search has not started.";
+  document.getElementById("switched-answer-dirty").textContent = endpoint
+    ? formatAdaptivePercent(endpoint.all_dirty.target_probability)
+    : "—";
+  document.getElementById("switched-answer-clean").textContent = endpoint
+    ? formatAdaptivePercent(endpoint.all_clean_swap.target_probability)
+    : "—";
+  document.getElementById("switched-answer-threshold").textContent = endpoint
+    ? formatAdaptivePercent(endpoint.sufficiency_probability_threshold)
+    : "—";
+  document.getElementById("switched-answer-coverage").textContent = search
+    ? `all eligible sets ≤ ${search.exhaustive_through_order}`
+    : "unprocessed";
+  renderSwitchedAnswerDensity(entry);
+  renderSwitchedAnswerGrid(entry, minsets[state.switchedAnswerMinsetIndex] ?? null);
+}
+
+function buildSwitchedAnswerControls() {
+  const interfaceSelect = document.getElementById("switched-answer-interface-select");
+  const destinationSelect = document.getElementById("switched-answer-destination-select");
+  interfaceSelect.value = state.switchedAnswerInterface;
+  destinationSelect.value = String(state.switchedAnswerDestination);
+  interfaceSelect.addEventListener("change", () => {
+    state.switchedAnswerInterface = interfaceSelect.value;
+    state.switchedAnswerMinsetIndex = 0;
+    renderSwitchedAnswerMinsets();
+  });
+  destinationSelect.addEventListener("change", () => {
+    state.switchedAnswerDestination = Number(destinationSelect.value);
+    state.switchedAnswerMinsetIndex = 0;
+    renderSwitchedAnswerMinsets();
+  });
+  renderSwitchedAnswerMinsets();
+}
+
 function renderAll() {
   normalizeCurveAxisSelections();
   normalizeCurveFunctionSelection();
@@ -5562,6 +5757,7 @@ function renderAll() {
   renderCurve();
   renderPatching();
   renderAnswerLookup();
+  renderSwitchedAnswerMinsets();
 }
 
 async function initialize() {
@@ -5583,6 +5779,8 @@ async function initialize() {
   state.data.weight_alignment_axes ??= {};
   state.data.fourier_circuit_manifest ??= { entries: [] };
   state.data.real_fourier_circuit_files ??= 0;
+  state.data.switched_answer_minset_manifest ??= { entries: [] };
+  state.data.real_switched_answer_minset_files ??= 0;
   state.data.answer_lookup_manifest ??= { layer_count: 32, checkpoint_step: 1500, entries: {} };
   state.data.real_answer_lookup_files ??= 0;
   state.data.complete_answer_lookup_files ??= 0;
@@ -5595,6 +5793,7 @@ async function initialize() {
   buildCurveFunctionSelect();
   buildFunctionSelect();
   buildAnswerLookupControls();
+  buildSwitchedAnswerControls();
   buildFourierRunSelect();
   renderCheckpointTicks();
   const checkpoint = document.getElementById("checkpoint-slider");

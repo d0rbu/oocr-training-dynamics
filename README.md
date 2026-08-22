@@ -208,6 +208,7 @@ user explicitly releases the GPU. The exact launch and resume sequence is in the
 | How are the corpora matched? | [Experiment design](docs/experiments/design.md) |
 | What exactly is patched? | [Activation patching](docs/experiments/activation-patching.md) |
 | How are redundant residual circuits discovered? | [Fourier circuit discovery](docs/experiments/fourier-circuits.md) |
+| Can final-model answer-location swaps redirect the base model? | [Switched-answer minsets](docs/experiments/switched-answer-minsets.md) |
 | How are checkpoints stored? | [Storage plan](docs/operations/storage-plan.md) |
 | How do I safely launch or resume? | [GPU runbook](docs/operations/gpu-runbook.md) |
 | How do artifacts reach the site? | [Architecture](docs/reference/architecture.md) |
