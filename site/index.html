@@ -417,10 +417,72 @@
         </div>
       </section>
 
+      <section id="switched-answer-minsets" class="panel-section switched-answer-section">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">04 · cross-checkpoint answer swaps</p>
+            <h2>Which layerwise swaps redirect the base model?</h2>
+          </div>
+          <p>
+            The prompt is identical on both sides. At every enabled layer, the step-1500
+            correct and selected-wrong line-ending states are simultaneously swapped into the
+            opposite locations in the step-0 base recipient.
+          </p>
+        </div>
+        <div class="switched-answer-shell">
+          <header class="switched-answer-toolbar">
+            <label>
+              <small>Boundary</small>
+              <select id="switched-answer-interface-select">
+                <option value="attention_input" selected>Attention input · direct K/V test</option>
+                <option value="resid_post">Residual stream · propagation control</option>
+              </select>
+            </label>
+            <label>
+              <small>Wrong destination</small>
+              <select id="switched-answer-destination-select">
+                <option value="0">A</option>
+                <option value="1">B</option>
+                <option value="3">D</option>
+                <option value="4">E</option>
+              </select>
+            </label>
+            <label>
+              <small>Verified minset</small>
+              <select id="switched-answer-minset-select"></select>
+            </label>
+            <div>
+              <small>Artifact status</small>
+              <strong id="switched-answer-status">unprocessed</strong>
+            </div>
+          </header>
+          <p id="switched-answer-summary" class="switched-answer-summary">
+            Awaiting the endpoint gate. No layer set is inferred from the same-checkpoint atlas.
+          </p>
+          <div class="switched-answer-metrics">
+            <article><small>Base · no swap</small><strong id="switched-answer-dirty">—</strong></article>
+            <article><small>All 32 swaps</small><strong id="switched-answer-clean">—</strong></article>
+            <article><small>Minset threshold</small><strong id="switched-answer-threshold">—</strong></article>
+            <article><small>Exact coverage</small><strong id="switched-answer-coverage">unprocessed</strong></article>
+          </div>
+          <div class="switched-answer-body">
+            <section>
+              <small>Density diagnostic · P(selected wrong answer)</small>
+              <svg id="switched-answer-density" viewBox="0 0 700 230" role="img" aria-label="Wrong-answer probability over composite swap density"></svg>
+            </section>
+            <section>
+              <small>Selected paired-swap minset · layer increases upward</small>
+              <div id="switched-answer-grid" class="switched-answer-grid" role="img" aria-label="Composite layerwise answer swap minset"></div>
+              <p id="switched-answer-grid-note">Each highlighted layer patches both displayed token locations.</p>
+            </section>
+          </div>
+        </div>
+      </section>
+
       <section id="fourier" class="panel-section fourier-section">
         <div class="section-heading">
           <div>
-            <p class="eyebrow">04 · redundant circuits</p>
+            <p class="eyebrow">05 · redundant circuits</p>
             <h2>Causally verified minset networks</h2>
           </div>
           <p>
@@ -473,7 +535,7 @@
       <section id="design" class="design-section">
         <div class="section-heading">
           <div>
-            <p class="eyebrow">05 · controlled design</p>
+            <p class="eyebrow">06 · controlled design</p>
             <h2>One corpus blueprint, three taught worlds</h2>
           </div>
         </div>
@@ -506,7 +568,7 @@
       <section id="predictions" class="predictions-section">
         <div class="section-heading">
           <div>
-            <p class="eyebrow">06 · preregistered before CUDA</p>
+            <p class="eyebrow">07 · preregistered before CUDA</p>
             <h2>What would count as a real result?</h2>
           </div>
           <p>Predictions are directional and frozen before the first capacity probe.</p>

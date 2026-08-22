@@ -1332,3 +1332,22 @@ correctness. The frozen 27-row intervention matrix, exact tokenizer-site definit
 and directional predictions are specified in
 [the answer-location experiment](../experiments/answer-lookup.md). No answer-location GPU artifact
 existed when this amendment was written. Missing website cells must remain unprocessed.
+
+## Cross-checkpoint switched-answer minsets — 2026-08-22, before any GPU artifact
+
+The user requested a minset analysis of the answer-location move intervention across checkpoints.
+The source and recipient receive the identical clean `pyalvt` prompt. Source activations come from
+the final step-1500 model and are patched into the step-0 base recipient; all downstream weights
+remain those of the base. Each Boolean layer site is the simultaneous two-position swap of the
+donor's correct-C and selected incorrect-option line-terminator states into the opposite recipient
+locations. This is not a one-way copy and not an ordinary single-token residual site.
+
+All four incorrect destinations A, B, D, and E are registered independently. `attention_input` is
+primary and `resid_post` is a propagation control. The all-clean endpoint must redirect the base
+model's A-E argmax to the registered destination and the density response must be non-flat before
+minset search. The full set must reach within 0.10 A-E-normalized destination probability of that
+all-clean hybrid endpoint; every proper subset must remain at or below 0.80 times the full-set
+probability. The initial search is exact in increasing support order through six over the 32
+layerwise swap operators, with only the mathematically safe above-0.8 subset blocker. Results are
+called exhaustive only through sealed orders. See
+[Cross-checkpoint switched-answer minsets](../experiments/switched-answer-minsets.md).

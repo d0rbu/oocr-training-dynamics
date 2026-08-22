@@ -97,6 +97,11 @@ from oocr_training_dynamics.runtime_patching import (
     VOCABULARY_LOGIT_LENS_MODES,
     build_token_axis_metadata,
 )
+from oocr_training_dynamics.switched_answer_minsets import (
+    SWITCHED_ANSWER_CORRECT_CHOICE_INDEX,
+    SWITCHED_ANSWER_INTERFACES,
+    SWITCHED_ANSWER_SCHEMA_VERSION,
+)
 from oocr_training_dynamics.weight_alignment import (
     WEIGHT_ALIGNMENT_ACCUMULATION_DTYPE,
     WEIGHT_ALIGNMENT_DEGENERATE_COUNTS,
@@ -3633,6 +3638,157 @@ def _export_fourier_circuits(root: Path) -> tuple[dict[str, object], int]:
     return {"entries": entries}, len(entries)
 
 
+def _export_switched_answer_minsets(root: Path) -> tuple[dict[str, object], int]:
+    """Export registered composite layer-swap analyses without inventing absent stages."""
+
+    audit_path = root / "artifacts/plans/switched_answer_minsets/tokenization_audit.json"
+    prompt_audit: dict[str, object] | None = None
+    if audit_path.is_file():
+        audit = _mapping(read_json(audit_path), context=str(audit_path))
+        if audit.get("schema_version") != SWITCHED_ANSWER_SCHEMA_VERSION:
+            raise RuntimeError("switched-answer token audit has the wrong schema")
+        raw_prompt_audit = audit.get("prompt_audit")
+        prompt_audit = _mapping(raw_prompt_audit, context=f"{audit_path}.prompt_audit")
+        terminators = prompt_audit.get("terminator_sites")
+        if not isinstance(terminators, list) or len(terminators) != 5:
+            raise RuntimeError("switched-answer token audit must contain five terminators")
+
+    base = (
+        root
+        / "artifacts/runs/olmo3-7b/correct/seed_20260715"
+        / "answer_lookup_checkpoint_transfer_minsets/add_5"
+        / "donor_001500_recipient_000000"
+    )
+    entries: list[dict[str, object]] = []
+    measured = 0
+    for interface in SWITCHED_ANSWER_INTERFACES:
+        for destination_index in (0, 1, 3, 4):
+            destination_label = "ABCDE"[destination_index]
+            directory = base / interface / f"destination_{destination_label.lower()}"
+            config_path = directory / "config.json"
+            endpoint_path = directory / "endpoint_gate.json"
+            density_path = directory / "density_sweep.json"
+            minset_path = directory / "verified_minsets.json"
+            entry: dict[str, object] = {
+                "interface": interface,
+                "destination_choice_index": destination_index,
+                "destination_choice_label": destination_label,
+                "correct_choice_index": SWITCHED_ANSWER_CORRECT_CHOICE_INDEX,
+                "correct_choice_label": "C",
+                "donor_step": 1_500,
+                "recipient_step": 0,
+                "site_semantics": "one layerwise simultaneous two-position answer-terminator swap",
+                "prompt_audit": prompt_audit,
+                "status": "unprocessed",
+                "endpoint": None,
+                "density": None,
+                "search": None,
+            }
+            if config_path.is_file():
+                wrapper = _mapping(read_json(config_path), context=str(config_path))
+                if wrapper.get("schema_version") != SWITCHED_ANSWER_SCHEMA_VERSION:
+                    raise RuntimeError(f"switched-answer config has the wrong schema: {config_path}")
+                config = _mapping(wrapper.get("config"), context=f"{config_path}.config")
+                task = _mapping(config.get("task"), context=f"{config_path}.config.task")
+                if (
+                    task.get("function_id") != "add_5"
+                    or task.get("interface") != interface
+                    or task.get("destination_choice_index") != destination_index
+                    or task.get("correct_choice_index") != SWITCHED_ANSWER_CORRECT_CHOICE_INDEX
+                ):
+                    raise RuntimeError(f"switched-answer config identity mismatch: {config_path}")
+                entry["config_sha256"] = sha256_file(config_path)
+            if endpoint_path.is_file():
+                endpoint = _mapping(read_json(endpoint_path), context=str(endpoint_path))
+                if endpoint.get("schema_version") != SWITCHED_ANSWER_SCHEMA_VERSION or endpoint.get(
+                    "status"
+                ) not in {"passed", "failed"}:
+                    raise RuntimeError(f"switched-answer endpoint is malformed: {endpoint_path}")
+                for corner_name in ("all_dirty", "all_clean_swap"):
+                    corner = _mapping(
+                        endpoint.get(corner_name),
+                        context=f"{endpoint_path}.{corner_name}",
+                    )
+                    logits = corner.get("candidate_logits")
+                    if not isinstance(logits, list) or len(logits) != 5:
+                        raise RuntimeError(f"switched-answer endpoint lacks five logits: {endpoint_path}")
+                    _number(corner, "destination_probability", context=str(endpoint_path))
+                    _number(corner, "raw_logit_diff", context=str(endpoint_path))
+                    if not isinstance(corner.get("destination_argmax"), bool):
+                        raise TypeError(f"switched-answer endpoint argmax is invalid: {endpoint_path}")
+                _number(endpoint, "sufficiency_probability_threshold", context=str(endpoint_path))
+                entry["endpoint"] = endpoint
+                entry["endpoint_sha256"] = sha256_file(endpoint_path)
+                entry["status"] = "endpoint_passed" if endpoint["status"] == "passed" else "endpoint_failed"
+                measured += 1
+            if density_path.is_file():
+                density = _mapping(read_json(density_path), context=str(density_path))
+                if density.get("schema_version") != SWITCHED_ANSWER_SCHEMA_VERSION or density.get(
+                    "status"
+                ) not in {"complete", "flat_stop"}:
+                    raise RuntimeError(f"switched-answer density is malformed: {density_path}")
+                points = density.get("points")
+                if not isinstance(points, list) or len(points) != 16:
+                    raise RuntimeError(f"switched-answer density must contain 16 points: {density_path}")
+                for raw_point in cast(list[object], points):
+                    point = _mapping(raw_point, context=f"{density_path}.points[]")
+                    for field in (
+                        "density",
+                        "mean_destination_probability",
+                        "destination_probability_variance",
+                        "destination_accuracy",
+                        "mean_raw_logit_diff",
+                        "raw_logit_diff_variance",
+                    ):
+                        _number(point, field, context=f"{density_path}.points[]")
+                entry["density"] = density
+                entry["density_sha256"] = sha256_file(density_path)
+                entry["status"] = (
+                    "density_complete" if density["status"] == "complete" else "density_flat_stop"
+                )
+            if minset_path.is_file():
+                search = _mapping(read_json(minset_path), context=str(minset_path))
+                if search.get("schema_version") != SWITCHED_ANSWER_SCHEMA_VERSION or search.get(
+                    "status"
+                ) not in {"partial", "complete"}:
+                    raise RuntimeError(f"switched-answer minset output is malformed: {minset_path}")
+                order = search.get("exhaustive_through_order")
+                rows = search.get("minsets")
+                if not isinstance(order, int) or not 1 <= order <= 6 or not isinstance(rows, list):
+                    raise RuntimeError(f"switched-answer search coverage is malformed: {minset_path}")
+                for raw_row in cast(list[object], rows):
+                    row = _mapping(raw_row, context=f"{minset_path}.minsets[]")
+                    layers = row.get("layers")
+                    size = row.get("size")
+                    subset_layers = row.get("maximum_proper_subset_layers")
+                    if (
+                        not isinstance(layers, list)
+                        or not all(isinstance(layer, int) and 0 <= layer < 32 for layer in layers)
+                        or layers != sorted(set(layers))
+                        or size != len(layers)
+                        or not isinstance(subset_layers, list)
+                        or not set(subset_layers).issubset(layers)
+                    ):
+                        raise RuntimeError(f"switched-answer minset layers are malformed: {minset_path}")
+                    for field in (
+                        "destination_probability",
+                        "raw_logit_diff",
+                        "sufficiency_margin",
+                        "maximum_proper_subset_probability",
+                    ):
+                        _number(row, field, context=f"{minset_path}.minsets[]")
+                entry["search"] = search
+                entry["search_sha256"] = sha256_file(minset_path)
+                entry["status"] = "search_complete" if search["status"] == "complete" else "search_partial"
+            entries.append(entry)
+    return {
+        "schema_version": SWITCHED_ANSWER_SCHEMA_VERSION,
+        "entries": entries,
+        "registered_entry_count": 8,
+        "measured_entry_count": measured,
+    }, measured
+
+
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
     curves: dict[str, dict[str, list[CurveRow]]] = {}
@@ -3832,6 +3988,9 @@ def main() -> None:
         complete_answer_lookup_files,
     ) = _export_answer_lookup(root)
     fourier_circuit_manifest, real_fourier_circuit_files = _export_fourier_circuits(root)
+    switched_answer_minset_manifest, real_switched_answer_minset_files = (
+        _export_switched_answer_minsets(root)
+    )
     write_json(
         root / "site" / "data" / "patch-manifest.json",
         {
@@ -3855,6 +4014,8 @@ def main() -> None:
             "answer_lookup_manifest": answer_lookup_manifest,
             "real_fourier_circuit_files": real_fourier_circuit_files,
             "fourier_circuit_manifest": fourier_circuit_manifest,
+            "real_switched_answer_minset_files": real_switched_answer_minset_files,
+            "switched_answer_minset_manifest": switched_answer_minset_manifest,
         },
     )
     status = (
@@ -3879,6 +4040,7 @@ def main() -> None:
             "real_answer_lookup_files": real_answer_lookup_files,
             "complete_answer_lookup_files": complete_answer_lookup_files,
             "real_fourier_circuit_files": real_fourier_circuit_files,
+            "real_switched_answer_minset_files": real_switched_answer_minset_files,
             "real_letter_propensity_runs": len(measured_letter_runs),
             "warning": (
                 "Synthetic preregistration preview; no GPU experiment has run. Every plotted value is illustrative."
@@ -3959,6 +4121,7 @@ def main() -> None:
             "vocabulary_logit_lens_manifest": vocabulary_logit_lens_manifest,
             "answer_lookup_manifest": answer_lookup_manifest,
             "fourier_circuit_manifest": fourier_circuit_manifest,
+            "switched_answer_minset_manifest": switched_answer_minset_manifest,
         },
     )
 

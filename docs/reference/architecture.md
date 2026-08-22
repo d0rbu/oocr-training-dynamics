@@ -136,6 +136,14 @@ derives probabilities or alignments. Its full-vocabulary hover reuses the alread
 different-name lens sides in the corresponding reversed roles; causal probability grids still
 require their own GPU forward interventions.
 
+Cross-checkpoint switched-answer minsets use a separate composite site universe. One Boolean site
+is one decoder layer at which two answer-line terminator states are swapped simultaneously from
+the step-1500 donor into the step-0 recipient. The prompt and token IDs are identical on both
+sides. These results live under `answer_lookup_checkpoint_transfer_minsets/` and never enter the
+ordinary token x layer patch manifest or Fourier `(token, layer)` subset index. Endpoint and
+density artifacts gate a digest-validated exact support census; each sealed order states the
+largest support size for which the result is exhaustive.
+
 Representation alignment has a separate manifest and compact chunk tree under
 `site/data/representation-alignment/`. One loaded chunk contains typed cosine, raw-L2,
 source-norm, and recipient-norm arrays for all 19 functions. It shares prompt/checkpoint controls

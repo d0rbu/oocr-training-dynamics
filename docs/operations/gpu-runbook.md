@@ -862,6 +862,54 @@ The runner is row-resumable. Never weaken batch one, full-prompt `use_cache=Fals
 precision, or the `1e-6` identity/hook-leak parity gates to gain throughput. A failed identity
 control invalidates that artifact and must stop interpretation.
 
+## 6i. Run cross-checkpoint switched-answer minsets only after a new GPU release
+
+This follow-up is frozen to the identical `pyalvt` prompt, step-1500 donor activations, and step-0
+recipient weights. Read [the composite-site contract](../experiments/switched-answer-minsets.md).
+First inspect the complete CPU-only plan:
+
+```bash
+CUDA_VISIBLE_DEVICES='' uv run python scripts/run_switched_answer_minsets.py --plan-only
+```
+
+The plan must report 32 composite sites, all four wrong destinations, both registered interfaces,
+450 density forwards per destination/interface, and unpruned support counts of 32, 496, 4,960,
+35,960, 201,376, and 906,192 through order six. A composite site must be described as a
+simultaneous two-position swap; do not relabel it as an ordinary token patch.
+
+After a fresh GPU release and the usual sentinel/capacity checks, measure endpoints first:
+
+```bash
+uv run python scripts/run_switched_answer_minsets.py \
+  --maximum-stage 0 --confirm-gpu-run
+```
+
+Inspect exact prompt identity, both token coordinates, no-grad/inference parity, and each all-clean
+destination argmax. Then collect the complete density diagnostic:
+
+```bash
+uv run python scripts/run_switched_answer_minsets.py \
+  --maximum-stage 1 --confirm-gpu-run
+```
+
+Only non-flat destination/interface pairs with a passing endpoint may proceed to exact search.
+Resume the increasing-order census with:
+
+```bash
+uv run python scripts/run_switched_answer_minsets.py \
+  --maximum-stage 2 --maximum-order 6 --confirm-gpu-run
+```
+
+Search shards and order manifests are immutable and digest-validated. A support is reported only
+when its complete proper-subset powerset is present. An interrupted run resumes at the first absent
+shard; it must never discard or recompute sealed prior orders.
+
+Refresh its small embedded website manifest without paying the full weight-atlas export cost:
+
+```bash
+CUDA_VISIBLE_DEVICES='' uv run python scripts/export_switched_answer_minset_site.py
+```
+
 ## 7. Refresh the site
 
 This is CPU-only and may be run after each artifact batch:
