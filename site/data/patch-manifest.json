@@ -253532,65 +253532,65 @@
       "attention_input": {
         "cosine_similarity": {
           "basis": "theoretical_range",
-          "max": 1.0,
-          "min": -1.0
+          "max": 1,
+          "min": -1
         },
         "l2_distance": {
           "basis": "maximum_artifact_p95_for_model_and_boundary",
           "max": 35.7259635925293,
-          "min": 0.0,
+          "min": 0,
           "observed_max": 63.50587463378906
         }
       },
       "attention_output": {
         "cosine_similarity": {
           "basis": "theoretical_range",
-          "max": 1.0,
-          "min": -1.0
+          "max": 1,
+          "min": -1
         },
         "l2_distance": {
           "basis": "maximum_artifact_p95_for_model_and_boundary",
           "max": 31.790973663330078,
-          "min": 0.0,
+          "min": 0,
           "observed_max": 116.6333236694336
         }
       },
       "mlp_input": {
         "cosine_similarity": {
           "basis": "theoretical_range",
-          "max": 1.0,
-          "min": -1.0
+          "max": 1,
+          "min": -1
         },
         "l2_distance": {
           "basis": "maximum_artifact_p95_for_model_and_boundary",
           "max": 36.70794677734375,
-          "min": 0.0,
+          "min": 0,
           "observed_max": 78.10986328125
         }
       },
       "mlp_output": {
         "cosine_similarity": {
           "basis": "theoretical_range",
-          "max": 1.0,
-          "min": -1.0
+          "max": 1,
+          "min": -1
         },
         "l2_distance": {
           "basis": "maximum_artifact_p95_for_model_and_boundary",
           "max": 122.4008560180664,
-          "min": 0.0,
+          "min": 0,
           "observed_max": 505.6286926269531
         }
       },
       "resid_post": {
         "cosine_similarity": {
           "basis": "theoretical_range",
-          "max": 1.0,
-          "min": -1.0
+          "max": 1,
+          "min": -1
         },
         "l2_distance": {
           "basis": "maximum_artifact_p95_for_model_and_boundary",
           "max": 39.51589584350586,
-          "min": 0.0,
+          "min": 0,
           "observed_max": 94.37030029296875
         }
       }
@@ -257100,5 +257100,1657 @@
     }
   },
   "weight_alignment_manifest": {},
-  "weight_alignment_scales": {}
+  "weight_alignment_scales": {},
+  "answer_lookup_manifest": {
+    "checkpoint_step": 1500,
+    "complete_artifact_count": 38,
+    "condition": "correct",
+    "entries": {
+      "attention_input": {
+        "add_14": {
+          "bytes": 112715,
+          "completed_interventions": 27,
+          "raw_sha256": "b4667cd9fd14443db4be14691b376af6032ed3803480a8519fc0998fe88a08a9",
+          "sha256": "66dd0769aaff72dbc67320e7257e0a8239737572a5ae1e4731f9bc4d775c7ce6",
+          "status": "complete",
+          "url": "data/answer-lookup/attention_input/add_14.json"
+        },
+        "add_5": {
+          "bytes": 115841,
+          "completed_interventions": 27,
+          "raw_sha256": "6e51b21f353b8146ce7d2ec00b8fe70495ba61e14c9a6e01824bfaf15c5d14fc",
+          "sha256": "a22833b31b29fc4e34793895c0f0a71d096ae26c6fed482122d6e63cb18b9172",
+          "status": "complete",
+          "url": "data/answer-lookup/attention_input/add_5.json"
+        },
+        "affine_3x_2": {
+          "bytes": 112652,
+          "completed_interventions": 27,
+          "raw_sha256": "c67de1a31662155e56fd5cf0a1347c4af3989caa05c6884839220c9504ec641f",
+          "sha256": "5379c3638d1544df08ee3d198cd109a8a23eb16ae4c76d117d54744e6c92cab3",
+          "status": "complete",
+          "url": "data/answer-lookup/attention_input/affine_3x_2.json"
+        },
+        "affine_neg5x_3": {
+          "bytes": 112873,
+          "completed_interventions": 27,
+          "raw_sha256": "ac432c410c6b409bf10727edc8200f825c2f0ee9d864c0d8c3408516fa829e42",
+          "sha256": "8b322328214a0f63fc9aa68937682acbcab2b79b54784ab88bc48e2b3ececf94",
+          "status": "complete",
+          "url": "data/answer-lookup/attention_input/affine_neg5x_3.json"
+        },
+        "bool_geq_3": {
+          "bytes": 110630,
+          "completed_interventions": 27,
+          "raw_sha256": "2ecbcd714d402e0e6e5941ac713ea9818c4bca2722164718c7e5e8e4c4935efa",
+          "sha256": "e02945200cc6b1d43daa23b14ea6899536ba5ca106be2a25e9421ad20c16fc92",
+          "status": "complete",
+          "url": "data/answer-lookup/attention_input/bool_geq_3.json"
+        },
+        "bool_mod_2": {
+          "bytes": 111770,
+          "completed_interventions": 27,
+          "raw_sha256": "d91fad330398e740ac94e32245b1ef23485ec7a1d00e1221e761c4631eca95dd",
+          "sha256": "0a57105db8947dc160d5b38860e9ccebc7d13d41f52c78412ad4f5fc08434751",
+          "status": "complete",
+          "url": "data/answer-lookup/attention_input/bool_mod_2.json"
+        },
+        "float_mult_3_div_2": {
+          "bytes": 110915,
+          "completed_interventions": 27,
+          "raw_sha256": "186cb018a32e5760934c1b7e6761064cddce9d186f207d87964eb8be3d5c8082",
+          "sha256": "7f6fd426b032689c16e524dd4685b7a331bb3582b0be2f277922259a9d58e83e",
+          "status": "complete",
+          "url": "data/answer-lookup/attention_input/float_mult_3_div_2.json"
+        },
+        "float_mult_7_div_4": {
+          "bytes": 110096,
+          "completed_interventions": 27,
+          "raw_sha256": "f8b14d2bcad3a3fb729d852c990c7d75f8febd54012810d766a31ed6b8290462",
+          "sha256": "7e30b86d59efdc80972526c33d00df8cad38da159baaf67ed65a16f6a5bff637",
+          "status": "complete",
+          "url": "data/answer-lookup/attention_input/float_mult_7_div_4.json"
+        },
+        "identity": {
+          "bytes": 113693,
+          "completed_interventions": 27,
+          "raw_sha256": "19d30251d944feec4121c5468ea3f4811557de1a49d6500215f550421db9e18d",
+          "sha256": "0dc88726dfb7cc239f51a6db1965eb8e967ad4ed8d20617cd2b58354a40a8203",
+          "status": "complete",
+          "url": "data/answer-lookup/attention_input/identity.json"
+        },
+        "int_div_3": {
+          "bytes": 114807,
+          "completed_interventions": 27,
+          "raw_sha256": "5bb7705df990273d1d90973381b5c89633c6bb7a62e2b545e54c8eef584aea2a",
+          "sha256": "fb5d7e0629aa80730116f33fda943d6b217d266d33626f6a4166f7a1a9cec6b7",
+          "status": "complete",
+          "url": "data/answer-lookup/attention_input/int_div_3.json"
+        },
+        "int_div_4": {
+          "bytes": 115712,
+          "completed_interventions": 27,
+          "raw_sha256": "0619bf5b6eb568619f1a17a34831e8be690286a1cedd92a353ff7938fc67355a",
+          "sha256": "301e29e6366839a666c0117396135026a52c9892309cb256040c15ec2191274f",
+          "status": "complete",
+          "url": "data/answer-lookup/attention_input/int_div_4.json"
+        },
+        "mod_2": {
+          "bytes": 111335,
+          "completed_interventions": 27,
+          "raw_sha256": "cb88f56d9f6f80b195498d11b33ed0e8d9d6eb5fc68682f8b8f5cce9bed3b797",
+          "sha256": "e482734b7f6dcb5dea35312c5d88fd22e211e90a2fdff164a641fc315bfd5946",
+          "status": "complete",
+          "url": "data/answer-lookup/attention_input/mod_2.json"
+        },
+        "mod_3": {
+          "bytes": 114853,
+          "completed_interventions": 27,
+          "raw_sha256": "7fcc950a629056b83a62e868be649b452962b1072c01209e3287df812d240ca5",
+          "sha256": "4136362e236ee96c3a10a58c486566fdc6bfde88184e345a942002b7a1b863f8",
+          "status": "complete",
+          "url": "data/answer-lookup/attention_input/mod_3.json"
+        },
+        "multiply_3": {
+          "bytes": 115802,
+          "completed_interventions": 27,
+          "raw_sha256": "8a885d4e857805e2fe1007d8b0b84d4747d144827ad03b451aae56a104d0224f",
+          "sha256": "5a68661b8f9266f272af99a0a611dd3ba1b799099a78719b334a05063a61d074",
+          "status": "complete",
+          "url": "data/answer-lookup/attention_input/multiply_3.json"
+        },
+        "multiply_4": {
+          "bytes": 114839,
+          "completed_interventions": 27,
+          "raw_sha256": "a3d62c1e02c813bf284d69a1990f6d13f9fde2fd7a258f3040d2a50a80e020da",
+          "sha256": "f3fc49f3824a21382769daebb35d22daeb12d6c915c252b5bf23b438f720f4ac",
+          "status": "complete",
+          "url": "data/answer-lookup/attention_input/multiply_4.json"
+        },
+        "negate": {
+          "bytes": 113080,
+          "completed_interventions": 27,
+          "raw_sha256": "2f69a0bdc6a964033c9588ad37202598debda619c0e273dabde0e7d9e210b261",
+          "sha256": "399c52370ebff9a7278197638808b4e0a37ae064b32945dc43bd2d118d43dcd9",
+          "status": "complete",
+          "url": "data/answer-lookup/attention_input/negate.json"
+        },
+        "relu_neg2": {
+          "bytes": 107487,
+          "completed_interventions": 27,
+          "raw_sha256": "ede1d894caace5a5afb0b566d25799035a3c7630ec29358058dc7b8a080cb9f1",
+          "sha256": "942f4ba52c8cbfebd770399a27d3bd472a88d70dd7a7dd51d91c84ed06d67b6d",
+          "status": "complete",
+          "url": "data/answer-lookup/attention_input/relu_neg2.json"
+        },
+        "subtract_1": {
+          "bytes": 111887,
+          "completed_interventions": 27,
+          "raw_sha256": "59891519a1e276c19eecf07c2cdfb1284b81544051db66a78362dd5509c5eff3",
+          "sha256": "b33bb630f5694ac9c3e9ce01a4048c9333d2a45006774f756de0081976266ad3",
+          "status": "complete",
+          "url": "data/answer-lookup/attention_input/subtract_1.json"
+        },
+        "subtract_11": {
+          "bytes": 110723,
+          "completed_interventions": 27,
+          "raw_sha256": "7454cd16f60353c2d42c49cf7fc454fd619afb2b9c854c9881cb4159926b8d61",
+          "sha256": "1119f5084a81a4bde825f6a9e05746828ea231190c2253d3776fe2727a3fb285",
+          "status": "complete",
+          "url": "data/answer-lookup/attention_input/subtract_11.json"
+        }
+      },
+      "resid_post": {
+        "add_14": {
+          "bytes": 111895,
+          "completed_interventions": 27,
+          "raw_sha256": "dbb3ba9219a057a979ba4f4be6c26b27dc7e6671148357815b4e372fecd5a7ef",
+          "sha256": "bc6e70d5c815c9a58c297a92ea5975fd4ab0d52c68a2dbefb7f2853667f3fead",
+          "status": "complete",
+          "url": "data/answer-lookup/resid_post/add_14.json"
+        },
+        "add_5": {
+          "bytes": 115261,
+          "completed_interventions": 27,
+          "raw_sha256": "b165a281ec791e6f93426c3e3d882eea2ee5000407d4caf499035f67ec3ffbc4",
+          "sha256": "36f6241e3fa661206d7c71fe5c7a8045f84837958838bb460ce5dacd2645824a",
+          "status": "complete",
+          "url": "data/answer-lookup/resid_post/add_5.json"
+        },
+        "affine_3x_2": {
+          "bytes": 112101,
+          "completed_interventions": 27,
+          "raw_sha256": "3bbf24c79dd0eeb2006b1b2657531b8e887b2bac334d9d34621be6a4737e253e",
+          "sha256": "87eb07f43e27c6702da917267f146e93fbb70cf9b72ab74e4db6b5052c3b266c",
+          "status": "complete",
+          "url": "data/answer-lookup/resid_post/affine_3x_2.json"
+        },
+        "affine_neg5x_3": {
+          "bytes": 112093,
+          "completed_interventions": 27,
+          "raw_sha256": "c279b3d3923b55d44ce2524373ef12de7ff8a210b42c7bb99a6e64e261de6a44",
+          "sha256": "88da215a659e1edac056db3544060287ec21cf3b4a66658e07c413869bbcc2e4",
+          "status": "complete",
+          "url": "data/answer-lookup/resid_post/affine_neg5x_3.json"
+        },
+        "bool_geq_3": {
+          "bytes": 110296,
+          "completed_interventions": 27,
+          "raw_sha256": "250f722632d808224a05eadfa58eeb61b710018d923f103a909a44ad92087a13",
+          "sha256": "7378611a113dcfa3a998b39cf204fcee33e75eb226ace367b750dc5efd3faa25",
+          "status": "complete",
+          "url": "data/answer-lookup/resid_post/bool_geq_3.json"
+        },
+        "bool_mod_2": {
+          "bytes": 111018,
+          "completed_interventions": 27,
+          "raw_sha256": "3df2743d6975fa53c24d6856edbc541939e95a6d1eaad37405999c777ac4616e",
+          "sha256": "743797161318107aa1465aca25b3342e5789506c100eacd5a3a5c954bcd8c06d",
+          "status": "complete",
+          "url": "data/answer-lookup/resid_post/bool_mod_2.json"
+        },
+        "float_mult_3_div_2": {
+          "bytes": 110456,
+          "completed_interventions": 27,
+          "raw_sha256": "b2c7f28d8c0f0279642617b29419f33e361e5430b3162302185d6e50dc641314",
+          "sha256": "1b95c5d04f549ae85be9e7d71377168691fe594c542a7e1d93f0adae2a1d8575",
+          "status": "complete",
+          "url": "data/answer-lookup/resid_post/float_mult_3_div_2.json"
+        },
+        "float_mult_7_div_4": {
+          "bytes": 109942,
+          "completed_interventions": 27,
+          "raw_sha256": "6ac5d8282b4901f09bbc5c8e899d01f27efd15d12c9a48b74384ddf363d4e1e0",
+          "sha256": "898a0681f95a826e113ba6b0142eafc22740ed744d5d7346298a69752614398d",
+          "status": "complete",
+          "url": "data/answer-lookup/resid_post/float_mult_7_div_4.json"
+        },
+        "identity": {
+          "bytes": 112465,
+          "completed_interventions": 27,
+          "raw_sha256": "fc1e11dbcba21e4fa85843e714e43c399d432ee6a5aa7e171afc6329936c5fa2",
+          "sha256": "e1b0c5fe139cd2b2e9cd3a21c8b01a1a4de44ead06d66ca8ea8d9b2ebdd13d6e",
+          "status": "complete",
+          "url": "data/answer-lookup/resid_post/identity.json"
+        },
+        "int_div_3": {
+          "bytes": 114599,
+          "completed_interventions": 27,
+          "raw_sha256": "586684338364a562700dc22de5e257deebabd74b6c4d82d5195d663c0fec0970",
+          "sha256": "ad99aa8c295c0d00bfd892cc3300ac1c2df097b0a9080189041c3a8c5e2a4175",
+          "status": "complete",
+          "url": "data/answer-lookup/resid_post/int_div_3.json"
+        },
+        "int_div_4": {
+          "bytes": 115482,
+          "completed_interventions": 27,
+          "raw_sha256": "48582076b387da04e5466a12f490b788ca167ddd5ea777203cbe06bfd7a4909b",
+          "sha256": "1f4e79085ba074d1df0c67d8b757434361561a98380e736dca2b28dda43debd6",
+          "status": "complete",
+          "url": "data/answer-lookup/resid_post/int_div_4.json"
+        },
+        "mod_2": {
+          "bytes": 110758,
+          "completed_interventions": 27,
+          "raw_sha256": "dbd8fa6645aa1ab93cbe959ca1b3f32bb09080d375eb15269e625de4b079f7da",
+          "sha256": "cd5b2a8d1c3abab9333716781660f22755b579f9ddfe4311a00190158b292565",
+          "status": "complete",
+          "url": "data/answer-lookup/resid_post/mod_2.json"
+        },
+        "mod_3": {
+          "bytes": 114506,
+          "completed_interventions": 27,
+          "raw_sha256": "fc187dbec5634f5b39840c0848ff59de7b09ad7904e1573c29a251d5c891e8d5",
+          "sha256": "d9e4207553a0859aad440c21c21394c28fb15b1a74f48d7df4729f380cf721b5",
+          "status": "complete",
+          "url": "data/answer-lookup/resid_post/mod_3.json"
+        },
+        "multiply_3": {
+          "bytes": 115384,
+          "completed_interventions": 27,
+          "raw_sha256": "e567e442d3982c7f3e918c43d58329d754e802dc52d5e3fdcdf58e864279ed7f",
+          "sha256": "65f0407468cf52e39bc2811e94c3246877ea534624b802478fe107dbd39036b0",
+          "status": "complete",
+          "url": "data/answer-lookup/resid_post/multiply_3.json"
+        },
+        "multiply_4": {
+          "bytes": 114515,
+          "completed_interventions": 27,
+          "raw_sha256": "af8c7f1dadbe68e2574bb168fb521c91a22179a54b624ae57152ce6b220b3865",
+          "sha256": "997ded9fe014155e277ed5f97cc88bbf42283ff8d1ceca47d57b17ecbf37a9e3",
+          "status": "complete",
+          "url": "data/answer-lookup/resid_post/multiply_4.json"
+        },
+        "negate": {
+          "bytes": 112755,
+          "completed_interventions": 27,
+          "raw_sha256": "481c6ebd7d3b7864e68ea24bd94fa5b4e132dbddc3869a9fdf2b030f11ca368c",
+          "sha256": "6b1a71c7efc75197b84118a6cd9d054013e95219c504d5bdb387acb16025e5f6",
+          "status": "complete",
+          "url": "data/answer-lookup/resid_post/negate.json"
+        },
+        "relu_neg2": {
+          "bytes": 107534,
+          "completed_interventions": 27,
+          "raw_sha256": "b63cda1c8497d5593d15eda5a530b7fd88e6a3ca264cdc46e6eb0729f92c51d5",
+          "sha256": "593377034153662aabd2f24945a4d17c5329f58fe0cd5f355feff5507e9c55e0",
+          "status": "complete",
+          "url": "data/answer-lookup/resid_post/relu_neg2.json"
+        },
+        "subtract_1": {
+          "bytes": 111812,
+          "completed_interventions": 27,
+          "raw_sha256": "16f02e84fb2057d36310e006666da0a98d8d0ccf0ae476c32b138c69ea52b5ce",
+          "sha256": "6b1b6a3101e83345ae2321eb576145bc00db44df5138e0067f886d3bcf7a2635",
+          "status": "complete",
+          "url": "data/answer-lookup/resid_post/subtract_1.json"
+        },
+        "subtract_11": {
+          "bytes": 110135,
+          "completed_interventions": 27,
+          "raw_sha256": "1a97d099f418deea2566f5b0741db2f7c620d28759a63b7593e0a16e28e61031",
+          "sha256": "ab72a7ecc0abdea9cee010953ccc5e30237606515903e30fe1f2081859757469",
+          "status": "complete",
+          "url": "data/answer-lookup/resid_post/subtract_11.json"
+        }
+      }
+    },
+    "interfaces": [
+      "attention_input",
+      "resid_post"
+    ],
+    "intervention_count": 27,
+    "layer_count": 32,
+    "model": "olmo3-7b",
+    "raw_artifact_count": 38,
+    "schema_version": 1,
+    "seed": 20260715
+  },
+  "complete_answer_lookup_files": 38,
+  "fourier_circuit_manifest": {
+    "entries": [
+      {
+        "bytes": 267410,
+        "clean_step": 128,
+        "condition": "correct",
+        "dirty_step": 0,
+        "fourier_multisite_minset_count": 30,
+        "function_id": "add_5",
+        "legacy_minset_count": 0,
+        "lineage": {
+          "collection_source_bundle_sha256": "b858f7159e93024ea7d78bd0972c384bed076da4e86f4b08ba1cbeddef7c309d",
+          "display_name": "NVIDIA H200 (engaging_h200_sm90)",
+          "hardware": {
+            "compute_capability": [
+              9,
+              0
+            ],
+            "cuda_version": "13.0",
+            "device_name": "NVIDIA H200",
+            "driver_version": "590.48.01",
+            "torch_version": "2.13.0+cu130",
+            "total_memory_bytes": 150111715328
+          },
+          "id": "engaging_h200_sm90",
+          "kind": "registered_hardware",
+          "plan_sha256": "fe3d789696d6846f3c31312184ca6d8acc55f7ca78b1dba8238c0d6ac3df8354",
+          "reference_source_bundle_sha256": "99f30670f78d8012898f240c4e832991a5f0118524a2b6f74e987b4c6393cfc8"
+        },
+        "model": "olmo3-7b",
+        "multisite_minset_count": 101,
+        "raw_hypothesis_count": 183,
+        "scope": "full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_15",
+        "sha256": "a363549358ee933f445235d501b157f26697a922fbfa8906d2e3c6a018adb409",
+        "singleton_minset_count": 15,
+        "status": "causal_multisite_complete",
+        "sufficiency_criterion": "clean_correct_probability_minus_absolute_tolerance",
+        "unfiltered_multisite_minset_count": 243,
+        "url": "fourier-circuits/lineage_engaging_h200_sm90/olmo3-7b/correct/add_5/clean_000128_dirty_000000/full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_15.json"
+      },
+      {
+        "bytes": 21154,
+        "clean_step": 32,
+        "condition": "correct",
+        "dirty_step": 0,
+        "fourier_multisite_minset_count": 0,
+        "function_id": "add_5",
+        "legacy_minset_count": 0,
+        "lineage": {
+          "collection_source_bundle_sha256": null,
+          "display_name": "Workspace reference (hardware unregistered)",
+          "hardware": null,
+          "id": "workspace_unregistered",
+          "kind": "workspace_unregistered",
+          "plan_sha256": null,
+          "reference_source_bundle_sha256": null
+        },
+        "model": "olmo3-7b",
+        "multisite_minset_count": 0,
+        "raw_hypothesis_count": 0,
+        "scope": "full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_16",
+        "sha256": "a6baf129cad4c38f9041ae1c1c4d5a513a460ef2dd01b208729cb27d38209807",
+        "singleton_minset_count": 0,
+        "status": "clean_behavior_not_acquired",
+        "sufficiency_criterion": "clean_correct_probability_minus_absolute_tolerance",
+        "unfiltered_multisite_minset_count": 0,
+        "url": "fourier-circuits/lineage_workspace_unregistered/olmo3-7b/correct/add_5/clean_000032_dirty_000000/full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_16.json"
+      },
+      {
+        "bytes": 615621,
+        "clean_step": 64,
+        "condition": "correct",
+        "dirty_step": 0,
+        "fourier_multisite_minset_count": 41,
+        "function_id": "add_5",
+        "legacy_minset_count": 0,
+        "lineage": {
+          "collection_source_bundle_sha256": null,
+          "display_name": "Workspace reference (hardware unregistered)",
+          "hardware": null,
+          "id": "workspace_unregistered",
+          "kind": "workspace_unregistered",
+          "plan_sha256": null,
+          "reference_source_bundle_sha256": null
+        },
+        "model": "olmo3-7b",
+        "multisite_minset_count": 589,
+        "raw_hypothesis_count": 158,
+        "scope": "full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_15",
+        "sha256": "b6de4e3d6b85bb18716e10d0f24a40ebed23a191ac5d169f8de499e7ce360ffc",
+        "singleton_minset_count": 15,
+        "status": "causal_multisite_complete",
+        "sufficiency_criterion": "clean_correct_probability_minus_absolute_tolerance",
+        "unfiltered_multisite_minset_count": 786,
+        "url": "fourier-circuits/lineage_workspace_unregistered/olmo3-7b/correct/add_5/clean_000064_dirty_000000/full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_15.json"
+      },
+      {
+        "bytes": 388082,
+        "clean_step": 96,
+        "condition": "correct",
+        "dirty_step": 0,
+        "fourier_multisite_minset_count": 30,
+        "function_id": "add_5",
+        "legacy_minset_count": 0,
+        "lineage": {
+          "collection_source_bundle_sha256": null,
+          "display_name": "Workspace reference (hardware unregistered)",
+          "hardware": null,
+          "id": "workspace_unregistered",
+          "kind": "workspace_unregistered",
+          "plan_sha256": null,
+          "reference_source_bundle_sha256": null
+        },
+        "model": "olmo3-7b",
+        "multisite_minset_count": 247,
+        "raw_hypothesis_count": 148,
+        "scope": "full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_15",
+        "sha256": "e5251343f0bb7f8c17e9b84af5d28eea4eeafa4e5f8aa8bba787641f63db4aa1",
+        "singleton_minset_count": 15,
+        "status": "causal_multisite_complete",
+        "sufficiency_criterion": "clean_correct_probability_minus_absolute_tolerance",
+        "unfiltered_multisite_minset_count": 438,
+        "url": "fourier-circuits/lineage_workspace_unregistered/olmo3-7b/correct/add_5/clean_000096_dirty_000000/full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_15.json"
+      },
+      {
+        "bytes": 250227,
+        "clean_step": 128,
+        "condition": "correct",
+        "dirty_step": 0,
+        "fourier_multisite_minset_count": 33,
+        "function_id": "add_5",
+        "legacy_minset_count": 0,
+        "lineage": {
+          "collection_source_bundle_sha256": null,
+          "display_name": "Workspace reference (hardware unregistered)",
+          "hardware": null,
+          "id": "workspace_unregistered",
+          "kind": "workspace_unregistered",
+          "plan_sha256": null,
+          "reference_source_bundle_sha256": null
+        },
+        "model": "olmo3-7b",
+        "multisite_minset_count": 104,
+        "raw_hypothesis_count": 181,
+        "scope": "full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_15",
+        "sha256": "36cfbba7627ee4758a47420869c62c4ba4c7c7eecb523b6d14d660aa39d24bcc",
+        "singleton_minset_count": 15,
+        "status": "causal_multisite_complete",
+        "sufficiency_criterion": "clean_correct_probability_minus_absolute_tolerance",
+        "unfiltered_multisite_minset_count": 174,
+        "url": "fourier-circuits/lineage_workspace_unregistered/olmo3-7b/correct/add_5/clean_000128_dirty_000000/full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_15.json"
+      },
+      {
+        "bytes": 112511,
+        "clean_step": 192,
+        "condition": "correct",
+        "dirty_step": 0,
+        "fourier_multisite_minset_count": 30,
+        "function_id": "add_5",
+        "legacy_minset_count": 0,
+        "lineage": {
+          "collection_source_bundle_sha256": null,
+          "display_name": "Workspace reference (hardware unregistered)",
+          "hardware": null,
+          "id": "workspace_unregistered",
+          "kind": "workspace_unregistered",
+          "plan_sha256": null,
+          "reference_source_bundle_sha256": null
+        },
+        "model": "olmo3-7b",
+        "multisite_minset_count": 23,
+        "raw_hypothesis_count": 157,
+        "scope": "full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_15",
+        "sha256": "52272ca5519d0ae17ffaa21e1b116191cd9e976ea4c0504d81d2cbcde2100332",
+        "singleton_minset_count": 15,
+        "status": "causal_multisite_complete",
+        "sufficiency_criterion": "clean_correct_probability_minus_absolute_tolerance",
+        "unfiltered_multisite_minset_count": 30,
+        "url": "fourier-circuits/lineage_workspace_unregistered/olmo3-7b/correct/add_5/clean_000192_dirty_000000/full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_15.json"
+      },
+      {
+        "bytes": 128060,
+        "clean_step": 256,
+        "condition": "correct",
+        "dirty_step": 0,
+        "fourier_multisite_minset_count": 31,
+        "function_id": "add_5",
+        "legacy_minset_count": 0,
+        "lineage": {
+          "collection_source_bundle_sha256": null,
+          "display_name": "Workspace reference (hardware unregistered)",
+          "hardware": null,
+          "id": "workspace_unregistered",
+          "kind": "workspace_unregistered",
+          "plan_sha256": null,
+          "reference_source_bundle_sha256": null
+        },
+        "model": "olmo3-7b",
+        "multisite_minset_count": 24,
+        "raw_hypothesis_count": 186,
+        "scope": "full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_18",
+        "sha256": "0323bdd169e87d6f5be07444f933fb51e5d32e530123e190b6f64104204db821",
+        "singleton_minset_count": 18,
+        "status": "causal_multisite_complete",
+        "sufficiency_criterion": "clean_correct_probability_minus_absolute_tolerance",
+        "unfiltered_multisite_minset_count": 31,
+        "url": "fourier-circuits/lineage_workspace_unregistered/olmo3-7b/correct/add_5/clean_000256_dirty_000000/full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_18.json"
+      },
+      {
+        "bytes": 111135,
+        "clean_step": 384,
+        "condition": "correct",
+        "dirty_step": 0,
+        "fourier_multisite_minset_count": 0,
+        "function_id": "add_5",
+        "legacy_minset_count": 0,
+        "lineage": {
+          "collection_source_bundle_sha256": null,
+          "display_name": "Workspace reference (hardware unregistered)",
+          "hardware": null,
+          "id": "workspace_unregistered",
+          "kind": "workspace_unregistered",
+          "plan_sha256": null,
+          "reference_source_bundle_sha256": null
+        },
+        "model": "olmo3-7b",
+        "multisite_minset_count": 0,
+        "raw_hypothesis_count": 275,
+        "scope": "full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_29",
+        "sha256": "32ac6eb4b4cede6c6de95534ec45e60bac9bcfbe792dcde5d03bbf972d308b13",
+        "singleton_minset_count": 29,
+        "status": "causal_multisite_complete",
+        "sufficiency_criterion": "clean_correct_probability_minus_absolute_tolerance",
+        "unfiltered_multisite_minset_count": 0,
+        "url": "fourier-circuits/lineage_workspace_unregistered/olmo3-7b/correct/add_5/clean_000384_dirty_000000/full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_29.json"
+      },
+      {
+        "bytes": 129939,
+        "clean_step": 512,
+        "condition": "correct",
+        "dirty_step": 0,
+        "fourier_multisite_minset_count": 9,
+        "function_id": "add_5",
+        "legacy_minset_count": 0,
+        "lineage": {
+          "collection_source_bundle_sha256": null,
+          "display_name": "Workspace reference (hardware unregistered)",
+          "hardware": null,
+          "id": "workspace_unregistered",
+          "kind": "workspace_unregistered",
+          "plan_sha256": null,
+          "reference_source_bundle_sha256": null
+        },
+        "model": "olmo3-7b",
+        "multisite_minset_count": 9,
+        "raw_hypothesis_count": 283,
+        "scope": "full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_28",
+        "sha256": "034ca267ad98881e5bdc7da0504c7de7e43cad0fd3acf9be697d4fab45ed0111",
+        "singleton_minset_count": 28,
+        "status": "causal_multisite_complete",
+        "sufficiency_criterion": "clean_correct_probability_minus_absolute_tolerance",
+        "unfiltered_multisite_minset_count": 9,
+        "url": "fourier-circuits/lineage_workspace_unregistered/olmo3-7b/correct/add_5/clean_000512_dirty_000000/full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_28.json"
+      },
+      {
+        "bytes": 140247,
+        "clean_step": 768,
+        "condition": "correct",
+        "dirty_step": 0,
+        "fourier_multisite_minset_count": 18,
+        "function_id": "add_5",
+        "legacy_minset_count": 0,
+        "lineage": {
+          "collection_source_bundle_sha256": null,
+          "display_name": "Workspace reference (hardware unregistered)",
+          "hardware": null,
+          "id": "workspace_unregistered",
+          "kind": "workspace_unregistered",
+          "plan_sha256": null,
+          "reference_source_bundle_sha256": null
+        },
+        "model": "olmo3-7b",
+        "multisite_minset_count": 7,
+        "raw_hypothesis_count": 283,
+        "scope": "full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_29",
+        "sha256": "8a19584d81886a4896096a693981d22f59ed2ebe7788827d7fc4aef3984882d7",
+        "singleton_minset_count": 29,
+        "status": "causal_multisite_complete",
+        "sufficiency_criterion": "clean_correct_probability_minus_absolute_tolerance",
+        "unfiltered_multisite_minset_count": 18,
+        "url": "fourier-circuits/lineage_workspace_unregistered/olmo3-7b/correct/add_5/clean_000768_dirty_000000/full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_29.json"
+      },
+      {
+        "bytes": 356873,
+        "clean_step": 1024,
+        "condition": "correct",
+        "dirty_step": 0,
+        "fourier_multisite_minset_count": 0,
+        "function_id": "add_5",
+        "legacy_minset_count": 0,
+        "lineage": {
+          "collection_source_bundle_sha256": null,
+          "display_name": "Workspace reference (hardware unregistered)",
+          "hardware": null,
+          "id": "workspace_unregistered",
+          "kind": "workspace_unregistered",
+          "plan_sha256": null,
+          "reference_source_bundle_sha256": null
+        },
+        "model": "olmo3-7b",
+        "multisite_minset_count": 129,
+        "raw_hypothesis_count": 282,
+        "scope": "full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_25",
+        "sha256": "5e53e49e64d5f7ebc1a26e79a8c9c1587ae35d92db7bbd0646a229c76a583f7f",
+        "singleton_minset_count": 25,
+        "status": "causal_multisite_complete",
+        "sufficiency_criterion": "clean_correct_probability_minus_absolute_tolerance",
+        "unfiltered_multisite_minset_count": 553,
+        "url": "fourier-circuits/lineage_workspace_unregistered/olmo3-7b/correct/add_5/clean_001024_dirty_000000/full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_25.json"
+      },
+      {
+        "bytes": 137394,
+        "clean_step": 1280,
+        "condition": "correct",
+        "dirty_step": 0,
+        "fourier_multisite_minset_count": 14,
+        "function_id": "add_5",
+        "legacy_minset_count": 0,
+        "lineage": {
+          "collection_source_bundle_sha256": null,
+          "display_name": "Workspace reference (hardware unregistered)",
+          "hardware": null,
+          "id": "workspace_unregistered",
+          "kind": "workspace_unregistered",
+          "plan_sha256": null,
+          "reference_source_bundle_sha256": null
+        },
+        "model": "olmo3-7b",
+        "multisite_minset_count": 4,
+        "raw_hypothesis_count": 295,
+        "scope": "full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_29",
+        "sha256": "46e3e25a4bd8c824042555ef4b12b8b0c42989c42d85674b34b518fb3e304afa",
+        "singleton_minset_count": 29,
+        "status": "causal_multisite_complete",
+        "sufficiency_criterion": "clean_correct_probability_minus_absolute_tolerance",
+        "unfiltered_multisite_minset_count": 14,
+        "url": "fourier-circuits/lineage_workspace_unregistered/olmo3-7b/correct/add_5/clean_001280_dirty_000000/full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_29.json"
+      },
+      {
+        "bytes": 1355624,
+        "clean_step": 1500,
+        "condition": "correct",
+        "dirty_step": 0,
+        "fourier_multisite_minset_count": 13,
+        "function_id": "add_5",
+        "legacy_minset_count": 0,
+        "lineage": {
+          "collection_source_bundle_sha256": null,
+          "display_name": "Workspace reference (hardware unregistered)",
+          "hardware": null,
+          "id": "workspace_unregistered",
+          "kind": "workspace_unregistered",
+          "plan_sha256": null,
+          "reference_source_bundle_sha256": null
+        },
+        "model": "olmo3-7b",
+        "multisite_minset_count": 649,
+        "raw_hypothesis_count": 208,
+        "scope": "full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_28",
+        "sha256": "db159d81007cc826fcf7459cb8f4f7730669f73ea5c6f0914728b47a00681b98",
+        "singleton_minset_count": 28,
+        "status": "causal_multisite_complete",
+        "sufficiency_criterion": "clean_correct_probability_minus_absolute_tolerance",
+        "unfiltered_multisite_minset_count": 2611,
+        "url": "fourier-circuits/lineage_workspace_unregistered/olmo3-7b/correct/add_5/clean_001500_dirty_000000/full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_28.json"
+      },
+      {
+        "bytes": 123029,
+        "clean_step": 1500,
+        "condition": "correct",
+        "dirty_step": 0,
+        "fourier_multisite_minset_count": 8,
+        "function_id": "add_5",
+        "legacy_minset_count": 0,
+        "lineage": {
+          "collection_source_bundle_sha256": null,
+          "display_name": "Workspace reference (hardware unregistered)",
+          "hardware": null,
+          "id": "workspace_unregistered",
+          "kind": "workspace_unregistered",
+          "plan_sha256": null,
+          "reference_source_bundle_sha256": null
+        },
+        "model": "olmo3-7b",
+        "multisite_minset_count": 8,
+        "raw_hypothesis_count": 291,
+        "scope": "full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5",
+        "sha256": "2ffe0ea3d6a7211ba9796c30d5f99600f1ca09c73e5e260ac80877751f2bf01c",
+        "singleton_minset_count": 21,
+        "status": "causal_multisite_complete",
+        "sufficiency_criterion": "raw_logit_gap_recovery",
+        "unfiltered_multisite_minset_count": 8,
+        "url": "fourier-circuits/lineage_workspace_unregistered/olmo3-7b/correct/add_5/clean_001500_dirty_000000/full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5.json"
+      },
+      {
+        "bytes": 405414,
+        "clean_step": 1500,
+        "condition": "correct",
+        "dirty_step": 0,
+        "fourier_multisite_minset_count": 5,
+        "function_id": "identity",
+        "legacy_minset_count": 0,
+        "lineage": {
+          "collection_source_bundle_sha256": null,
+          "display_name": "Workspace reference (hardware unregistered)",
+          "hardware": null,
+          "id": "workspace_unregistered",
+          "kind": "workspace_unregistered",
+          "plan_sha256": null,
+          "reference_source_bundle_sha256": null
+        },
+        "model": "olmo3-7b",
+        "multisite_minset_count": 0,
+        "raw_hypothesis_count": 185,
+        "scope": "full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_21",
+        "sha256": "96ad9cfd154db4663d3e27afa600ad20422cc3575efe218f8fe8b97aac7162dd",
+        "singleton_minset_count": 21,
+        "status": "causal_multisite_complete",
+        "sufficiency_criterion": "clean_correct_probability_minus_absolute_tolerance",
+        "unfiltered_multisite_minset_count": 1007,
+        "url": "fourier-circuits/lineage_workspace_unregistered/olmo3-7b/correct/identity/clean_001500_dirty_000000/full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_21.json"
+      },
+      {
+        "bytes": 42289,
+        "clean_step": 1500,
+        "condition": "correct",
+        "dirty_step": 0,
+        "fourier_multisite_minset_count": 0,
+        "function_id": "identity",
+        "legacy_minset_count": 4,
+        "lineage": {
+          "collection_source_bundle_sha256": null,
+          "display_name": "Workspace reference (hardware unregistered)",
+          "hardware": null,
+          "id": "workspace_unregistered",
+          "kind": "workspace_unregistered",
+          "plan_sha256": null,
+          "reference_source_bundle_sha256": null
+        },
+        "model": "olmo3-7b",
+        "multisite_minset_count": 0,
+        "raw_hypothesis_count": 90,
+        "scope": "full_prompt_layers_0_32_backend_full_sequence_reference",
+        "sha256": "cfa48c863e0ddc2fe5cf9f3fb866300bef9608f49faf6fcdba330691da402db8",
+        "singleton_minset_count": 0,
+        "status": "legacy_sparse_discovery_lower_bound",
+        "sufficiency_criterion": "raw_logit_gap_recovery",
+        "unfiltered_multisite_minset_count": 0,
+        "url": "fourier-circuits/lineage_workspace_unregistered/olmo3-7b/correct/identity/clean_001500_dirty_000000/full_prompt_layers_0_32_backend_full_sequence_reference.json"
+      }
+    ]
+  },
+  "real_answer_lookup_files": 38,
+  "real_fourier_circuit_files": 16,
+  "weight_alignment_axes": {
+    "olmo3-7b": {
+      "all_non_projection_weights_frozen": true,
+      "column_axis": [
+        {
+          "id": "input",
+          "kind": "global_input",
+          "label": "input"
+        },
+        {
+          "id": "layer_0",
+          "kind": "decoder_layer",
+          "label": "0",
+          "layer": 0
+        },
+        {
+          "id": "layer_1",
+          "kind": "decoder_layer",
+          "label": "1",
+          "layer": 1
+        },
+        {
+          "id": "layer_2",
+          "kind": "decoder_layer",
+          "label": "2",
+          "layer": 2
+        },
+        {
+          "id": "layer_3",
+          "kind": "decoder_layer",
+          "label": "3",
+          "layer": 3
+        },
+        {
+          "id": "layer_4",
+          "kind": "decoder_layer",
+          "label": "4",
+          "layer": 4
+        },
+        {
+          "id": "layer_5",
+          "kind": "decoder_layer",
+          "label": "5",
+          "layer": 5
+        },
+        {
+          "id": "layer_6",
+          "kind": "decoder_layer",
+          "label": "6",
+          "layer": 6
+        },
+        {
+          "id": "layer_7",
+          "kind": "decoder_layer",
+          "label": "7",
+          "layer": 7
+        },
+        {
+          "id": "layer_8",
+          "kind": "decoder_layer",
+          "label": "8",
+          "layer": 8
+        },
+        {
+          "id": "layer_9",
+          "kind": "decoder_layer",
+          "label": "9",
+          "layer": 9
+        },
+        {
+          "id": "layer_10",
+          "kind": "decoder_layer",
+          "label": "10",
+          "layer": 10
+        },
+        {
+          "id": "layer_11",
+          "kind": "decoder_layer",
+          "label": "11",
+          "layer": 11
+        },
+        {
+          "id": "layer_12",
+          "kind": "decoder_layer",
+          "label": "12",
+          "layer": 12
+        },
+        {
+          "id": "layer_13",
+          "kind": "decoder_layer",
+          "label": "13",
+          "layer": 13
+        },
+        {
+          "id": "layer_14",
+          "kind": "decoder_layer",
+          "label": "14",
+          "layer": 14
+        },
+        {
+          "id": "layer_15",
+          "kind": "decoder_layer",
+          "label": "15",
+          "layer": 15
+        },
+        {
+          "id": "layer_16",
+          "kind": "decoder_layer",
+          "label": "16",
+          "layer": 16
+        },
+        {
+          "id": "layer_17",
+          "kind": "decoder_layer",
+          "label": "17",
+          "layer": 17
+        },
+        {
+          "id": "layer_18",
+          "kind": "decoder_layer",
+          "label": "18",
+          "layer": 18
+        },
+        {
+          "id": "layer_19",
+          "kind": "decoder_layer",
+          "label": "19",
+          "layer": 19
+        },
+        {
+          "id": "layer_20",
+          "kind": "decoder_layer",
+          "label": "20",
+          "layer": 20
+        },
+        {
+          "id": "layer_21",
+          "kind": "decoder_layer",
+          "label": "21",
+          "layer": 21
+        },
+        {
+          "id": "layer_22",
+          "kind": "decoder_layer",
+          "label": "22",
+          "layer": 22
+        },
+        {
+          "id": "layer_23",
+          "kind": "decoder_layer",
+          "label": "23",
+          "layer": 23
+        },
+        {
+          "id": "layer_24",
+          "kind": "decoder_layer",
+          "label": "24",
+          "layer": 24
+        },
+        {
+          "id": "layer_25",
+          "kind": "decoder_layer",
+          "label": "25",
+          "layer": 25
+        },
+        {
+          "id": "layer_26",
+          "kind": "decoder_layer",
+          "label": "26",
+          "layer": 26
+        },
+        {
+          "id": "layer_27",
+          "kind": "decoder_layer",
+          "label": "27",
+          "layer": 27
+        },
+        {
+          "id": "layer_28",
+          "kind": "decoder_layer",
+          "label": "28",
+          "layer": 28
+        },
+        {
+          "id": "layer_29",
+          "kind": "decoder_layer",
+          "label": "29",
+          "layer": 29
+        },
+        {
+          "id": "layer_30",
+          "kind": "decoder_layer",
+          "label": "30",
+          "layer": 30
+        },
+        {
+          "id": "layer_31",
+          "kind": "decoder_layer",
+          "label": "31",
+          "layer": 31
+        },
+        {
+          "id": "output",
+          "kind": "global_output",
+          "label": "output"
+        }
+      ],
+      "component_axis": [
+        {
+          "column_group_size": null,
+          "frozen_during_lora": true,
+          "group_label": null,
+          "id": "embed_tokens",
+          "label": "Global input · token embedding",
+          "parameter_template": "model.embed_tokens.weight",
+          "placement": "input",
+          "row_group_size": null,
+          "shape": [
+            100278,
+            4096
+          ],
+          "tensor_rank": 2
+        },
+        {
+          "column_group_size": null,
+          "frozen_during_lora": false,
+          "group_label": "attention head",
+          "id": "q_proj",
+          "label": "Attention · Q projection",
+          "parameter_template": "model.layers.{layer}.self_attn.q_proj.weight",
+          "placement": "layer",
+          "row_group_size": 128,
+          "shape": [
+            4096,
+            4096
+          ],
+          "tensor_rank": 2
+        },
+        {
+          "column_group_size": null,
+          "frozen_during_lora": false,
+          "group_label": "attention head",
+          "id": "k_proj",
+          "label": "Attention · K projection",
+          "parameter_template": "model.layers.{layer}.self_attn.k_proj.weight",
+          "placement": "layer",
+          "row_group_size": 128,
+          "shape": [
+            4096,
+            4096
+          ],
+          "tensor_rank": 2
+        },
+        {
+          "column_group_size": null,
+          "frozen_during_lora": false,
+          "group_label": "attention head",
+          "id": "v_proj",
+          "label": "Attention · V projection",
+          "parameter_template": "model.layers.{layer}.self_attn.v_proj.weight",
+          "placement": "layer",
+          "row_group_size": 128,
+          "shape": [
+            4096,
+            4096
+          ],
+          "tensor_rank": 2
+        },
+        {
+          "column_group_size": null,
+          "frozen_during_lora": true,
+          "group_label": null,
+          "id": "q_norm",
+          "label": "Attention · Q norm",
+          "parameter_template": "model.layers.{layer}.self_attn.q_norm.weight",
+          "placement": "layer",
+          "row_group_size": null,
+          "shape": [
+            4096
+          ],
+          "tensor_rank": 1
+        },
+        {
+          "column_group_size": null,
+          "frozen_during_lora": true,
+          "group_label": null,
+          "id": "k_norm",
+          "label": "Attention · K norm",
+          "parameter_template": "model.layers.{layer}.self_attn.k_norm.weight",
+          "placement": "layer",
+          "row_group_size": null,
+          "shape": [
+            4096
+          ],
+          "tensor_rank": 1
+        },
+        {
+          "column_group_size": 128,
+          "frozen_during_lora": false,
+          "group_label": "attention head",
+          "id": "o_proj",
+          "label": "Attention · O projection",
+          "parameter_template": "model.layers.{layer}.self_attn.o_proj.weight",
+          "placement": "layer",
+          "row_group_size": null,
+          "shape": [
+            4096,
+            4096
+          ],
+          "tensor_rank": 2
+        },
+        {
+          "column_group_size": null,
+          "frozen_during_lora": true,
+          "group_label": null,
+          "id": "post_attention_layernorm",
+          "label": "Block · post-attention norm",
+          "parameter_template": "model.layers.{layer}.post_attention_layernorm.weight",
+          "placement": "layer",
+          "row_group_size": null,
+          "shape": [
+            4096
+          ],
+          "tensor_rank": 1
+        },
+        {
+          "column_group_size": null,
+          "frozen_during_lora": false,
+          "group_label": null,
+          "id": "gate_proj",
+          "label": "MLP · gate projection",
+          "parameter_template": "model.layers.{layer}.mlp.gate_proj.weight",
+          "placement": "layer",
+          "row_group_size": null,
+          "shape": [
+            11008,
+            4096
+          ],
+          "tensor_rank": 2
+        },
+        {
+          "column_group_size": null,
+          "frozen_during_lora": false,
+          "group_label": null,
+          "id": "up_proj",
+          "label": "MLP · up projection",
+          "parameter_template": "model.layers.{layer}.mlp.up_proj.weight",
+          "placement": "layer",
+          "row_group_size": null,
+          "shape": [
+            11008,
+            4096
+          ],
+          "tensor_rank": 2
+        },
+        {
+          "column_group_size": null,
+          "frozen_during_lora": false,
+          "group_label": null,
+          "id": "down_proj",
+          "label": "MLP · down projection",
+          "parameter_template": "model.layers.{layer}.mlp.down_proj.weight",
+          "placement": "layer",
+          "row_group_size": null,
+          "shape": [
+            4096,
+            11008
+          ],
+          "tensor_rank": 2
+        },
+        {
+          "column_group_size": null,
+          "frozen_during_lora": true,
+          "group_label": null,
+          "id": "post_feedforward_layernorm",
+          "label": "Block · post-feedforward norm",
+          "parameter_template": "model.layers.{layer}.post_feedforward_layernorm.weight",
+          "placement": "layer",
+          "row_group_size": null,
+          "shape": [
+            4096
+          ],
+          "tensor_rank": 1
+        },
+        {
+          "column_group_size": null,
+          "frozen_during_lora": true,
+          "group_label": null,
+          "id": "final_norm",
+          "label": "Global output · final norm",
+          "parameter_template": "model.norm.weight",
+          "placement": "output",
+          "row_group_size": null,
+          "shape": [
+            4096
+          ],
+          "tensor_rank": 1
+        },
+        {
+          "column_group_size": null,
+          "frozen_during_lora": true,
+          "group_label": null,
+          "id": "lm_head",
+          "label": "Global output · unembedding / LM head",
+          "parameter_template": "lm_head.weight",
+          "placement": "output",
+          "row_group_size": null,
+          "shape": [
+            100278,
+            4096
+          ],
+          "tensor_rank": 2
+        }
+      ],
+      "covered_parameter_tensors": 355,
+      "decoder_layer_count": 32,
+      "omitted_frozen_norm_tensors": 0,
+      "registered_parameter_tensors": 355
+    },
+    "qwen3-8b": {
+      "all_non_projection_weights_frozen": true,
+      "column_axis": [
+        {
+          "id": "input",
+          "kind": "global_input",
+          "label": "input"
+        },
+        {
+          "id": "layer_0",
+          "kind": "decoder_layer",
+          "label": "0",
+          "layer": 0
+        },
+        {
+          "id": "layer_1",
+          "kind": "decoder_layer",
+          "label": "1",
+          "layer": 1
+        },
+        {
+          "id": "layer_2",
+          "kind": "decoder_layer",
+          "label": "2",
+          "layer": 2
+        },
+        {
+          "id": "layer_3",
+          "kind": "decoder_layer",
+          "label": "3",
+          "layer": 3
+        },
+        {
+          "id": "layer_4",
+          "kind": "decoder_layer",
+          "label": "4",
+          "layer": 4
+        },
+        {
+          "id": "layer_5",
+          "kind": "decoder_layer",
+          "label": "5",
+          "layer": 5
+        },
+        {
+          "id": "layer_6",
+          "kind": "decoder_layer",
+          "label": "6",
+          "layer": 6
+        },
+        {
+          "id": "layer_7",
+          "kind": "decoder_layer",
+          "label": "7",
+          "layer": 7
+        },
+        {
+          "id": "layer_8",
+          "kind": "decoder_layer",
+          "label": "8",
+          "layer": 8
+        },
+        {
+          "id": "layer_9",
+          "kind": "decoder_layer",
+          "label": "9",
+          "layer": 9
+        },
+        {
+          "id": "layer_10",
+          "kind": "decoder_layer",
+          "label": "10",
+          "layer": 10
+        },
+        {
+          "id": "layer_11",
+          "kind": "decoder_layer",
+          "label": "11",
+          "layer": 11
+        },
+        {
+          "id": "layer_12",
+          "kind": "decoder_layer",
+          "label": "12",
+          "layer": 12
+        },
+        {
+          "id": "layer_13",
+          "kind": "decoder_layer",
+          "label": "13",
+          "layer": 13
+        },
+        {
+          "id": "layer_14",
+          "kind": "decoder_layer",
+          "label": "14",
+          "layer": 14
+        },
+        {
+          "id": "layer_15",
+          "kind": "decoder_layer",
+          "label": "15",
+          "layer": 15
+        },
+        {
+          "id": "layer_16",
+          "kind": "decoder_layer",
+          "label": "16",
+          "layer": 16
+        },
+        {
+          "id": "layer_17",
+          "kind": "decoder_layer",
+          "label": "17",
+          "layer": 17
+        },
+        {
+          "id": "layer_18",
+          "kind": "decoder_layer",
+          "label": "18",
+          "layer": 18
+        },
+        {
+          "id": "layer_19",
+          "kind": "decoder_layer",
+          "label": "19",
+          "layer": 19
+        },
+        {
+          "id": "layer_20",
+          "kind": "decoder_layer",
+          "label": "20",
+          "layer": 20
+        },
+        {
+          "id": "layer_21",
+          "kind": "decoder_layer",
+          "label": "21",
+          "layer": 21
+        },
+        {
+          "id": "layer_22",
+          "kind": "decoder_layer",
+          "label": "22",
+          "layer": 22
+        },
+        {
+          "id": "layer_23",
+          "kind": "decoder_layer",
+          "label": "23",
+          "layer": 23
+        },
+        {
+          "id": "layer_24",
+          "kind": "decoder_layer",
+          "label": "24",
+          "layer": 24
+        },
+        {
+          "id": "layer_25",
+          "kind": "decoder_layer",
+          "label": "25",
+          "layer": 25
+        },
+        {
+          "id": "layer_26",
+          "kind": "decoder_layer",
+          "label": "26",
+          "layer": 26
+        },
+        {
+          "id": "layer_27",
+          "kind": "decoder_layer",
+          "label": "27",
+          "layer": 27
+        },
+        {
+          "id": "layer_28",
+          "kind": "decoder_layer",
+          "label": "28",
+          "layer": 28
+        },
+        {
+          "id": "layer_29",
+          "kind": "decoder_layer",
+          "label": "29",
+          "layer": 29
+        },
+        {
+          "id": "layer_30",
+          "kind": "decoder_layer",
+          "label": "30",
+          "layer": 30
+        },
+        {
+          "id": "layer_31",
+          "kind": "decoder_layer",
+          "label": "31",
+          "layer": 31
+        },
+        {
+          "id": "layer_32",
+          "kind": "decoder_layer",
+          "label": "32",
+          "layer": 32
+        },
+        {
+          "id": "layer_33",
+          "kind": "decoder_layer",
+          "label": "33",
+          "layer": 33
+        },
+        {
+          "id": "layer_34",
+          "kind": "decoder_layer",
+          "label": "34",
+          "layer": 34
+        },
+        {
+          "id": "layer_35",
+          "kind": "decoder_layer",
+          "label": "35",
+          "layer": 35
+        },
+        {
+          "id": "output",
+          "kind": "global_output",
+          "label": "output"
+        }
+      ],
+      "component_axis": [
+        {
+          "column_group_size": null,
+          "frozen_during_lora": true,
+          "group_label": null,
+          "id": "embed_tokens",
+          "label": "Global input · token embedding",
+          "parameter_template": "model.embed_tokens.weight",
+          "placement": "input",
+          "row_group_size": null,
+          "shape": [
+            151936,
+            4096
+          ],
+          "tensor_rank": 2
+        },
+        {
+          "column_group_size": null,
+          "frozen_during_lora": true,
+          "group_label": null,
+          "id": "input_layernorm",
+          "label": "Block · attention input norm",
+          "parameter_template": "model.layers.{layer}.input_layernorm.weight",
+          "placement": "layer",
+          "row_group_size": null,
+          "shape": [
+            4096
+          ],
+          "tensor_rank": 1
+        },
+        {
+          "column_group_size": null,
+          "frozen_during_lora": false,
+          "group_label": "attention head",
+          "id": "q_proj",
+          "label": "Attention · Q projection",
+          "parameter_template": "model.layers.{layer}.self_attn.q_proj.weight",
+          "placement": "layer",
+          "row_group_size": 128,
+          "shape": [
+            4096,
+            4096
+          ],
+          "tensor_rank": 2
+        },
+        {
+          "column_group_size": null,
+          "frozen_during_lora": false,
+          "group_label": "attention head",
+          "id": "k_proj",
+          "label": "Attention · K projection",
+          "parameter_template": "model.layers.{layer}.self_attn.k_proj.weight",
+          "placement": "layer",
+          "row_group_size": 128,
+          "shape": [
+            1024,
+            4096
+          ],
+          "tensor_rank": 2
+        },
+        {
+          "column_group_size": null,
+          "frozen_during_lora": false,
+          "group_label": "attention head",
+          "id": "v_proj",
+          "label": "Attention · V projection",
+          "parameter_template": "model.layers.{layer}.self_attn.v_proj.weight",
+          "placement": "layer",
+          "row_group_size": 128,
+          "shape": [
+            1024,
+            4096
+          ],
+          "tensor_rank": 2
+        },
+        {
+          "column_group_size": null,
+          "frozen_during_lora": true,
+          "group_label": null,
+          "id": "q_norm",
+          "label": "Attention · Q norm",
+          "parameter_template": "model.layers.{layer}.self_attn.q_norm.weight",
+          "placement": "layer",
+          "row_group_size": null,
+          "shape": [
+            128
+          ],
+          "tensor_rank": 1
+        },
+        {
+          "column_group_size": null,
+          "frozen_during_lora": true,
+          "group_label": null,
+          "id": "k_norm",
+          "label": "Attention · K norm",
+          "parameter_template": "model.layers.{layer}.self_attn.k_norm.weight",
+          "placement": "layer",
+          "row_group_size": null,
+          "shape": [
+            128
+          ],
+          "tensor_rank": 1
+        },
+        {
+          "column_group_size": 128,
+          "frozen_during_lora": false,
+          "group_label": "attention head",
+          "id": "o_proj",
+          "label": "Attention · O projection",
+          "parameter_template": "model.layers.{layer}.self_attn.o_proj.weight",
+          "placement": "layer",
+          "row_group_size": null,
+          "shape": [
+            4096,
+            4096
+          ],
+          "tensor_rank": 2
+        },
+        {
+          "column_group_size": null,
+          "frozen_during_lora": true,
+          "group_label": null,
+          "id": "post_attention_layernorm",
+          "label": "Block · post-attention norm",
+          "parameter_template": "model.layers.{layer}.post_attention_layernorm.weight",
+          "placement": "layer",
+          "row_group_size": null,
+          "shape": [
+            4096
+          ],
+          "tensor_rank": 1
+        },
+        {
+          "column_group_size": null,
+          "frozen_during_lora": false,
+          "group_label": null,
+          "id": "gate_proj",
+          "label": "MLP · gate projection",
+          "parameter_template": "model.layers.{layer}.mlp.gate_proj.weight",
+          "placement": "layer",
+          "row_group_size": null,
+          "shape": [
+            12288,
+            4096
+          ],
+          "tensor_rank": 2
+        },
+        {
+          "column_group_size": null,
+          "frozen_during_lora": false,
+          "group_label": null,
+          "id": "up_proj",
+          "label": "MLP · up projection",
+          "parameter_template": "model.layers.{layer}.mlp.up_proj.weight",
+          "placement": "layer",
+          "row_group_size": null,
+          "shape": [
+            12288,
+            4096
+          ],
+          "tensor_rank": 2
+        },
+        {
+          "column_group_size": null,
+          "frozen_during_lora": false,
+          "group_label": null,
+          "id": "down_proj",
+          "label": "MLP · down projection",
+          "parameter_template": "model.layers.{layer}.mlp.down_proj.weight",
+          "placement": "layer",
+          "row_group_size": null,
+          "shape": [
+            4096,
+            12288
+          ],
+          "tensor_rank": 2
+        },
+        {
+          "column_group_size": null,
+          "frozen_during_lora": true,
+          "group_label": null,
+          "id": "final_norm",
+          "label": "Global output · final norm",
+          "parameter_template": "model.norm.weight",
+          "placement": "output",
+          "row_group_size": null,
+          "shape": [
+            4096
+          ],
+          "tensor_rank": 1
+        },
+        {
+          "column_group_size": null,
+          "frozen_during_lora": true,
+          "group_label": null,
+          "id": "lm_head",
+          "label": "Global output · unembedding / LM head",
+          "parameter_template": "lm_head.weight",
+          "placement": "output",
+          "row_group_size": null,
+          "shape": [
+            151936,
+            4096
+          ],
+          "tensor_rank": 2
+        }
+      ],
+      "covered_parameter_tensors": 399,
+      "decoder_layer_count": 36,
+      "omitted_frozen_norm_tensors": 0,
+      "registered_parameter_tensors": 399
+    }
+  }
 }

@@ -1,0 +1,64 @@
+{
+  "entries": [
+    {
+      "bytes": 267410,
+      "clean_step": 128,
+      "condition": "correct",
+      "dirty_step": 0,
+      "fourier_multisite_minset_count": 30,
+      "function_id": "add_5",
+      "legacy_minset_count": 0,
+      "lineage": {
+        "collection_source_bundle_sha256": "b858f7159e93024ea7d78bd0972c384bed076da4e86f4b08ba1cbeddef7c309d",
+        "display_name": "NVIDIA H200 (engaging_h200_sm90)",
+        "hardware": {
+          "compute_capability": [
+            9,
+            0
+          ],
+          "cuda_version": "13.0",
+          "device_name": "NVIDIA H200",
+          "driver_version": "590.48.01",
+          "torch_version": "2.13.0+cu130",
+          "total_memory_bytes": 150111715328
+        },
+        "id": "engaging_h200_sm90",
+        "kind": "registered_hardware",
+        "plan_sha256": "fe3d789696d6846f3c31312184ca6d8acc55f7ca78b1dba8238c0d6ac3df8354",
+        "reference_source_bundle_sha256": "99f30670f78d8012898f240c4e832991a5f0118524a2b6f74e987b4c6393cfc8"
+      },
+      "model": "olmo3-7b",
+      "multisite_minset_count": 101,
+      "raw_hypothesis_count": 183,
+      "scope": "full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_15",
+      "sha256": "a363549358ee933f445235d501b157f26697a922fbfa8906d2e3c6a018adb409",
+      "singleton_minset_count": 15,
+      "status": "causal_multisite_complete",
+      "sufficiency_criterion": "clean_correct_probability_minus_absolute_tolerance",
+      "unfiltered_multisite_minset_count": 243,
+      "url": "fourier-circuits/lineage_engaging_h200_sm90/olmo3-7b/correct/add_5/clean_000128_dirty_000000/full_prompt_layers_0_32_backend_full_sequence_reference_density_grid_00407094d4b5_sufficiency_clean_probability_minus_0p10_veto_15.json"
+    }
+  ],
+  "exporter_source_sha256": "3017f9bbf58aaf1119b80017469ea9d511fb744e17be3e9b54e65a0ff671b014",
+  "kind": "fourier_lineage_export",
+  "lineage": {
+    "collection_source_bundle_sha256": "b858f7159e93024ea7d78bd0972c384bed076da4e86f4b08ba1cbeddef7c309d",
+    "display_name": "NVIDIA H200 (engaging_h200_sm90)",
+    "hardware": {
+      "compute_capability": [
+        9,
+        0
+      ],
+      "cuda_version": "13.0",
+      "device_name": "NVIDIA H200",
+      "driver_version": "590.48.01",
+      "torch_version": "2.13.0+cu130",
+      "total_memory_bytes": 150111715328
+    },
+    "id": "engaging_h200_sm90",
+    "kind": "registered_hardware",
+    "plan_sha256": "fe3d789696d6846f3c31312184ca6d8acc55f7ca78b1dba8238c0d6ac3df8354",
+    "reference_source_bundle_sha256": "99f30670f78d8012898f240c4e832991a5f0118524a2b6f74e987b4c6393cfc8"
+  },
+  "schema_version": 1
+}

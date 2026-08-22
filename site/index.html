@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="Interactive results explorer for OOCR training dynamics, activation patching, and decoder-block weight patching." />
     <title>OOCR Atlas · training dynamics</title>
-    <link rel="stylesheet" href="styles.css?v=20260806a" />
-    <script src="app.js?v=20260806a" defer></script>
+    <link rel="stylesheet" href="styles.css?v=20260817a" />
+    <script src="app.js?v=20260820a" defer></script>
   </head>
   <body>
     <div class="grain" aria-hidden="true"></div>
@@ -16,6 +16,8 @@
         <div class="nav-links">
           <a href="#curves">Learning curves</a>
           <a href="#patching">Patching atlas</a>
+          <a href="#answer-lookup">Answer lookup</a>
+          <a href="#fourier">Redundant circuits</a>
           <a href="#predictions">Preregistration</a>
         </div>
       </nav>
@@ -339,10 +341,139 @@
         </div>
       </section>
 
+      <section id="answer-lookup" class="panel-section answer-lookup-section">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">03 · answer-location tracing</p>
+            <h2>Does the final token look up a marked answer?</h2>
+          </div>
+          <p>
+            We transplant the exact tokenizer state containing the line ending after an answer
+            choice. Controls preserve a correct marker; erasures replace it with an incorrect
+            line state; moves swap correct and incorrect locations; duplications advertise the
+            correct state at every nonempty subset of wrong locations.
+          </p>
+        </div>
+        <div class="answer-lookup-shell">
+          <header class="answer-lookup-toolbar">
+            <label>
+              <small>Boundary</small>
+              <select id="answer-lookup-interface-select">
+                <option value="attention_input" selected>Attention input · direct K/V test</option>
+                <option value="resid_post">Residual stream · propagation control</option>
+              </select>
+            </label>
+            <label>
+              <small>Function probe</small>
+              <select id="answer-lookup-function-select"></select>
+            </label>
+            <label>
+              <small>Cell color</small>
+              <select id="answer-lookup-metric-select">
+                <option value="correct_delta" selected>Δ intended probability</option>
+                <option value="correct_probability">Intended probability</option>
+                <option value="target_probability">Selected wrong-label probability</option>
+              </select>
+            </label>
+            <div>
+              <small>Artifact status</small>
+              <strong id="answer-lookup-status">unprocessed</strong>
+            </div>
+          </header>
+          <div class="answer-lookup-method">
+            <p id="answer-lookup-summary">
+              Awaiting measured artifacts. Unprocessed cells are never filled with synthetic data.
+            </p>
+            <p>
+              Every cell is one batch-one, full-prompt, <code>use_cache=False</code> forward at
+              checkpoint 1500. Hover or click to inspect all A–E probabilities and exact source →
+              recipient token coordinates.
+            </p>
+          </div>
+          <div class="answer-lookup-frame">
+            <div class="answer-lookup-axis">decoder layer →</div>
+            <div id="answer-lookup-heatmap" class="answer-lookup-heatmap" role="img" aria-label="Answer-location intervention heatmap"></div>
+          </div>
+          <div class="answer-lookup-footer">
+            <div id="answer-lookup-legend" class="legend"><span>suppresses intended</span><i></i><span>boosts intended</span></div>
+            <p id="answer-lookup-boundary-note">Attention-input patching changes the selected option token’s K/V contribution in that layer, allowing later tokens—including the final answer token—to attend to it.</p>
+          </div>
+          <section id="answer-lookup-detail" class="answer-lookup-detail">
+            <header>
+              <div><small>Selected intervention</small><h3 id="answer-lookup-detail-title">Select a measured cell</h3></div>
+              <p id="answer-lookup-detail-coordinates">Exact token mappings will appear here.</p>
+            </header>
+            <div class="answer-lookup-detail-grid">
+              <section>
+                <small>A–E normalized probabilities</small>
+                <div id="answer-lookup-probability-bars" class="answer-lookup-probability-bars"></div>
+              </section>
+              <section>
+                <small>Exact rendered source and recipient sites</small>
+                <div id="answer-lookup-site-audit" class="answer-lookup-site-audit"></div>
+              </section>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="fourier" class="panel-section fourier-section">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">04 · redundant circuits</p>
+            <h2>Causally verified minset networks</h2>
+          </div>
+          <p>
+            One spatial overlay combines the exhaustive singleton sweep, Fourier-stage survivors,
+            and every additional multi-site minset that survived exact causal verification.
+          </p>
+        </div>
+        <div class="fourier-shell">
+          <header class="fourier-toolbar">
+            <label>
+              <small>Measured analysis</small>
+              <select id="fourier-run-select" aria-label="Fourier circuit analysis"></select>
+            </label>
+            <div>
+              <small>Artifact status</small>
+              <strong id="fourier-status">unprocessed</strong>
+            </div>
+            <p id="fourier-summary">
+              No measured Fourier artifact has been exported yet. Empty space is not synthetic
+              data.
+            </p>
+          </header>
+          <div id="fourier-warning" class="fourier-warning" hidden></div>
+          <div id="fourier-threshold" class="fourier-threshold" aria-live="polite"></div>
+          <div class="fourier-density">
+            <div>
+              <small>Stage 0 diagnostic</small>
+              <h3>Unrestricted and singleton-vetoed density curves</h3>
+              <p id="fourier-density-note">Awaiting a measured density sweep.</p>
+            </div>
+            <svg id="fourier-density-chart" viewBox="0 0 760 240" role="img" aria-label="Clean-answer probability over patch density"></svg>
+          </div>
+          <section class="fourier-result-group">
+            <header>
+              <div><small>all causal survivors</small><h3>Verified minset network overlay</h3></div>
+              <p>Toggle all singletons or any connected equal-size minset network. Multi-site sets must pass the causal threshold while every proper subset remains at or below 80% of the full set's P(correct).</p>
+            </header>
+            <div id="fourier-network-overlay" class="fourier-network-overlay">
+              <div class="fourier-network-heading">
+                <div><small>joint spatial view</small><h4>Minset network overlay</h4></div>
+                <p id="fourier-network-summary">Select any combination of singleton and colored minset networks.</p>
+              </div>
+              <fieldset id="fourier-network-controls" class="fourier-network-controls" aria-label="Visible minset networks"></fieldset>
+              <div id="fourier-network-grid" class="fourier-network-grid"></div>
+            </div>
+          </section>
+        </div>
+      </section>
+
       <section id="design" class="design-section">
         <div class="section-heading">
           <div>
-            <p class="eyebrow">03 · controlled design</p>
+            <p class="eyebrow">05 · controlled design</p>
             <h2>One corpus blueprint, three taught worlds</h2>
           </div>
         </div>
@@ -375,7 +506,7 @@
       <section id="predictions" class="predictions-section">
         <div class="section-heading">
           <div>
-            <p class="eyebrow">04 · preregistered before CUDA</p>
+            <p class="eyebrow">06 · preregistered before CUDA</p>
             <h2>What would count as a real result?</h2>
           </div>
           <p>Predictions are directional and frozen before the first capacity probe.</p>

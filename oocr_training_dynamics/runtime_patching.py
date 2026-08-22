@@ -2635,6 +2635,7 @@ def _patch_record(
     source_residual_activations: tuple[t.Tensor, ...] | None = None,
     recipient_residual_activations: tuple[t.Tensor, ...] | None = None,
     precomputed_answer_logit_lens: dict[str, object] | None = None,
+    patch_batch_size: int = 8,
 ) -> dict[str, object]:
     positions = reverse_token_position_pairs(
         source_view.anchor_index,
@@ -2674,6 +2675,7 @@ def _patch_record(
         positions,
         correct_choice,
         source_target_index,
+        patch_batch_size=patch_batch_size,
     )
     if (source_residual_activations is None) != (recipient_residual_activations is None):
         raise ValueError("logit lens requires both source and recipient residual activations")
@@ -3862,6 +3864,7 @@ def run_patching(
     allow_provisional_model: bool = False,
     token_weight_runtime: TokenWeightRuntime = TokenWeightRuntime.REFERENCE,
     token_weight_patch_batch_size: int = 8,
+    activation_patch_batch_size: int = 8,
 ) -> None:
     if not t.cuda.is_available():
         raise RuntimeError("checkpoint patching requires CUDA")
@@ -3869,6 +3872,14 @@ def run_patching(
         raise ValueError("token-weight patch batch size must be positive")
     if token_weight_patch_batch_size != 8:
         raise ValueError("production token-weight runtimes have a fixed batch size of 8")
+    if activation_patch_batch_size not in (1, 8):
+        raise ValueError("activation patch batch size must be exactly 1 or 8")
+    if activation_patch_batch_size != 8 and (
+        plan.interface.patches_weights or plan.mode.uses_prompt_counterfactual
+    ):
+        raise ValueError(
+            "batch-one activation references require a direct checkpoint-transfer grid"
+        )
     spec = get_model_spec(run.model, allow_provisional=allow_provisional_model)
     processor = load_processor(spec)
     records = _selected_records(run.seed)
@@ -3971,6 +3982,7 @@ def run_patching(
                         recipient_view,
                         source_activations,
                         source_probabilities,
+                        patch_batch_size=activation_patch_batch_size,
                     )
                 )
         finally:
@@ -3988,6 +4000,7 @@ def run_patching(
                     if plan.mode is PatchingMode.LATER_CHECKPOINT
                     else "earlier_source_into_later_clean_recipient"
                 ),
+                "activation_patch_batch_size": activation_patch_batch_size,
                 "records": serialized,
             },
         )

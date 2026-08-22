@@ -50,7 +50,13 @@ markers = [
 branch = true
 source = ["oocr_training_dynamics"]
 omit = [
+    "oocr_training_dynamics/runtime_answer_lookup.py",
     "oocr_training_dynamics/runtime_evaluation.py",
+    "oocr_training_dynamics/runtime_fourier_circuits.py",
+    "oocr_training_dynamics/runtime_fourier_disconnected.py",
+    "oocr_training_dynamics/runtime_fourier_frontier.py",
+    "oocr_training_dynamics/runtime_fourier_recall.py",
+    "oocr_training_dynamics/runtime_fourier_residual.py",
     "oocr_training_dynamics/runtime_letter_propensity.py",
     "oocr_training_dynamics/runtime_models.py",
     "oocr_training_dynamics/runtime_patching.py",

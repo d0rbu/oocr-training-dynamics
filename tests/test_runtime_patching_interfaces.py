@@ -42,6 +42,7 @@ from oocr_training_dynamics.runtime_patching import (
     _vocabulary_logit_lens_side_payload,
     _vocabulary_token_label,
     _vocabulary_token_labels,
+    run_patching,
     run_prompt_counterfactual_patching_matrix,
     run_temporal_patching_matrix,
 )
@@ -625,6 +626,83 @@ def test_patch_grid_tracks_clean_and_source_answer_labels_from_one_forward() -> 
     assert clean_grid[0][0] != source_grid[0][0]
     assert 0.0 <= clean_grid[0][0] <= 1.0
     assert 0.0 <= source_grid[0][0] <= 1.0
+
+
+def test_patch_grid_batch_one_evaluates_each_site_in_its_own_forward() -> None:
+    input_ids = t.tensor([[1, 3]])
+    attention_mask = t.ones_like(input_ids)
+    candidate_ids = t.tensor([0, 1, 2, 3, 4])
+    source_activations = (t.tensor([[2.0, 1.0, 0.0], [6.0, 3.0, -2.0]]),)
+    positions = (TokenPositionPair(0, 0, 0), TokenPositionPair(1, 1, 1))
+
+    batch_one_block = _CountingDecoderBlock(1.0)
+    batch_one_model = _FakeDecoderLM((batch_one_block,))
+    batch_one_grid, _ = _patch_grid(
+        batch_one_model,
+        _resolve_patch_targets((batch_one_block,), PatchingInterface.RESID_POST),
+        input_ids,
+        attention_mask,
+        candidate_ids,
+        source_activations,
+        positions,
+        correct_choice_index=0,
+        patch_batch_size=1,
+    )
+
+    batched_block = _CountingDecoderBlock(1.0)
+    batched_model = _FakeDecoderLM((batched_block,))
+    batched_grid, _ = _patch_grid(
+        batched_model,
+        _resolve_patch_targets((batched_block,), PatchingInterface.RESID_POST),
+        input_ids,
+        attention_mask,
+        candidate_ids,
+        source_activations,
+        positions,
+        correct_choice_index=0,
+        patch_batch_size=8,
+    )
+
+    assert batch_one_block.calls == 2
+    assert batched_block.calls == 1
+    assert [value for row in batch_one_grid for value in row] == pytest.approx(
+        [value for row in batched_grid for value in row]
+    )
+
+
+def test_direct_activation_batch_size_is_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(runtime_patching.t.cuda, "is_available", lambda: True)
+    run = RunKey("olmo3-7b", TrainingCondition.CORRECT)
+    checkpoint_plan = PatchingPlan(
+        mode=PatchingMode.LATER_CHECKPOINT,
+        recipient_step=0,
+        donor_steps=(96,),
+        interface=PatchingInterface.RESID_POST,
+    )
+    with pytest.raises(ValueError, match="exactly 1 or 8"):
+        run_patching(
+            tmp_path,
+            run,
+            checkpoint_plan,
+            activation_patch_batch_size=2,
+        )
+
+    counterfactual_plan = PatchingPlan(
+        mode=PatchingMode.CYCLIC_CHOICES,
+        recipient_step=0,
+        donor_steps=(0,),
+        interface=PatchingInterface.RESID_POST,
+    )
+    with pytest.raises(ValueError, match="direct checkpoint-transfer"):
+        run_patching(
+            tmp_path,
+            run,
+            counterfactual_plan,
+            activation_patch_batch_size=1,
+        )
 
 
 def test_every_interface_resolves_one_concrete_target_per_layer() -> None:

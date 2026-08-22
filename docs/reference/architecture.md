@@ -35,6 +35,10 @@ contracts + model registry + deterministic corpus
 | `patching.py` | Prompt corruption, fixed answer-label controls, and validated patch plans/cells |
 | `representation_alignment.py` | Versioned noncausal metric/interface contract and run-scoped artifact paths |
 | `weight_alignment.py` | Canonical unordered checkpoint-pair contract for effective projection weights |
+| `fourier_circuits.py` | Typed p-biased Fourier estimator, active/vetoed site invariants, synthetic references, and causal-minset logic |
+| `fourier_networks.py` | Hypergraph-aware partner-profile clustering, deterministic clique display/components, scalable grouping, and small-graph reference coloring |
+| `fourier_recall.py` | Deterministic non-Fourier proposal families, exact local truth tables, child-minimality, and Wilson intervals |
+| `fourier_subset_index.py` | Digest-validated persistent mapping from canonical patch subsets to measured causal metrics |
 | `artifacts.py` | Atomic JSON, adapter paths/digests, checkpoint-index invariants |
 | `planning.py` | Baseline/ablation matrices, capacity bounds, and storage estimates |
 | `gpu_guard.py` | Two-part authorization gate |
@@ -47,6 +51,10 @@ contracts + model registry + deterministic corpus
 | `runtime_training.py` | Exact batch aggregation, clipping, dense adapters, rolling resume |
 | `runtime_evaluation.py` | Intended/planted choice metrics and semantic free-form generation |
 | `runtime_patching.py` | Direction-explicit source/recipient prompt interventions, LoRA interventions, dual-label outcomes, full-vocabulary lens sidecars, and cell-selected cosine neighbors across prompts or checkpoint time |
+| `runtime_fourier_circuits.py` | OLMo checkpoint-transfer corners, alpha gradients, prefix-KV parity profiling, and resumable circuit stages |
+| `runtime_fourier_recall.py` | Digest-validated recall plans, sharded full-prompt causal evaluation, and bounded missed-minset estimates |
+| `runtime_fourier_residual.py` | Derivation and execution of the known-network-vetoed disconnected-circuit density gate |
+| `fourier_disconnected.py` / `runtime_fourier_disconnected.py` | Seeded residual-mask proposal, resumable delta-debug minimization, and exact powerset verification of disconnected hypotheses |
 | `runtime_representation_alignment.py` | Multi-boundary unpatched activation capture and float32 cosine/L2 grids |
 | `runtime_weight_alignment.py` | Full effective-matrix reconstruction and symmetric Frobenius/row/column geometry |
 | `runtime_letter_propensity.py` | Resumable checkpoint evaluation of standalone A–E probability mass on raw FineWeb tokens |
@@ -186,6 +194,29 @@ Measured evaluation exports also include one acquisition curve per registered fu
 the all-function aggregate. The aggregate is checked against the arithmetic mean of the 19
 per-function values at every checkpoint and metric. Synthetic-preview runs expose only the
 aggregate; the site disables individual probes rather than synthesizing function-level values.
+
+The post-recall frontier pipeline is split between pure proposal logic in
+`fourier_frontier.py`, gated full-prompt execution in `runtime_fourier_frontier.py`, and
+`run_fourier_frontier_search.py`. The planner reads the immutable base subset index, constructs
+mixed-order minset components, and completes their subset lattice levelwise under the sound
+above-`0.8` blocker rule. GPU shards form a separate metric index. Site export combines the two
+digest-validated mappings in memory, applies the candidate-relative 80% rule, and includes only
+causally verified survivors in the network overlay.
+
+Fixed-point frontier runs alternate exhaustive pair-shell evaluation with exact relative-minset
+filtering until no new component site is connected, then build higher-order proposals from that
+converged component. The separately content-addressed residual diagnostic derives its veto set from
+the exhaustive singleton artifact and all completed strict frontier minsets; it never trusts the
+website export as scientific input.
+
+Fourier configs whose artifact identity root is under `artifacts/hardware_lineages/<id>` require a
+matching immutable hardware-lineage plan. Site export reloads that plan through the same adapter and
+checkpoint-transfer digest gates used by collection, then embeds the registered hardware and source
+provenance into the compact chunk. Chunk URLs include `lineage_<id>`. Cluster exports are validated
+against their raw sidecars in place, then only their compact chunks and per-lineage manifest cross
+the storage boundary. The local exporter treats those manifests as immutable imports, rechecks every
+chunk digest and semantic identity, and rejects duplicate run keys or URLs before building the
+browser manifest.
 
 ## Model-family boundary
 

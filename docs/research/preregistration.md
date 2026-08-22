@@ -912,6 +912,410 @@ This mode is exploratory and is not retroactively counted toward the earlier con
 criterion. Its diagnostic prediction is a contiguous late-layer region with positive original-
 answer delta, stronger after behavioral acquisition than before it.
 
+## Fourier redundant-circuit amendment — 2026-08-08, before any such GPU run
+
+This post-hoc exploratory analysis asks whether clean-checkpoint behavior can be recovered by more
+than one minimal set of residual-stream `(prompt token, layer)` sites. It uses the identical clean
+prompt, A-E options, OLMo-3 7B base revision, correct-condition seed, and clean/dirty checkpoint
+direction as checkpoint transfer. It is run separately for each function because absolute token
+axes differ. No Fourier-circuit model artifact existed when this amendment was written.
+
+The first gate is an eleven-point independent-site density sweep from all dirty to all clean. The
+transition density is fixed as the interior density with maximum raw-logit-difference variance. If
+the probability span is below `0.05`, the raw-logit-difference span is below `0.2`, and maximum
+interior raw-logit variance is below `0.01`, the run stops. Otherwise 512 random corners are drawn
+at the selected density. The primary sparse estimator is a degree-at-most-four function-value
+LASSO with `lambda=0.01`; all singleton sites are included and higher-order supports are enumerated
+over a 32-site hierarchical screen. The intercept plus the 4,095 columns with strongest training-
+sample function correlation enter the LASSO. A nonconstant fitted coefficient is heavy at absolute
+value at least `0.03`.
+
+Continuous-alpha gradients are secondary. Function-value marginal screening is used before a
+fixed held-out coefficient gate. Gradient estimates must have RMSE at most `0.1`, maximum absolute
+error at most `0.25`, and cosine at least `0.8` against plain function-value estimates before they
+may affect interaction screening or inverse-variance estimates. Heavy status still comes only from
+the function-value LASSO. Degree profiles use squared function-value LASSO coefficients and are
+checked at the selected density and its adjacent sweep
+densities; maximum pairwise L1 above `0.25` or cosine below `0.95` is reported as an intervention-
+scale warning and is never silently filtered.
+
+A Fourier support is only a hypothesis. It becomes a reported circuit only after exact corner
+patching and all-path one-site walk-down. Sufficiency requires at least 80% recovery from the
+all-dirty to the all-clean residual-intervention raw logit difference and the all-clean A-E argmax.
+Both corners retain the recipient checkpoint's final norm and unembedding; the all-clean corner is
+not redefined as an independent donor-checkpoint forward. The empty set is ineligible; singleton
+minsets are allowed. The diagnostic prediction is that functions with strong endpoint checkpoint
+transfer have a nonflat density curve and at least one late-token/later-layer verified minset.
+Multiple distinct verified minsets would support redundancy. A flat curve, no heavy coefficient,
+no causally sufficient candidate, or density-unstable spectrum weakens the circuit interpretation
+and must be reported directly rather than repaired by post-hoc threshold changes.
+
+Before model inference, exhaustive 2-of-3 majority and two-clause monotone-DNF references must
+recover their exact coefficients and minterms. Before optimized collection, one known measured
+single-site effect and a fixed-mask cached-versus-uncached parity profile must pass. See
+[Fourier redundant-circuit discovery](../experiments/fourier-circuits.md) for the implementation and
+artifact contract.
+
+### Full-sequence backend amendment — 2026-08-08, after cache profiling and before stage 0
+
+The required fixed-mask cache gate rejected the proposed optimization before any density-sweep
+outcome was collected. On the 32 preregistered density-`0.5` masks, the full-sequence reference took
+`1.2697s` median while the token-by-token cached executor took `38.7490s`; maximum candidate-logit
+and probability differences were `0.125` and `0.00103694`, despite exact A-E argmax agreement. No
+pair shared one complete token prefix. Controlled CPU OLMo tests subsequently found exact manual-
+cache versus Hugging Face-native-cache equality and isolated the full-prefill/cache difference to
+BF16 query-shape arithmetic.
+
+The user therefore selected `full_sequence_reference` as the explicit scientific backend. Every
+function-value, continuous-gradient, density-stability, and causal-verification forward uses the
+entire prompt without KV cache, with batch size one throughout. The rejected cache profile remains
+immutable evidence and is not reinterpreted by widening tolerances. Each new run stores a three-way
+unpatched diagnostic: full prefill, native Hugging Face single-token decoding, and the manual cache.
+Native and manual cached candidate logits must be exactly equal; their shared difference from full
+prefill is reported but never enters Fourier estimation or causal verification. Backend identity is
+a required config field and a distinct artifact-path component.
+
+### Refined low-density diagnostic — 2026-08-08, after the coarse stage-0 result
+
+The coarse sweep selected its lowest interior point, `p=0.1`, so it did not localize the transition
+below that boundary. Before collecting this follow-up, the diagnostic grid is fixed to
+`0, 0.001, 0.002, 0.005, 0.01, 0.02, 0.04, 0.06, 0.08, 0.10, 0.12, 0.16, 0.20, 0.32, 0.64, 1`.
+It uses the same seed, 32 independently sampled masks per interior density, full prompt, batch-one
+scientific evaluator, and transition rule. This is a post-hoc stage-0 localization diagnostic: it
+does not replace the original curve or retroactively change the density used by the already-run
+spectrum and minset verification. Its artifacts must occupy a content-addressed directory distinct
+from the preregistered coarse sweep.
+
+### Exhaustive-singleton and `pyalvt` correction — 2026-08-08, before the new GPU run
+
+The pending refined `identity` (`riodwl`) Stage 1/2 continuation is stopped. The original `p=.1`
+run and refined low-density Stage 0 remain immutable diagnostics, but neither is extended or
+reinterpreted. In particular, the four original final-token singleton survivors at layers 25, 29,
+30, and 31 are a sparse-discovery **lower bound**, not an exhaustive minset result: the old Stage 2
+tested only supports proposed by Stage 1.
+
+The primary corrected run is `pyalvt` (`function_id=add_5`) with
+`allenai/Olmo-3-7B-Instruct` revision
+`6e5971d9eba42665f5bd5a0fcf047f299ce1dccc`, correct-condition seed `20260715`, dirty
+recipient step 0, and clean donor step 1500. Both checkpoint executions receive one byte-identical
+fully rendered chat prompt. Its user content imports `pyalvt, ckhtts`, asks for the correct Python
+definition of `pyalvt`, presents choices `n % 3`, `n - 1`, `n + 5`, `n + 14`, and `n`, and requires
+one uppercase letter; the registered answer is C, `lambda n: n + 5`. Any deviation in messages,
+choice order, answer, model revision, checkpoint direction, or rendered prompt aborts.
+
+Before any Fourier spectrum, every residual-stream `(token, layer)` site in the full prompt grid is
+tested clean on an otherwise all-dirty background. Each row persists raw logit difference,
+A-E-normalized correct probability, argmax, threshold margin, coordinates, and pass/fail. The
+threshold is recomputed as `dirty + 0.8 * (clean - dirty)` in raw-logit space and requires the clean
+argmax. Every passing row is a verified singleton minset independent of LASSO. The existing
+checkpoint-transfer grid is a mandatory live harness: endpoints and final-token layers 19 through
+31 must reproduce within the fixed probability tolerance and all layers 19-31 must pass. Failure
+stops the run as a patching error before any density result is trusted.
+
+The new `pyalvt` unrestricted density sweep uses
+`0, .001, .002, .005, .01, .02, .04, .06, .08, .10, .12, .16, .20, .32, .64, 1`, with 32
+independent masks at every interior density. It stores mean and variance of A-E probability, A-E
+accuracy, and raw logit difference and selects maximum raw-logit variance. A second diagnostic and
+all subsequent higher-order spectrum work use the **singleton-vetoed residual function**: every
+verified singleton site is pinned dirty and excluded from the Fourier variables. This prevents a
+known sufficient readout from saturating random masks and hiding alternative multi-site circuits.
+The unrestricted and vetoed functions are always labeled separately.
+
+Continuous-alpha gradients are revalidated at the new vetoed transition density; the earlier
+identity outcome is not transferred. They affect screening or augmentation only if the held-out
+gate passes, while function values remain primary and the LASSO alone declares heavy coefficients.
+Only degree-two-or-higher heavy supports enter corrected Stage 2. They remain hypotheses until
+exact causal sufficiency plus all-path walk-down succeeds; a walk-down singleton absent from the
+exhaustive table is a fatal inconsistency.
+
+All gradient-free scientific passes use full-prompt `use_cache=False`, batch one, and
+`torch.inference_mode()` only after exact candidate-logit parity against the prior full-prompt
+`no_grad` implementation. Stage 1 alone enables autograd, only for continuous alpha; model weights
+remain frozen. Implementation and CPU validation precede the new GPU run. The first GPU commitment
+ends after the exhaustive singleton sweep and both `pyalvt` density curves so those results can be
+inspected before authorizing Stage 1/2.
+
+### Stage-1 numerical-solver correction — 2026-08-08, after the first `pyalvt` attempt
+
+The first `pyalvt` Stage-1 attempt failed before writing any coefficient table: global-step FISTA
+reached its 5,000-iteration cap. A subsequent exact KKT diagnostic showed maximum violation
+`0.16101552` despite successive coefficient movement of only `0.00032893`; coefficient movement was
+therefore not a valid convergence certificate on this highly scaled, collinear parity design. No
+threshold, density, sample, feature screen, or objective was changed. The same convex LASSO is now
+solved by deterministic maximum-KKT-violation coordinate descent and accepted only when its maximum KKT violation
+is at most the existing `1e-5` convergence tolerance. Both solvers continue to recover the exact
+synthetic majority and monotone-DNF references. The 512 model corners and alpha gradients are now
+written to a digest-validated intermediate artifact before fitting so numerical failures are
+resumable and cannot discard GPU measurements.
+
+### Clean-minus-ten-point causal-rule rerun — 2026-08-09, after the strict result
+
+This is a user-requested post-measurement analysis and is not a retrospective change to the frozen
+80%-raw-logit result. Its sufficiency rule is A-E-normalized correct probability at least the clean
+corner's probability minus `0.10`, together with the clean A-E argmax. For the measured `pyalvt`
+endpoints this is approximately 90% correct probability, but the exact threshold is always
+recomputed from the rerun's clean corner and stored in both probability and equivalent raw-logit
+coordinates.
+
+Applying this rule to the exhaustive singleton census identified exactly 28 sufficient sites:
+token 38 at layers 2-7, token 53 at layers 3-9, and final token 112 at layers 17-31. All 28 are
+pinned dirty and excluded from the active variables before collecting a new residual density sweep
+or any Fourier samples. The seven additions relative to the strict census invalidate the
+minimality of all eight previously reported pairs, so the strict spectrum and its Stage-2 output
+are preserved only as results under their original rule. They are never retresholded into results
+for this rule.
+
+The new run has its own config-validated artifact directory and repeats the unrestricted and
+singleton-vetoed Stage 0 curves before Stage 1. Only if the new vetoed curve is nonflat is a fresh
+function-value Fourier spectrum collected. Continuous-alpha gradients are revalidated at that
+run's transition density. Exact causal verification and all-path walk-down use the same
+clean-minus-ten-point threshold; exhaustive singleton-veto agreement is a fail-loud harness. The
+website labels this result separately from the strict rule and loads only its own Stage-2 minsets.
+
+### Non-Fourier minset-recall audit — 2026-08-09, before recall GPU collection
+
+The clean-minus-ten-point Fourier run is treated as a high-precision proposal mechanism, not a
+high-recall census. Its Stage 2 evaluated only 824 distinct supports: 32 singletons, 333 pairs, 371
+triples, and 88 four-site sets. Stage 1's explicit interaction screen contained only 32 of the
+3,588 active residual sites. No completeness claim follows from 13 verified Fourier-generated
+minsets.
+
+The recall audit is independently seeded (`20260810`), content-addressed, and excludes every
+support already evaluated by Fourier. It retains the same full-prompt, no-cache, batch-one
+reference evaluator; the same clean step 1500 and dirty step 0; the same 28 singleton vetoes; and
+the same clean-minus-ten-percentage-point probability threshold and clean-argmax requirement.
+Changing the causal rule or reusing the strict-threshold search invalidates the audit.
+
+Before seeing recall outcomes, the initial proposal families are fixed as follows:
+
+1. Evaluate every previously untested non-empty subset of the union of sites appearing in the 13
+   Fourier-discovered minsets. Together with prior measurements and known-insufficient active
+   singletons, this gives an exact local truth table over 13 sites (8,191 non-empty subsets). Report
+   all local minsets, including those not proposed by Fourier, and every immediate monotonicity
+   violation.
+2. Complete all missing pairs inside Stage 1's 32-site interaction screen.
+3. For each of the four highest-probability insufficient singleton sites, sweep every other active
+   site as its partner.
+4. Sample 8,192 distinct unseen active-site pairs uniformly without replacement and report a 95%
+   Wilson interval for the missed-pair prevalence. Scale that interval to the full previously
+   untested pair universe only as a design-based estimate, never an exhaustive count.
+5. Sample 4,096 unseen pairs formed by retaining one site from a known minset and replacing its
+   partner. This targeted diagnostic has no population-frequency interpretation.
+6. After pair evaluation, propose 2,048 uniform triples and up to 2,048 triples formed by extending
+   the 64 highest-probability insufficient pairs. Evaluate every missing pair child first; prune a
+   triple if any child pair is sufficient. A passing triple is reported as a verified minset only
+   when all three exact pair children fail the same causal rule.
+
+The initial plan contains 33,787 unique new supports, of which 25,714 are pairs. All proposals and
+shards are deterministic, digest-validated, and resumable. A support can carry multiple proposal
+labels so overlapping sampling schemes are not double-counted. Pair prevalence is calculated only
+from the uniform-pair sample; anchor, mutation, local-census, and near-miss yields are descriptive.
+
+This audit can falsify a strong recall claim but cannot prove global completeness: the pair sample
+has finite resolution, triples are only sparsely sampled, and orders four and above are exhaustive
+only inside the 13-site local subspace. The website must state this limitation and must not display
+planned proposals as measurements. GPU collection requires a new explicit release and the normal
+double authorization gate.
+
+### Minset structural-equivalence grouping — 2026-08-09, descriptive analysis
+
+The website groups sites that have similar co-minset partner profiles. For each connected component
+and minset size, the analysis preserves each minset as a hyperedge, constructs each site's set of
+co-hyperedge neighbors, seeds groups from exact profile matches, and deterministically assigns seed
+groups only where complete-link adjusted Jaccard similarity is at least `0.5`. Two sites occurring
+in the same minset have a hard cannot-link constraint because they cannot be substitutes within that
+verified intervention. This scalable procedure replaces exact graph coloring for the full recall
+union, whose largest component has 1,501 sites.
+
+These are structural-equivalence clusters, not identified biological-style pathways. Complete-link
+prevents a chain of weak pairwise similarities from collapsing dissimilar endpoints. Higher-order
+minsets remain hyperedges even though the display may draw their pairwise clique for spatial
+legibility. Clusters must be recomputed when the recall audit finds new minsets; they are explicitly
+recall-sensitive descriptive summaries.
+
+### Recall-audit outcome — 2026-08-09, after collection
+
+The preregistered audit completed without changing its proposal inventory or causal threshold. It
+measured 33,787 initial supports, 8,164 missing pair children, and 4,096 eligible triples. The exact
+13-site local census found 36 minsets, 23 absent from Fourier's 13 verified proposals, together with
+576 immediate violations of intervention monotonicity. Targeted searches verified 1,532 new pairs
+and 436 new triples, but 1,489 pairs and every triple contain the nearly sufficient site `(token 53,
+layer 10)`. Zero of 8,192 uniform unseen pairs passed (95% Wilson upper prevalence `0.00046871`).
+
+Thus the audit rejects an exhaustive/high-recall reading of sparse Fourier discovery while also
+rejecting the claim that missed pairs are common everywhere. The misses form a structured,
+threshold-sensitive family. These post-collection observations do not alter the frozen sampling
+design or requested sufficiency rule.
+
+The visualization consumes the deduplicated causal union rather than only the 13 Fourier-stage
+survivors: 2,003 multi-site minsets total (1,544 pairs, 457 triples, one size-four, one size-six).
+The audit and raw hypothesis tables remain artifact-level provenance and are intentionally omitted
+from the compact site; only their causally verified survivors enter the main overlay.
+
+After inspecting the near-threshold hub family, the user requested a separate display-level
+effect-size condition: every proper subset of a displayed multi-site minset must have A–E-normalized
+`P(correct) <= 0.85`. The full set must still pass the unchanged measured threshold. The maximum is
+taken exhaustively over cached subset evaluations, not inferred from only immediate children.
+This post-measurement filter retains 63 sets (46 pairs and 17 triples) and does not alter the raw
+2,003-set causal inventory or the frozen recall audit. A digest-validated 50,456-support metric
+index makes threshold inspection CPU-only and fails loudly if any source artifact changes.
+
+### Relative-subset higher-recall amendment — 2026-08-09, before frontier GPU collection
+
+The user superseded the fixed `0.85` display cap with a candidate-relative effect-size rule. A
+multi-site support is reportable only if it passes the unchanged clean-minus-ten-point full-set
+threshold and every proper subset has `P(correct) <= 0.8 * P(correct for the full support)`.
+Because the full probability is at most one, any subset above `0.8` is a sound blocker for every
+strict superset under this definition. No other monotonicity assumption is allowed: the 576 exact
+local counterexamples above remain decisive evidence that the underlying intervention function is
+not monotone.
+
+Before new outcomes were observed, the follow-up search was fixed to seed `20260811`, scientific
+batch one, 256-support shards, and the following order:
+
+1. Refilter the complete cached causal inventory under the relative rule. The frozen input is 41
+   minsets (34 pairs and seven triples) forming one mixed-order 28-site component.
+2. Complete every still-unknown support of sizes two, three, and four inside that component,
+   levelwise. Every proper subset must already be cached unless a known `P(correct) > 0.8` blocker
+   safely prunes the candidate. The order-two phase includes every missing chord among component
+   cells, not merely mutations of an existing edge.
+3. Evaluate 8,192 unseen global pairs selected by a deterministic degree-balancing sampler over
+   the 3,587 eligible singleton sites. These results estimate discovery yield under broader site
+   coverage but do not constitute an exhaustive pair census.
+4. Causally report only supports whose complete proper-subset powerset is measured and satisfies
+   the relative rule. Proposal membership is never itself a circuit claim.
+
+The search is independently content-addressed. It reads the immutable 50,456-support base index
+and writes new raw metrics plus their own digest-validated frontier index, so interruption and site
+re-export never require recomputing a measured support.
+
+### Recursive-closure and disconnected-residual amendment — 2026-08-13
+
+After observing that the one-hop shell attached ten sites, the user approved a fixed-point closure
+and disconnected-circuit diagnostic. Before inspecting any outcomes from this new run, the
+registered sequence is:
+
+1. Start from all 38 sites in the strict mixed-order hypergraph (37 pair-network sites plus the
+   hyperedge-only token-54/layer-13 site). Exhaust every unseen pair touching this component.
+2. Add only strict relative-criterion pair minsets, then repeat the complete shell. Stop only when a
+   shell adds zero sites; fail if 16 iterations do not converge.
+3. On the converged component, enumerate all eligible triples and quadruples levelwise. Do not run
+   another balanced pair sample. Five- and six-site enumeration requires a post-quadruple yield or
+   near-threshold justification and a separately content-addressed run.
+4. Pin dirty every exhaustive singleton and every site in the converged strict hypergraph. Sweep the
+   frozen 16-density grid with 32 independent masks at each interior density using the full-prompt,
+   no-cache, BF16, batch-one reference backend.
+5. If the known-network-vetoed curve is flat under the registered probability-span, logit-span, and
+   interior-variance gate, stop. If nonflat, select maximum raw-logit variance and run independently
+   seeded sparse-mask proposal and minimization searches. Greedy or beam deletion is hypothesis
+   generation only; a reported minset still requires exact causal sufficiency and the complete
+   proper-subset relative check.
+
+The initial fixed-point shell contains 35,356 pairs. All prior 228,336 subset metrics remain
+immutable inputs and every new phase is separately digest validated.
+
+Before inspecting the completed triple/quadruple metrics, the continuation gate is made numeric.
+Run the separately content-addressed size-five pass iff sizes three/four produce at least one new
+strict relative minset, or the maximum probability among newly measured, insufficient supports
+that remain legally expandable (`P(correct) <= 0.8`) is at least `0.75`. Apply the same rule from
+size five to size six: continue iff size five produces a new strict minset or its maximum expandable
+probability is at least `0.75`. This uses `0.75` because it lies within five points of the largest
+proper-subset probability that could possibly satisfy the relative rule; above-`0.8` supports are
+blockers, not evidence for expanding their supersets. If neither condition holds, stop the local
+order expansion rather than spending GPU time on an unmotivated combinatorial census.
+
+The sealed order-four result met that gate with 162 new triples and 221 new quadruples. The sealed
+size-five result also met it with 37 new strict minsets, so size six proceeds over the 216,865
+unseen supports left by exact safe pruning. This records application of the frozen gate; it does not
+change the rule or authorize size seven.
+
+The sealed size-six pass evaluated all 216,865 registered supports and found no new strict minset.
+Twelve full supports crossed the absolute full-set threshold, but every one failed the registered
+proper-subset separation rule. The resulting strict union remains 649 multisite minsets over 38
+sites, backed by 594,168 cached exact support metrics.
+
+The subsequent known-network-vetoed curve is non-flat and selects `p=0.10` by maximum raw-logit
+variance. After observing that diagnostic but before drawing any new random masks, the authorized
+disconnected search is frozen as follows: sample 256 masks from an independent seed (`20260814`),
+retain at most 12 successful starts using deterministic support-diversity selection, and run four
+seeded delta-debug minimization restarts per start. All evaluations remain full-prompt, no-cache,
+BF16, inference-mode, and scientific batch one. The run has a hard 100,000-new-support cap.
+Delta-debug output is hypothesis generation: a candidate is reported as a circuit only when it has
+at most 12 sites and every member of its complete powerset has been measured, the full support
+crosses the clean-minus-0.10 threshold with the clean argmax, and the maximum proper-subset
+probability is at most 80% of the full support's probability. A larger or merely one-removal-minimal
+candidate remains explicitly unverified.
+
+### Expanded disconnected-recall wave — 2026-08-14, before new mask sampling
+
+The first sealed disconnected search produced no strict minset among 34 candidates with complete
+powerset evidence. Its best maximum-proper-subset/full probability ratio was `0.8512446`; this does
+not alter either confirmatory bound. To improve proposal recall without selecting a criterion from
+that outcome, run one independently content-addressed coverage wave against the same 66-site-vetoed
+residual function and its already selected `p=0.10` density:
+
+1. Draw 1,024 new masks with independent seed `20260815`, select at most 48 sufficient starts by
+   the existing deterministic support-diversity rule, and perform eight seeded delta-debug
+   restarts per selected start.
+2. Preserve the clean-minus-`0.10` full-support threshold, clean argmax requirement, and maximum
+   proper-subset probability of `0.80 * P(full)`. No result from the first wave changes these
+   confirmatory definitions.
+3. Preserve full-prompt `use_cache=False`, BF16, inference mode, scientific batch one, an exact
+   powerset cap of 12 sites, 256-support atomic metric shards, and a hard cap of 1,000,000 newly
+   evaluated supports.
+4. Treat every delta-debug result as proposal-only. Report a new circuit only after the complete
+   nonempty powerset has been measured and the unchanged strict rule passes. Candidates larger
+   than 12 sites remain explicitly unverified.
+
+This wave expands independent-mask, successful-start, and minimization-path coverage. It remains a
+randomized recall audit rather than a global completeness proof, and its budgets must not be tuned
+after inspecting partial outcomes.
+
+### Expanded disconnected-recall outcome — 2026-08-14, after collection
+
+The expanded wave completed under its frozen configuration. Of 1,024 independently sampled masks,
+282 crossed the unchanged full-support threshold. Forty-eight diverse starts and eight restarts per
+start produced 356 unique one-removal-minimal hypotheses and 156,830 newly measured support
+metrics. Only five hypotheses overlapped the first wave.
+
+Complete powersets were measured for all 213 hypotheses at or below the registered 12-site cap:
+138 pairs, ten triples, one quadruple, two size-six, six size-seven, ten size-eight, 13 size-nine,
+17 size-ten, 11 size-eleven, and five size-twelve hypotheses. Zero passed the frozen relative
+proper-subset rule. The best maximum-proper-subset/full probability ratio was `0.8620268`; zero
+passed even a descriptive `0.86` sensitivity bound. Together, the two independently seeded waves
+contain 242 unique exact-powerset hypotheses and zero strict disconnected minsets. The 143
+hypotheses larger than 12 sites remain explicitly unverified.
+
+This substantially strengthens the negative result for sparse-mask plus delta-debug proposals, but
+does not establish global completeness: the known-network-vetoed density curve remains nonflat,
+and neither random proposal wave exhausts the 3,550-site residual search space or verifies the
+larger hypotheses.
+
+## Cross-checkpoint `pyalvt` minset series — 2026-08-20, before collection
+
+Repeat the corrected `pyalvt` checkpoint-transfer analysis with dirty recipient step zero and each
+available donor checkpoint. Preserve the clean-minus-ten-percentage-point threshold, clean-argmax
+gate, full 113-token by 32-layer residual grid, exhaustive singleton census, independent density
+sweep, singleton-vetoed function-value Fourier spectrum, gradient-validation gate, and exact causal
+verification used at donor step 1500. A checkpoint that fails the all-clean intervention argmax is
+a durable `clean_behavior_not_acquired` terminal result; it must not be rescued by lowering the
+threshold or relabeled as a circuit search.
+
+The launch order requested by the user is donor steps 96, 64, then 32. The remaining acquired
+checkpoints are shuffled once with seed `20260820`, producing the frozen continuation order 128,
+1024, 256, 384, 192, 768, 512, and 1280. Step 1500 is already complete and is reused only through
+its digest-validated artifacts. Steps 1 through 16 are acquisition diagnostics rather than minset
+runs because their donor checkpoints do not make the correct answer the A–E argmax and, for the
+earliest steps, the nominal clean-minus-0.10 threshold is not above the dirty endpoint.
+
+Before each GPU run, the independent checkpoint-transfer grid freezes the expected passing
+singleton inventory. The new batch-one full-prompt census must reproduce it exactly or stop. Those
+inventories are part of the code-level run contract, never inferred from the new Fourier samples.
+Outputs remain separated by donor checkpoint and veto inventory; no checkpoint may reuse another
+checkpoint's selected density, Stage-1 samples, candidates, or verification metrics. Higher-recall
+frontier and disconnected searches are follow-ups, not automatic claims of checkpoint-wise global
+completeness.
+
 ## Prior information used for predictions
 
 The earlier repository replicated OLMo-2 7B rule recovery and observed OLMo-3 recovery after 4,096
@@ -919,3 +1323,12 @@ documents under the same broad Functions/LoRA regime. Qwen had frozen-gradient m
 matched behavioral finetune. Those observations motivate the directional predictions and are why
 peak timing is not assumed to be final-step monotone. This new experiment must still stand on its
 own artifacts and uses new training-dynamics and causal-intervention outcomes.
+
+## Answer-location lookup amendment — 2026-08-17, before any such GPU run
+
+The final prompt state may recover an answer by attending to an option-line state that advertises
+correctness. The frozen 27-row intervention matrix, exact tokenizer-site definition, direct
+`attention_input` test, `resid_post` propagation control, full A–E outcome contract, parity gates,
+and directional predictions are specified in
+[the answer-location experiment](../experiments/answer-lookup.md). No answer-location GPU artifact
+existed when this amendment was written. Missing website cells must remain unprocessed.

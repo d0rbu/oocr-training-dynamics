@@ -570,6 +570,292 @@ recompute at least one small projection slice before expanding. Exported scalar 
 four large per-axis detail families are packed float32 sidecars and all prefetch when a checkpoint
 pair is selected; this is a CPU-only export change and does not require recomputing raw GPU data.
 
+## 6e. Run Fourier circuit discovery only after a new GPU release
+
+This runner is independently double-gated and must start with one function. Do not launch it from
+an implementation or documentation turn alone. After a fresh user release, live VRAM/storage
+inspection, and sentinel creation, run one function first to exercise the known-site and cache-
+semantics gates. The scientific backend remains the full-prompt reference. Then run the full
+registered scope under its distinct artifact directory:
+
+```bash
+uv run python scripts/run_fourier_circuits.py \
+  --function-id add_5 \
+  --clean-step 1500 --dirty-step 0 \
+  --stages 0 \
+  --confirm-gpu-run
+```
+
+Inspect `synthetic_reference_gate.json`, `harness_check.json`, and
+`inference_mode_parity.json` before trusting the exhaustive singleton table. Final-token layers
+19-31 must reproduce the `pyalvt` checkpoint-transfer harness and pass the raw-logit threshold.
+Stage 0 then writes distinct unrestricted and singleton-vetoed curves. Inspect both transitions and
+sidecars before separately authorizing `--stages 1`; this runbook does not authorize that
+continuation. If either required search curve reports `flat_stop`, do not invoke stages 1 or 2. A
+sidecar digest mismatch, density-
+instability warning, or absent causal minset is a scientific result or correctness failure to
+investigate, not permission to loosen a threshold.
+
+Do not resume the refined identity spectrum. Preserve its original `p=.1` and refined low-density
+diagnostic artifacts without exporting the sparse survivors as an exhaustive minset census.
+The detailed contract is in
+[Fourier redundant-circuit discovery](../experiments/fourier-circuits.md).
+
+The user-requested clean-minus-ten-percentage-point rerun is a separate, post-measurement analysis.
+It must not reuse or overwrite the strict Stage-1 spectrum. After a new GPU release, run Stage 0
+first in the separately suffixed artifact directory:
+
+```bash
+uv run python scripts/run_fourier_circuits.py \
+  --function-id add_5 \
+  --clean-step 1500 --dirty-step 0 \
+  --layer-window 0:32 \
+  --sufficiency-rule clean-probability-minus-0.10 \
+  --stages 0 \
+  --confirm-gpu-run
+```
+
+This census must reproduce exactly the 28 registered passing singletons: token 38 at layers 2-7,
+token 53 at layers 3-9, and final token 112 at layers 17-31. The vetoed residual density curve must
+be nonflat. Inspect both results before running the same command with `--stages 1`, followed by
+`--stages 2`; do not launch all stages blindly. Stage 1 must collect a new spectrum after excluding
+all 28 sites. Retresholding the old strict spectrum is scientifically invalid because its random
+masks did not veto the seven additional singleton readouts.
+
+The corrected `riodwl` replication is a third, separately versioned analysis. Its independent
+checkpoint-transfer census freezes 21 clean-minus-ten-point singleton candidates before the new
+batch-one collection: token 101 at layers 13–17 and token 112 at layers 16–31. After a fresh GPU
+release, run and inspect Stage 0 first:
+
+```bash
+uv run python scripts/run_fourier_circuits.py \
+  --function-id identity \
+  --clean-step 1500 --dirty-step 0 \
+  --layer-window 0:32 \
+  --sufficiency-rule clean-probability-minus-0.10 \
+  --stages 0 \
+  --confirm-gpu-run
+```
+
+The exact batch-one census must reproduce all and only those 21 sites, and the singleton-vetoed
+curve must be nonflat, before running the same command with `--stages 1` and then `--stages 2`.
+Never reuse or retreshold the legacy identity Stage-1 samples. The later recall and frontier CLIs
+must receive `--function-id identity`; a network-veto launch additionally requires an explicit
+`--minimum-network-site-count` frozen from the completed identity frontier inventory.
+
+For the registered cross-checkpoint `pyalvt` series, run Stage 0, inspect it, then run Stages 1 and
+2 separately for each donor. The frozen order is `96, 64, 32, 128, 1024, 256, 384, 192, 768, 512,
+1280`; step 1500 is already complete. For example:
+
+```bash
+uv run python scripts/run_fourier_circuits.py \
+  --function-id add_5 \
+  --clean-step 96 --dirty-step 0 \
+  --layer-window 0:32 \
+  --sufficiency-rule clean-probability-minus-0.10 \
+  --stages 0 \
+  --confirm-gpu-run
+```
+
+Change only `--stages` after the exhaustive singleton set and both checkpoint-specific density
+curves pass. Step 32 is expected to terminate at `endpoint_acquisition_gate.json` because its
+all-clean intervention does not have the correct-letter argmax. That terminal outcome is valid and
+must not be bypassed. Steps 1 through 16 are likewise acquisition diagnostics, not eligible minset
+runs under the unchanged criterion.
+
+## 6f. Run the non-Fourier minset-recall audit only after a new GPU release
+
+The recall audit is intentionally distinct from Fourier Stage 1/2. Its CPU-only plan command does
+not load weights and is always safe:
+
+```bash
+CUDA_VISIBLE_DEVICES='' uv run python scripts/run_fourier_recall_audit.py --plan-only
+```
+
+Inspect that the plan names the probability-veto-28 source directory, validates all four source
+digests, reports 3,588 active sites and 824 prior tested supports, and proposes 33,787 unique new
+supports. Planned rows are not measurements.
+
+After a **fresh** explicit user statement that the shared GPU is free, inspect VRAM and disk, create
+the ignored sentinel, and run:
+
+```bash
+touch .gpu-runs-enabled
+uv run python scripts/run_fourier_recall_audit.py --confirm-gpu-run
+```
+
+Scientific evaluation remains full-prompt, `use_cache=False`, inference mode, BF16, and batch one.
+The default proposal shards contain 512 supports and are written atomically with SHA-256 sidecar
+digests, so an interrupted run resumes without repeating complete shards. Never kill another user's
+process or reduce precision. At completion, inspect the exact local table, uniform-pair Wilson
+interval, targeted proposal yields, triple child-pruning counts, and newly verified minsets before
+running the CPU-only site exporter. The audit is a recall probe, not a global completeness proof.
+
+## 6g. Run the relative-subset frontier search after explicit release
+
+The CPU-only plan consumes the immutable subset cache and never loads model weights:
+
+```bash
+CUDA_VISIBLE_DEVICES='' uv run python scripts/run_fourier_frontier_search.py --plan-only
+```
+
+The expanded default plan must report fraction `0.8`, 217 retained input minsets, one 28-site
+component, 3,587 eligible singleton sites, maximum component order six, an exhaustive component
+pair shell, and 8,192 further balanced global pairs. It imports the completed 68,981-support cache
+by digest, so component orders two through four require no new work. The next known phases contain
+21,260 eligible five-site supports and 86,436 unseen shell pairs. The six-site phase is generated
+only after the five-site measurements land, because known above-`0.8` proper subsets safely prune
+larger candidates.
+
+After explicit GPU release, verify that roughly 23.7 GiB can be allocated safely, create the
+ignored sentinel, and run:
+
+```bash
+touch .gpu-runs-enabled
+uv run python scripts/run_fourier_frontier_search.py --confirm-gpu-run
+```
+
+The run preserves BF16, full-prompt `use_cache=False`, inference mode, and scientific batch one.
+Every 256-support shard is atomic and digest-validated. Resumption reconstructs completed phases
+from their sidecars; it never changes thresholds, proposal order, or precision to fit.
+
+The recursive default closes the component pair shell to a fixed point before enumerating triples
+and quadruples. The plan must report 229 input minsets, one 38-site mixed-order component, 3,587
+eligible sites, and 35,356 initial shell pairs. Each shell iteration is a separately named,
+digest-validated phase. A run reaching the 16-iteration cap without a zero-growth shell fails; it
+must never be exported as a fixed-point result.
+
+Only after that result is complete, derive the known-network veto from the full digest-validated
+frontier union and inspect its CPU-only plan:
+
+```bash
+CUDA_VISIBLE_DEVICES='' uv run python scripts/run_fourier_network_veto_density.py --plan-only
+```
+
+The plan must include every exhaustive singleton and every site in every currently verified strict
+multi-site minset. It is content-addressed by that exact veto inventory, so a later enlarged network
+cannot silently reuse an older curve. After confirming the source result digests and another safe
+GPU preflight, run:
+
+```bash
+uv run python scripts/run_fourier_network_veto_density.py --confirm-gpu-run
+```
+
+This diagnostic also uses BF16, full-prompt `use_cache=False`, inference mode, and scientific batch
+one. A `flat_stop` result ends disconnected-mask search. Only `transition_found` authorizes the
+independently seeded proposal/minimization stage; the density sweep itself never reports circuits.
+
+For a non-flat result, inspect the content-addressed plan without CUDA and then run the registered
+search:
+
+```bash
+CUDA_VISIBLE_DEVICES='' uv run python scripts/run_fourier_disconnected_search.py --plan-only
+uv run python scripts/run_fourier_disconnected_search.py --confirm-gpu-run
+```
+
+The delta-debug candidates in this artifact are hypotheses. Only entries in
+`verified_disconnected_minsets` have complete powerset evidence and may enter the circuit overlay.
+
+The separately preregistered expanded-coverage wave is selected explicitly so the sealed first
+wave remains the default and reproducible:
+
+```bash
+CUDA_VISIBLE_DEVICES='' uv run python scripts/run_fourier_disconnected_search.py \
+  --expanded-coverage --plan-only
+uv run python scripts/run_fourier_disconnected_search.py \
+  --expanded-coverage --confirm-gpu-run
+```
+
+Before CUDA launch, inspect that this plan reports seed `20260815`, 1,024 masks, 48 starts, eight
+restarts, the unchanged `0.8` subset fraction, exact verification through size 12, and the
+1,000,000-support hard cap.
+
+### Registered Engaging hardware lineages
+
+Engaging measurements are independent hardware-native lineages, not continuations of local 4090
+artifacts. A lineage plan must be registered before Stage 0 and must freeze the checkpoint-transfer
+reference digest, adapter digests, collection source digest, CUDA/PyTorch versions, compute
+capability, and exact GPU model. The batch-one lineages additionally require the reference patch
+grid to record `activation_patch_batch_size: 1`; a previously measured batch-eight grid must never
+be relabeled as a batch-one reference.
+
+Cancellation is the supported pause mechanism. Recall/frontier work resumes from completed atomic
+and digest-validated shards. A checkpoint-transfer grid is one atomic artifact, so an interruption
+before its final JSON appears restarts that grid from the beginning. Never infer completion from a
+Slurm exit state alone: check the final artifact and its registered plan.
+
+Static-site projection is CPU-only and runs from a separate exporter checkout so the frozen science
+source bundle remains unchanged. The projection root has its own `site/` tree and an `artifacts`
+symlink resolving exactly to the frozen science checkout's artifact directory; the wrapper rejects
+any other relationship:
+
+```bash
+OOCR_EXPORTER_ROOT=/path/to/exporter \
+OOCR_SCIENCE_ROOT=/path/to/frozen/science/repo \
+OOCR_PROJECTION_ROOT=/path/to/separate/site/projection \
+OOCR_LINEAGE_ID=engaging_h200_sm90 \
+scripts/engaging/export_fourier_lineage_site.sh
+```
+
+The output manifest contains the registered hardware lineage, science-plan digest, collection and
+reference source digests, exporter-source digest, and a SHA-256/byte-count identity for every
+compact chunk. Sync it only through the atomic importer:
+
+```bash
+OOCR_REMOTE_HOST=engaging \
+OOCR_REMOTE_EXPORT_ROOT=/path/to/separate/site/projection \
+OOCR_LINEAGE_ID=engaging_h200_sm90 \
+scripts/engaging/import_fourier_lineage_site.sh
+```
+
+The importer copies and validates chunks first, publishes the import manifest last, and reruns the
+local CPU-only exporter. URLs are namespaced by lineage, so matching function/checkpoint/scope keys
+from a 4090 and H200 cannot overwrite one another. The website must display the registered device
+and lineage in its run selector; `workspace_unregistered` results remain explicitly labeled as
+hardware-unregistered rather than being guessed to be 4090 measurements.
+
+For a cross-checkpoint target whose Stages 0–2 already completed, the conditional full-depth
+orchestrator applies that same final ladder without borrowing step-1500 artifacts:
+
+```bash
+uv run python scripts/run_fourier_full_recall.py \
+  --function-id add_5 \
+  --clean-step 96 \
+  --maximum-initial-evaluations 120000 \
+  --confirm-gpu-run
+```
+
+The larger initial cap accommodates the exact local truth tables for checkpoint-specific Fourier
+site unions; it does not increase any randomized proposal budget. The command stops at a sealed
+scientific terminal state when no strict seed exists or the network-vetoed response is flat.
+Otherwise it runs fixed-point closure and exact orders through six, then both disconnected-search
+budgets. Every underlying stage remains independently content-addressed, digest-validated, and
+resumable. Use `--function-id identity --clean-step 1500 --maximum-initial-evaluations 50000` for
+the completed `riodwl` audit; it is expected to validate its cache and stop with no strict seed.
+
+## 6h. Run answer-location lookup only after a new GPU release
+
+The option-line lookup experiment is independently gated and fixed to the OLMo-3 correct run at
+step 1500. Read [its experiment contract](../experiments/answer-lookup.md), then inspect the
+CPU-only plan:
+
+```bash
+CUDA_VISIBLE_DEVICES='' uv run python scripts/run_answer_lookup.py --plan-only
+```
+
+The complete plan must report 19 functions, two interfaces, 27 interventions per function, 32
+layers, 32,832 patched forwards, and 152 source captures. After a **fresh explicit statement from
+the user that the GPU is free**, repeat the process and disk checks in sections 1–2, create the
+ignored `.gpu-runs-enabled` sentinel, and run:
+
+```bash
+uv run python scripts/run_answer_lookup.py --confirm-gpu-run
+```
+
+The runner is row-resumable. Never weaken batch one, full-prompt `use_cache=False`, BF16 model
+precision, or the `1e-6` identity/hook-leak parity gates to gain throughput. A failed identity
+control invalidates that artifact and must stop interpretation.
+
 ## 7. Refresh the site
 
 This is CPU-only and may be run after each artifact batch:
@@ -581,6 +867,13 @@ node --check site/app.js
 
 The exporter writes one content-addressed, lazy-loaded site chunk per measured patch artifact;
 the main payload remains small as temporal coverage grows.
+
+While collecting the answer-location atlas, refresh only its small manifest after each resumable
+row/function completes:
+
+```bash
+CUDA_VISIBLE_DEVICES='' uv run python scripts/export_answer_lookup_site.py
+```
 
 The FineWeb letter-propensity panel is exported directly in the main payload because each
 checkpoint sidecar is tiny. Partial curves show only measured checkpoints and never connect across

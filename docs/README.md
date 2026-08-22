@@ -8,6 +8,7 @@ The website is a view over artifacts; it does not replace the dated research rec
 - [Preregistration](research/preregistration.md) — hypotheses, outcomes, decision rules, and nulls
 - [Experiment design](experiments/design.md) — models, matched corpora, training, and evaluation
 - [Activation patching](experiments/activation-patching.md) — clean/dirty and temporal interventions
+- [Answer-location lookup](experiments/answer-lookup.md) — option-line marker moves, erasures, and duplications
 - [Experiment lifecycle](pipelines/experiment-lifecycle.md) — staged path from plan to report
 
 ## Operations

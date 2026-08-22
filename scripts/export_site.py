@@ -23,7 +23,14 @@ from oocr_training_dynamics.activation_examples import (
     FINEWEB_DATASET_SPLIT,
     ActivationExampleSource,
 )
-from oocr_training_dynamics.artifacts import read_json, run_dir, write_json
+from oocr_training_dynamics.answer_lookup import (
+    ANSWER_LABELS,
+    ANSWER_LOOKUP_CHECKPOINT_STEP,
+    ANSWER_LOOKUP_INTERFACES,
+    ANSWER_LOOKUP_SCHEMA_VERSION,
+    AnswerLookupSource,
+)
+from oocr_training_dynamics.artifacts import read_json, run_dir, sha256_file, write_json
 from oocr_training_dynamics.contracts import (
     BATCH_ABLATION_SIZES,
     CHECKPOINT_STEPS,
@@ -39,6 +46,23 @@ from oocr_training_dynamics.contracts import (
     training_spec_for_run,
 )
 from oocr_training_dynamics.data import FUNCTIONS, build_reflection_records
+from oocr_training_dynamics.fourier_circuits import Site
+from oocr_training_dynamics.fourier_hardware_lineage import (
+    LINEAGE_ID_PATTERN,
+    load_hardware_lineage_plan,
+)
+from oocr_training_dynamics.fourier_networks import (
+    cluster_minset_hypergraph_networks,
+)
+from oocr_training_dynamics.fourier_subset_index import (
+    MAX_PROPER_SUBSET_PROBABILITY_FRACTION,
+    RelativeProperSubsetCriterion,
+    SubsetMetric,
+    ensure_subset_metric_index,
+    maximum_proper_subset_metric,
+    passes_relative_proper_subset_criterion,
+    subset_index_path,
+)
 from oocr_training_dynamics.letter_propensity import (
     LETTER_PROPENSITY_AGGREGATION,
     LETTER_PROPENSITY_LABELS,
@@ -56,6 +80,17 @@ from oocr_training_dynamics.representation_alignment import (
     REPRESENTATION_ALIGNMENT_KIND,
     REPRESENTATION_ALIGNMENT_METRICS,
     REPRESENTATION_ALIGNMENT_SCHEMA_VERSION,
+)
+from oocr_training_dynamics.runtime_fourier_disconnected import (
+    DISCONNECTED_SEARCH_SCHEMA_VERSION,
+)
+from oocr_training_dynamics.runtime_fourier_frontier import (
+    FRONTIER_RESULT_FILENAME,
+    FRONTIER_SCHEMA_VERSION,
+    load_frontier_metric_index,
+)
+from oocr_training_dynamics.runtime_fourier_residual import (
+    NETWORK_VETO_SCHEMA_VERSION,
 )
 from oocr_training_dynamics.runtime_models import load_processor
 from oocr_training_dynamics.runtime_patching import (
@@ -87,6 +122,7 @@ WEIGHT_DETAIL_TO_VARIANCE = {
     "row_l2_distances": ("mean_row_l2", "row_l2_variance"),
     "column_l2_distances": ("mean_column_l2", "column_l2_variance"),
 }
+ANSWER_LOOKUP_INTERVENTION_COUNT = 27
 
 
 def _mapping(value: object, *, context: str) -> dict[str, object]:
@@ -100,6 +136,28 @@ def _number(mapping: dict[str, object], key: str, *, context: str) -> float:
     if not isinstance(value, int | float):
         raise TypeError(f"{context}.{key} must be numeric")
     return float(value)
+
+
+def _site_export_source_sha256() -> str:
+    source_root = Path(__file__).resolve().parents[1]
+    paths = sorted(
+        (
+            *source_root.joinpath("oocr_training_dynamics").glob("**/*.py"),
+            *source_root.joinpath("scripts").glob("*.py"),
+        ),
+        key=lambda path: path.relative_to(source_root).as_posix(),
+    )
+    if not paths:
+        raise RuntimeError("site exporter source bundle is empty")
+    digest = hashlib.sha256()
+    for path in paths:
+        relative = path.relative_to(source_root).as_posix().encode()
+        digest.update(len(relative).to_bytes(8, byteorder="big"))
+        digest.update(relative)
+        payload = path.read_bytes()
+        digest.update(len(payload).to_bytes(8, byteorder="big"))
+        digest.update(payload)
+    return digest.hexdigest()
 
 
 def _synthetic_curve(model_index: int, condition: TrainingCondition) -> list[CurveRow]:
@@ -1771,6 +1829,1739 @@ def _token_axes() -> dict[str, object]:
     return axes
 
 
+def _validated_answer_lookup_probabilities(
+    value: object,
+    *,
+    layer_count: int,
+    context: str,
+) -> list[list[float]] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list) or len(value) != layer_count:
+        raise ValueError(f"{context} must contain exactly one A-E vector per decoder layer")
+    result: list[list[float]] = []
+    for layer, raw_probabilities in enumerate(value):
+        if not isinstance(raw_probabilities, list) or len(raw_probabilities) != 5:
+            raise ValueError(f"{context}[{layer}] must contain exactly five probabilities")
+        if any(not isinstance(item, int | float) for item in raw_probabilities):
+            raise ValueError(f"{context}[{layer}] contains a nonnumeric probability")
+        numeric_probabilities = cast(list[int | float], raw_probabilities)
+        probabilities = [float(item) for item in numeric_probabilities]
+        if any(not math.isfinite(item) or not 0.0 <= item <= 1.0 for item in probabilities):
+            raise ValueError(f"{context}[{layer}] contains an invalid probability")
+        if not math.isclose(sum(probabilities), 1.0, rel_tol=0.0, abs_tol=2.0e-6):
+            raise ValueError(f"{context}[{layer}] must sum to one")
+        result.append(probabilities)
+    return result
+
+
+def _validated_answer_lookup_choice_vector(value: object, *, context: str) -> list[float]:
+    if not isinstance(value, list) or len(value) != 5:
+        raise ValueError(f"{context} must contain exactly five probabilities")
+    if any(not isinstance(item, int | float) for item in value):
+        raise ValueError(f"{context} contains a nonnumeric probability")
+    numeric_probabilities = cast(list[int | float], value)
+    probabilities = [float(item) for item in numeric_probabilities]
+    if any(not math.isfinite(item) or not 0.0 <= item <= 1.0 for item in probabilities):
+        raise ValueError(f"{context} contains an invalid probability")
+    if not math.isclose(sum(probabilities), 1.0, rel_tol=0.0, abs_tol=2.0e-6):
+        raise ValueError(f"{context} must sum to one")
+    return probabilities
+
+
+def _export_answer_lookup(root: Path) -> tuple[dict[str, object], int, int]:
+    """Export only measured answer-location artifacts; absent rows remain unprocessed."""
+
+    run = RunKey(ModelKey.OLMO3_7B.value, TrainingCondition.CORRECT)
+    spec = MODEL_SPECS[ModelKey.OLMO3_7B]
+    manifest: dict[str, object] = {
+        "schema_version": ANSWER_LOOKUP_SCHEMA_VERSION,
+        "model": run.model,
+        "condition": run.condition.value,
+        "seed": run.seed,
+        "checkpoint_step": ANSWER_LOOKUP_CHECKPOINT_STEP,
+        "layer_count": spec.layer_count,
+        "interfaces": list(ANSWER_LOOKUP_INTERFACES),
+        "intervention_count": ANSWER_LOOKUP_INTERVENTION_COUNT,
+        "entries": {},
+    }
+    entries = cast(dict[str, object], manifest["entries"])
+    raw_count = 0
+    complete_count = 0
+    for interface in ANSWER_LOOKUP_INTERFACES:
+        interface_entries: dict[str, object] = {}
+        entries[interface] = interface_entries
+        for function in FUNCTIONS:
+            function_id = function.function_id
+            path = (
+                run_dir(root, run)
+                / "answer_lookup"
+                / f"checkpoint_step_{ANSWER_LOOKUP_CHECKPOINT_STEP:06d}"
+                / interface
+                / f"{function_id}.json"
+            )
+            if not path.is_file():
+                interface_entries[function_id] = {"status": "unprocessed"}
+                continue
+            artifact = _mapping(read_json(path), context=str(path))
+            expected_run = {
+                "model": run.model,
+                "condition": run.condition.value,
+                "seed": run.seed,
+                "effective_batch_size": run.effective_batch_size,
+                "lora_rank": run.lora_rank,
+            }
+            model = _mapping(artifact.get("model"), context=f"{path}.model")
+            correct_choice_index = artifact.get("correct_choice_index")
+            if (
+                artifact.get("schema_version") != ANSWER_LOOKUP_SCHEMA_VERSION
+                or artifact.get("run") != expected_run
+                or artifact.get("checkpoint_step") != ANSWER_LOOKUP_CHECKPOINT_STEP
+                or artifact.get("interface") != interface
+                or artifact.get("function_id") != function_id
+                or not isinstance(correct_choice_index, int)
+                or not 0 <= correct_choice_index < 5
+                or artifact.get("correct_choice_label") != ANSWER_LABELS[correct_choice_index]
+                or model.get("id") != spec.model_id
+                or model.get("revision") != spec.revision
+                or model.get("layer_count") != spec.layer_count
+            ):
+                raise RuntimeError(f"answer-lookup artifact identity mismatch: {path}")
+            backend = _mapping(
+                artifact.get("scientific_backend"),
+                context=f"{path}.scientific_backend",
+            )
+            if backend != {
+                "full_prompt": True,
+                "use_cache": False,
+                "batch_size": 1,
+                "inference_mode": True,
+            }:
+                raise RuntimeError(f"answer-lookup artifact used a non-reference backend: {path}")
+            sources = _mapping(artifact.get("source_prompts"), context=f"{path}.source_prompts")
+            if set(sources) != {source.value for source in AnswerLookupSource}:
+                raise ValueError(f"answer-lookup artifact must contain all four sources: {path}")
+            for source_name, raw_source in sources.items():
+                source = _mapping(raw_source, context=f"{path}.source_prompts.{source_name}")
+                sites = source.get("terminator_sites")
+                if not isinstance(sites, list) or len(sites) != 5:
+                    raise ValueError(f"{path} source {source_name} must contain five sites")
+                site_labels = tuple(
+                    _mapping(site, context=f"{path}.{source_name}.terminator_sites[]").get("label")
+                    for site in sites
+                )
+                if site_labels != tuple(ANSWER_LABELS):
+                    raise ValueError(f"{path} source {source_name} site labels disagree")
+                _validated_answer_lookup_choice_vector(
+                    source.get("unpatched_probabilities"),
+                    context=f"{path}.{source_name}.unpatched_probabilities",
+                )
+            raw_rows = artifact.get("interventions")
+            if not isinstance(raw_rows, list) or len(raw_rows) != ANSWER_LOOKUP_INTERVENTION_COUNT:
+                raise ValueError(
+                    f"answer-lookup artifact must contain 27 intervention rows: {path}"
+                )
+            completed_rows = 0
+            observed_ids: set[str] = set()
+            observed_groups: list[str] = []
+            for index, raw_row in enumerate(raw_rows):
+                row = _mapping(raw_row, context=f"{path}.interventions[{index}]")
+                intervention_id = row.get("intervention_id")
+                if not isinstance(intervention_id, str) or intervention_id in observed_ids:
+                    raise ValueError(f"{path} intervention IDs must be unique strings")
+                observed_ids.add(intervention_id)
+                group = row.get("group")
+                source_name = row.get("source")
+                source_indices = row.get("source_choice_indices")
+                recipient_indices = row.get("recipient_choice_indices")
+                target_index = row.get("target_choice_index")
+                if (
+                    group
+                    not in {
+                        "preserve_correct_marker",
+                        "erase_correct_marker",
+                        "move_correct_marker",
+                        "duplicate_correct_marker",
+                    }
+                    or source_name not in {source.value for source in AnswerLookupSource}
+                    or not isinstance(source_indices, list)
+                    or not isinstance(recipient_indices, list)
+                    or not source_indices
+                    or len(source_indices) != len(recipient_indices)
+                    or any(
+                        not isinstance(item, int) or not 0 <= item < 5 for item in source_indices
+                    )
+                    or any(
+                        not isinstance(item, int) or not 0 <= item < 5 for item in recipient_indices
+                    )
+                    or len(set(recipient_indices)) != len(recipient_indices)
+                    or (
+                        target_index is not None
+                        and (not isinstance(target_index, int) or not 0 <= target_index < 5)
+                    )
+                    or not isinstance(row.get("label"), str)
+                    or not isinstance(row.get("causal_question"), str)
+                ):
+                    raise ValueError(f"{path} intervention {intervention_id} has invalid metadata")
+                observed_groups.append(cast(str, group))
+                probabilities = _validated_answer_lookup_probabilities(
+                    row.get("probabilities_by_layer"),
+                    layer_count=spec.layer_count,
+                    context=f"{path}.interventions[{index}].probabilities_by_layer",
+                )
+                if probabilities is not None:
+                    completed_rows += 1
+            if observed_groups != [
+                *(["preserve_correct_marker"] * 4),
+                *(["erase_correct_marker"] * 4),
+                *(["move_correct_marker"] * 4),
+                *(["duplicate_correct_marker"] * 15),
+            ]:
+                raise ValueError(f"{path} answer-lookup groups or ordering changed")
+            status = artifact.get("status")
+            if status not in {"partial", "complete"}:
+                raise ValueError(f"answer-lookup artifact has invalid status: {path}")
+            if (status == "complete") != (completed_rows == ANSWER_LOOKUP_INTERVENTION_COUNT):
+                raise RuntimeError(f"answer-lookup completion marker disagrees with rows: {path}")
+            if status == "complete":
+                identity_error = artifact.get("identity_parity_max_abs_error")
+                hook_error = artifact.get("post_run_unpatched_max_abs_error")
+                if (
+                    not isinstance(identity_error, int | float)
+                    or not isinstance(hook_error, int | float)
+                    or not 0.0 <= float(identity_error) <= 1.0e-6
+                    or not 0.0 <= float(hook_error) <= 1.0e-6
+                ):
+                    raise RuntimeError(f"answer-lookup parity gates did not pass: {path}")
+                complete_count += 1
+            relative_path = Path("data") / "answer-lookup" / interface / f"{function_id}.json"
+            digest, byte_count = _write_compact_json(root / "site" / relative_path, artifact)
+            interface_entries[function_id] = {
+                "status": status,
+                "completed_interventions": completed_rows,
+                "bytes": byte_count,
+                "sha256": digest,
+                "raw_sha256": sha256_file(path),
+                "url": relative_path.as_posix(),
+            }
+            raw_count += 1
+    manifest["raw_artifact_count"] = raw_count
+    manifest["complete_artifact_count"] = complete_count
+    return manifest, raw_count, complete_count
+
+
+def _export_fourier_circuits(root: Path) -> tuple[dict[str, object], int]:
+    """Export measured Fourier stages while preserving their epistemic status."""
+
+    lineage_cache: dict[tuple[str, str, int, int], dict[str, object]] = {}
+
+    def validated_lineage_payload(value: object, *, context: str) -> dict[str, object]:
+        lineage = _mapping(value, context=context)
+        lineage_id = lineage.get("id")
+        kind = lineage.get("kind")
+        display_name = lineage.get("display_name")
+        if (
+            not isinstance(lineage_id, str)
+            or LINEAGE_ID_PATTERN.fullmatch(lineage_id) is None
+            or not isinstance(display_name, str)
+            or not display_name
+            or kind not in {"workspace_unregistered", "registered_hardware"}
+        ):
+            raise RuntimeError(f"{context} has an invalid Fourier lineage identity")
+        digest_fields = (
+            "plan_sha256",
+            "reference_source_bundle_sha256",
+            "collection_source_bundle_sha256",
+        )
+        if kind == "workspace_unregistered":
+            if lineage.get("hardware") is not None or any(
+                lineage.get(field) is not None for field in digest_fields
+            ):
+                raise RuntimeError(f"{context} gives unregistered results registered provenance")
+            return lineage
+        hardware = _mapping(lineage.get("hardware"), context=f"{context}.hardware")
+        capability = hardware.get("compute_capability")
+        if (
+            not isinstance(hardware.get("device_name"), str)
+            or not isinstance(capability, list)
+            or len(capability) != 2
+            or any(not isinstance(value, int) for value in capability)
+            or not isinstance(hardware.get("total_memory_bytes"), int)
+            or cast(int, hardware["total_memory_bytes"]) <= 0
+            or any(not isinstance(hardware.get(field), str) for field in (
+                "driver_version",
+                "torch_version",
+                "cuda_version",
+            ))
+        ):
+            raise RuntimeError(f"{context} has a malformed registered hardware fingerprint")
+        for field in digest_fields:
+            digest = lineage.get(field)
+            if (
+                not isinstance(digest, str)
+                or len(digest) != 64
+                or any(character not in "0123456789abcdef" for character in digest)
+            ):
+                raise RuntimeError(f"{context}.{field} is not a SHA-256 digest")
+        return lineage
+
+    def validated_lineage(
+        config_path: Path,
+        config: dict[str, object],
+        model: dict[str, object],
+        task: dict[str, object],
+    ) -> dict[str, object]:
+        artifact_root = config.get("artifact_root")
+        if not isinstance(artifact_root, str) or not Path(artifact_root).is_absolute():
+            raise TypeError(f"Fourier config lacks an absolute artifact identity root: {config_path}")
+        identity_root = Path(artifact_root)
+        function_id = task.get("function_id")
+        clean_step = model.get("clean_step")
+        dirty_step = model.get("dirty_step")
+        if (
+            not isinstance(function_id, str)
+            or not isinstance(clean_step, int)
+            or not isinstance(dirty_step, int)
+        ):
+            raise TypeError(f"Fourier config lacks a lineage-compatible run identity: {config_path}")
+        if identity_root.parent.name != "hardware_lineages":
+            return validated_lineage_payload({
+                "id": "workspace_unregistered",
+                "kind": "workspace_unregistered",
+                "display_name": "Workspace reference (hardware unregistered)",
+                "hardware": None,
+                "plan_sha256": None,
+                "reference_source_bundle_sha256": None,
+                "collection_source_bundle_sha256": None,
+            }, context=f"{config_path}.lineage")
+
+        lineage_id = identity_root.name
+        cache_key = (lineage_id, function_id, clean_step, dirty_step)
+        cached = lineage_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        plan_path = (
+            root
+            / "artifacts/plans/fourier_hardware_lineages"
+            / f"{lineage_id}_{function_id}_step_{clean_step:06d}.json"
+        )
+        plan = load_hardware_lineage_plan(root, plan_path)
+        if (
+            plan.lineage_id != lineage_id
+            or plan.artifact_identity_root != identity_root
+            or plan.function_id != function_id
+            or plan.model_key != model.get("model_key")
+            or plan.condition != model.get("condition")
+            or plan.clean_step != clean_step
+            or plan.dirty_step != dirty_step
+        ):
+            raise RuntimeError(f"Fourier hardware-lineage plan disagrees with config: {config_path}")
+        hardware = {
+            "device_name": plan.hardware.device_name,
+            "compute_capability": list(plan.hardware.compute_capability),
+            "total_memory_bytes": plan.hardware.total_memory_bytes,
+            "driver_version": plan.hardware.driver_version,
+            "torch_version": plan.hardware.torch_version,
+            "cuda_version": plan.hardware.cuda_version,
+        }
+        payload = {
+            "id": lineage_id,
+            "kind": "registered_hardware",
+            "display_name": f"{plan.hardware.device_name} ({lineage_id})",
+            "hardware": hardware,
+            "plan_sha256": sha256_file(plan_path),
+            "reference_source_bundle_sha256": plan.reference_source_bundle_sha256,
+            "collection_source_bundle_sha256": plan.collection_source_bundle_sha256,
+        }
+        validated = validated_lineage_payload(payload, context=f"{plan_path}.lineage")
+        lineage_cache[cache_key] = validated
+        return validated
+
+    def validated_sidecar(
+        artifact_path: Path,
+        artifact: dict[str, object],
+        *,
+        field: str,
+    ) -> None:
+        sidecar_name = artifact.get(field)
+        sidecar_digest = artifact.get(f"{field}_sha256")
+        if not isinstance(sidecar_name, str) or not isinstance(sidecar_digest, str):
+            raise TypeError(f"{artifact_path} lacks {field} provenance")
+        sidecar_path = artifact_path.with_name(sidecar_name)
+        if not sidecar_path.is_file() or sha256_file(sidecar_path) != sidecar_digest:
+            raise RuntimeError(f"{artifact_path} has a missing or changed {field}")
+
+    def same_science_directory(
+        value: object,
+        physical_expected: Path,
+        logical_expected: Path,
+    ) -> bool:
+        if not isinstance(value, str) or not Path(value).is_absolute():
+            return False
+        candidate = Path(value)
+        if candidate == logical_expected:
+            return True
+        return (
+            candidate.exists()
+            and physical_expected.exists()
+            and candidate.resolve(strict=True) == physical_expected.resolve(strict=True)
+        )
+
+    def validated_density(path: Path, *, function_space: str | None) -> dict[str, object]:
+        density = _mapping(read_json(path), context=str(path))
+        if (
+            density.get("schema_version") != 1
+            or density.get("stage") != 0
+            or density.get("status") not in {"transition_found", "flat_stop"}
+            or not isinstance(density.get("curve"), list)
+        ):
+            raise TypeError(f"Fourier stage-0 density curve is malformed: {path}")
+        if function_space is not None and density.get("function_space") != function_space:
+            raise RuntimeError(f"Fourier density curve has the wrong function space: {path}")
+        validated_sidecar(path, density, field="sample_sidecar")
+        return density
+
+    def validated_sites(
+        rows: object,
+        *,
+        context: str,
+        require_nonempty: bool,
+    ) -> list[dict[str, object]]:
+        if not isinstance(rows, list) or (require_nonempty and not rows):
+            raise RuntimeError(
+                f"{context} must be a {'non-empty ' if require_nonempty else ''}list"
+            )
+        validated: list[dict[str, object]] = []
+        seen: set[tuple[int, int]] = set()
+        for raw_site in cast(list[object], rows):
+            site = _mapping(raw_site, context=f"{context}[]")
+            token_index = site.get("token_index")
+            layer = site.get("layer")
+            if not isinstance(token_index, int) or not isinstance(layer, int):
+                raise TypeError(f"{context} contains an invalid site")
+            key = (token_index, layer)
+            if key in seen:
+                raise RuntimeError(f"{context} repeats a site")
+            seen.add(key)
+            validated.append(site)
+        return validated
+
+    def validated_coefficient(raw: object, *, context: str) -> dict[str, object]:
+        coefficient = _mapping(raw, context=context)
+        degree = coefficient.get("degree")
+        sites = validated_sites(
+            coefficient.get("sites"),
+            context=f"{context}.sites",
+            require_nonempty=True,
+        )
+        if (
+            coefficient.get("is_heavy") is not True
+            or not isinstance(degree, int)
+            or degree <= 0
+            or len(sites) != degree
+        ):
+            raise RuntimeError(f"{context} is malformed or is not heavy")
+        _number(coefficient, "lasso_value", context=context)
+        _number(coefficient, "function_value_estimate", context=context)
+        return coefficient
+
+    def site_key(site: dict[str, object], *, context: str) -> tuple[int, int]:
+        token_index = site.get("token_index")
+        layer = site.get("layer")
+        if not isinstance(token_index, int) or not isinstance(layer, int):
+            raise TypeError(f"{context} contains an invalid site coordinate")
+        return token_index, layer
+
+    def validated_minsets(
+        rows: object,
+        *,
+        context: str,
+    ) -> list[dict[str, object]]:
+        if not isinstance(rows, list):
+            raise TypeError(f"{context} must be a list")
+        minsets: list[dict[str, object]] = []
+        sizes: list[int] = []
+        for raw_minset in cast(list[object], rows):
+            minset = _mapping(raw_minset, context=f"{context}[]")
+            size = minset.get("size")
+            sites = validated_sites(
+                minset.get("sites"),
+                context=f"{context}[].sites",
+                require_nonempty=True,
+            )
+            if not isinstance(size, int) or size <= 0 or len(sites) != size:
+                raise RuntimeError(f"{context} contains a minset with inconsistent size")
+            probability = _number(minset, "correct_probability", context=f"{context}[]")
+            _number(minset, "raw_logit_diff", context=f"{context}[]")
+            _number(minset, "sufficiency_margin", context=f"{context}[]")
+            if not 0.0 <= probability <= 1.0:
+                raise ValueError(f"{context} contains a probability outside [0, 1]")
+            hypotheses = minset.get("generating_coefficients")
+            if not isinstance(hypotheses, list) or not hypotheses:
+                raise RuntimeError(f"{context} contains a minset without a generating hypothesis")
+            for index, hypothesis in enumerate(cast(list[object], hypotheses)):
+                validated_coefficient(hypothesis, context=f"{context}[].hypothesis[{index}]")
+            sizes.append(size)
+            minsets.append(minset)
+        if sizes != sorted(sizes):
+            raise RuntimeError(f"{context} must be ordered smallest first")
+        return minsets
+
+    def validated_recall_audit(
+        path: Path,
+        logical_scope_directory: Path,
+    ) -> dict[str, object]:
+        audit = _mapping(read_json(path), context=str(path))
+        if (
+            audit.get("schema_version") != 1
+            or audit.get("status") != "complete"
+            or audit.get("audit_is_not_globally_exhaustive") is not True
+            or audit.get("raw_proposals_are_not_circuits") is not True
+        ):
+            raise RuntimeError(f"Fourier recall audit is malformed: {path}")
+        source = _mapping(audit.get("source"), context=f"{path}.source")
+        if not same_science_directory(
+            source.get("base_fourier_directory"),
+            path.parents[1],
+            logical_scope_directory,
+        ):
+            raise RuntimeError(f"Fourier recall audit names the wrong source directory: {path}")
+        source_files = {
+            "exhaustive_singletons_sha256": "exhaustive_singletons.json",
+            "stage_1_spectrum_sha256": "stage_1_spectrum.json",
+            "stage_2_minsets_sha256": "stage_2_minsets.json",
+            "stage_2_verification_sha256": "stage_2_verification.pt",
+        }
+        for digest_field, filename in source_files.items():
+            if source.get(digest_field) != sha256_file(path.parents[1] / filename):
+                raise RuntimeError(f"Fourier recall source digest mismatch: {path}")
+        manifests = audit.get("phase_manifests")
+        if not isinstance(manifests, list) or len(manifests) != 3:
+            raise RuntimeError(f"Fourier recall audit lacks its phase manifests: {path}")
+        for raw_manifest in cast(list[object], manifests):
+            manifest = _mapping(raw_manifest, context=f"{path}.phase_manifests[]")
+            phase = manifest.get("phase")
+            shards = manifest.get("shards")
+            shard_count = manifest.get("shard_count")
+            proposal_count = manifest.get("proposal_count")
+            shard_rows = (
+                [
+                    _mapping(shard, context=f"{path}.phase_manifests[].shards[]")
+                    for shard in cast(list[object], shards)
+                ]
+                if isinstance(shards, list)
+                else []
+            )
+            if (
+                not isinstance(phase, str)
+                or not isinstance(shards, list)
+                or shard_count != len(shard_rows)
+                or not isinstance(proposal_count, int)
+                or proposal_count
+                != sum(
+                    cast(int, shard.get("proposal_count"))
+                    for shard in shard_rows
+                    if isinstance(shard.get("proposal_count"), int)
+                )
+            ):
+                raise RuntimeError(f"Fourier recall phase manifest is inconsistent: {path}")
+            for shard in shard_rows:
+                sidecar = shard.get("sidecar")
+                digest = shard.get("sidecar_sha256")
+                metadata = shard.get("metadata")
+                if not all(isinstance(value, str) for value in (sidecar, digest, metadata)):
+                    raise TypeError(f"Fourier recall shard identity is malformed: {path}")
+                sidecar_path = path.parent / phase / cast(str, sidecar)
+                metadata_path = path.parent / phase / cast(str, metadata)
+                if sha256_file(sidecar_path) != digest:
+                    raise RuntimeError(f"Fourier recall shard digest mismatch: {path}")
+                metadata_payload = _mapping(read_json(metadata_path), context=str(metadata_path))
+                if (
+                    metadata_payload.get("sidecar") != sidecar
+                    or metadata_payload.get("sidecar_sha256") != digest
+                    or metadata_payload.get("proposal_count") != shard.get("proposal_count")
+                    or metadata_payload.get("proposal_sha256") != shard.get("proposal_sha256")
+                ):
+                    raise RuntimeError(f"Fourier recall shard manifest disagrees: {path}")
+        local = _mapping(audit.get("local_truth_table"), context=f"{path}.local")
+        local_sites = validated_sites(
+            local.get("sites"),
+            context=f"{path}.local.sites",
+            require_nonempty=False,
+        )
+        if (
+            local.get("site_count") != len(local_sites)
+            or local.get("subset_count") != 2 ** len(local_sites) - 1
+            or not isinstance(local.get("minimal_sufficient_sets"), list)
+            or not isinstance(local.get("new_minsets_missed_by_fourier"), list)
+            or not isinstance(local.get("monotone"), bool)
+        ):
+            raise RuntimeError(f"Fourier recall local truth table is inconsistent: {path}")
+        for field in ("minimal_sufficient_sets", "new_minsets_missed_by_fourier"):
+            for index, sites in enumerate(cast(list[object], local[field])):
+                validated_sites(
+                    sites,
+                    context=f"{path}.local.{field}[{index}]",
+                    require_nonempty=True,
+                )
+        for field in ("new_verified_pair_minsets", "new_verified_triple_minsets"):
+            rows = audit.get(field)
+            expected_size = 2 if field == "new_verified_pair_minsets" else 3
+            if not isinstance(rows, list):
+                raise TypeError(f"Fourier recall result lacks {field}: {path}")
+            for raw_row in cast(list[object], rows):
+                row = _mapping(raw_row, context=f"{path}.{field}[]")
+                sites = validated_sites(
+                    row.get("sites"),
+                    context=f"{path}.{field}[].sites",
+                    require_nonempty=True,
+                )
+                probability = _number(row, "correct_probability", context=f"{path}.{field}[]")
+                _number(row, "raw_logit_diff", context=f"{path}.{field}[]")
+                if (
+                    row.get("size") != expected_size
+                    or len(sites) != expected_size
+                    or row.get("sufficient") is not True
+                    or not 0.0 <= probability <= 1.0
+                ):
+                    raise RuntimeError(f"Fourier recall minset row is inconsistent: {path}")
+        return audit
+
+    entries: list[dict[str, object]] = []
+    pattern = "artifacts/runs/*/*/seed_*/fourier_circuits/*/clean_*_dirty_*/*/config.json"
+    legacy_identity_scope = "full_prompt_layers_0_32_backend_full_sequence_reference"
+    for config_path in sorted(root.glob(pattern)):
+        config_wrapper = _mapping(read_json(config_path), context=str(config_path))
+        if config_wrapper.get("schema_version") != 1 or not isinstance(
+            config_wrapper.get("config"), dict
+        ):
+            raise TypeError(f"Fourier config wrapper is malformed: {config_path}")
+        config = cast(dict[str, object], config_wrapper["config"])
+        model = _mapping(config.get("model"), context=f"{config_path}.model")
+        task = _mapping(config.get("task"), context=f"{config_path}.task")
+        required_model = ("model_key", "condition", "clean_step", "dirty_step")
+        if any(key not in model for key in required_model) or "function_id" not in task:
+            raise TypeError(f"Fourier config lacks required run identity: {config_path}")
+        model_key = str(model["model_key"])
+        condition = str(model["condition"])
+        function_id = str(task["function_id"])
+        clean_step = int(cast(int, model["clean_step"]))
+        dirty_step = int(cast(int, model["dirty_step"]))
+        lineage = validated_lineage(config_path, config, model, task)
+        lineage_id = cast(str, lineage["id"])
+        scope_key = config_path.parent.name
+        logical_scope_directory = Path(cast(str, config["artifact_root"])) / (
+            config_path.parent.relative_to(root)
+        )
+        raw_sufficiency_config = config.get("sufficiency")
+        sufficiency_config = (
+            {}
+            if raw_sufficiency_config is None
+            else _mapping(
+                raw_sufficiency_config,
+                context=f"{config_path}.sufficiency",
+            )
+        )
+        corrected_probability_run = (
+            "absolute_probability_tolerance" in sufficiency_config
+            and "expected_passing_singletons" in sufficiency_config
+        )
+        legacy_identity_run = function_id == "identity" and scope_key == legacy_identity_scope
+
+        # Identity is retained only as the original p=.1 diagnostic. The later refined
+        # strict identity spectrum was explicitly stopped and must never be reinterpreted here.
+        # A separately registered probability-threshold run is a corrected analysis and is
+        # exported through the same exhaustive-singleton contract as pyalvt.
+        if function_id == "identity" and not legacy_identity_run and not corrected_probability_run:
+            continue
+
+        unrestricted_path = config_path.with_name("stage_0_density.json")
+        acquisition_path = config_path.with_name("endpoint_acquisition_gate.json")
+        singleton_path = config_path.with_name("exhaustive_singletons.json")
+        residual_path = config_path.with_name("stage_0_residual_density.json")
+        stage_one_path = config_path.with_name("stage_1_spectrum.json")
+        stage_two_path = config_path.with_name("stage_2_minsets.json")
+        if not unrestricted_path.is_file():
+            if acquisition_path.is_file():
+                acquisition = _mapping(
+                    read_json(acquisition_path),
+                    context=str(acquisition_path),
+                )
+                if (
+                    acquisition.get("schema_version") != 1
+                    or acquisition.get("stage") != "endpoint_acquisition_gate"
+                    or acquisition.get("status") != "clean_behavior_not_acquired"
+                    or acquisition.get("terminal") is not True
+                ):
+                    raise RuntimeError(
+                        f"Fourier acquisition-gate artifact is malformed: {acquisition_path}"
+                    )
+                for field in (
+                    "clean_checkpoint",
+                    "dirty_checkpoint",
+                    "all_clean_intervention",
+                ):
+                    endpoint = _mapping(
+                        acquisition.get(field),
+                        context=f"{acquisition_path}.{field}",
+                    )
+                    probability = _number(
+                        endpoint,
+                        "correct_probability",
+                        context=f"{acquisition_path}.{field}",
+                    )
+                    _number(
+                        endpoint,
+                        "logit_diff",
+                        context=f"{acquisition_path}.{field}",
+                    )
+                    if not 0.0 <= probability <= 1.0 or not isinstance(
+                        endpoint.get("accuracy"), bool
+                    ):
+                        raise RuntimeError(
+                            f"Fourier acquisition endpoint is malformed: {acquisition_path}"
+                        )
+                site_grid = _mapping(
+                    acquisition.get("site_grid"),
+                    context=f"{acquisition_path}.site_grid",
+                )
+                relative_path = (
+                    Path("fourier-circuits")
+                    / f"lineage_{lineage_id}"
+                    / model_key
+                    / condition
+                    / function_id
+                    / f"clean_{clean_step:06d}_dirty_{dirty_step:06d}"
+                    / f"{scope_key}.json"
+                )
+                chunk = {
+                    "schema_version": 1,
+                    "status": "clean_behavior_not_acquired",
+                    "lineage": lineage,
+                    "model": model,
+                    "task": task,
+                    "sites": config.get("sites"),
+                    "sufficiency_criterion": ("clean_correct_probability_minus_absolute_tolerance"),
+                    "site_grid": site_grid,
+                    "unrestricted_density_curve": [],
+                    "unrestricted_transition_density": None,
+                    "residual_density_curve": None,
+                    "residual_transition_density": None,
+                    "network_veto_density_diagnostics": [],
+                    "disconnected_searches": [],
+                    "density_stability_warning": None,
+                    "sufficiency": None,
+                    "exhaustive_singleton_count": None,
+                    "verified_singleton_minsets": [],
+                    "verified_multisite_minsets": [],
+                    "network_verified_multisite_minsets": [],
+                    "proper_subset_separation": {
+                        "enabled": False,
+                        "maximum_proper_subset_correct_probability": None,
+                        "maximum_proper_subset_fraction_of_full_probability": None,
+                        "unfiltered_multisite_minset_count": 0,
+                        "passing_multisite_minset_count": 0,
+                    },
+                    "minset_networks": [],
+                    "partner_profile_clustering": {
+                        "method": (
+                            "profile_seeded_deterministic_complete_link_neighbor_jaccard_"
+                            "with_minset_cannot_link"
+                        ),
+                        "minimum_similarity": 0.5,
+                        "hyperedges_preserved_for_higher_order_minsets": True,
+                        "clusters_are_descriptive_not_identified_pathways": True,
+                    },
+                    "recall_audits": [],
+                    "frontier_searches": [],
+                    "alternative_probability_sufficiency": None,
+                    "raw_heavy_fourier_hypotheses": [],
+                    "legacy_sparse_discovery_minsets": [],
+                    "singleton_search_is_exhaustive": False,
+                    "legacy_discovery_is_only_a_lower_bound": False,
+                    "raw_fourier_candidates_are_not_circuits": True,
+                    "endpoint_acquisition_gate": acquisition,
+                }
+                digest, byte_count = _write_compact_json(
+                    root / "site" / "data" / relative_path,
+                    chunk,
+                )
+                entries.append(
+                    {
+                        "model": model_key,
+                        "lineage": lineage,
+                        "condition": condition,
+                        "function_id": function_id,
+                        "clean_step": clean_step,
+                        "dirty_step": dirty_step,
+                        "scope": scope_key,
+                        "status": "clean_behavior_not_acquired",
+                        "sufficiency_criterion": (
+                            "clean_correct_probability_minus_absolute_tolerance"
+                        ),
+                        "singleton_minset_count": 0,
+                        "multisite_minset_count": 0,
+                        "unfiltered_multisite_minset_count": 0,
+                        "fourier_multisite_minset_count": 0,
+                        "raw_hypothesis_count": 0,
+                        "legacy_minset_count": 0,
+                        "url": relative_path.as_posix(),
+                        "bytes": byte_count,
+                        "sha256": digest,
+                    }
+                )
+            continue
+        unrestricted = validated_density(
+            unrestricted_path,
+            function_space=None if legacy_identity_run else "unrestricted",
+        )
+
+        singleton_rows: list[dict[str, object]] = []
+        all_singleton_rows: list[dict[str, object]] = []
+        singleton_count: int | None = None
+        sufficiency: object = None
+        site_grid: object = unrestricted.get("site_grid")
+        if singleton_path.is_file():
+            singletons = _mapping(read_json(singleton_path), context=str(singleton_path))
+            if (
+                singletons.get("schema_version") != 1
+                or singletons.get("stage") != "exhaustive_singletons"
+                or singletons.get("status") != "verified"
+                or singletons.get("singleton_search_is_exhaustive") is not True
+            ):
+                raise RuntimeError(f"exhaustive singleton artifact is malformed: {singleton_path}")
+            validated_sidecar(singleton_path, singletons, field="singleton_sidecar")
+            raw_singleton_count = singletons.get("singleton_count")
+            if not isinstance(raw_singleton_count, int) or raw_singleton_count <= 0:
+                raise TypeError(f"exhaustive singleton count is invalid: {singleton_path}")
+            raw_passing = singletons.get("verified_singleton_minsets")
+            if not isinstance(raw_passing, list):
+                raise TypeError(f"exhaustive singleton passing table is invalid: {singleton_path}")
+            raw_all_singletons = singletons.get("singleton_results")
+            if not isinstance(raw_all_singletons, list):
+                raise TypeError(f"exhaustive singleton complete table is invalid: {singleton_path}")
+            all_site_keys: set[tuple[int, int]] = set()
+            for raw_row in cast(list[object], raw_all_singletons):
+                row = _mapping(raw_row, context=f"{singleton_path}.singleton_results[]")
+                site = _mapping(row.get("site"), context=f"{singleton_path}.site")
+                validated_site = validated_sites(
+                    [site],
+                    context=f"{singleton_path}.site",
+                    require_nonempty=True,
+                )[0]
+                key = site_key(validated_site, context=f"{singleton_path}.site")
+                if key in all_site_keys:
+                    raise RuntimeError(f"singleton complete table repeats a site: {singleton_path}")
+                all_site_keys.add(key)
+                probability = _number(row, "correct_probability", context=str(singleton_path))
+                _number(row, "raw_logit_diff", context=str(singleton_path))
+                if (
+                    not 0.0 <= probability <= 1.0
+                    or not isinstance(row.get("accuracy"), bool)
+                    or not isinstance(row.get("sufficient"), bool)
+                ):
+                    raise ValueError(
+                        f"singleton complete table has invalid metrics: {singleton_path}"
+                    )
+                all_singleton_rows.append(row)
+            if len(all_singleton_rows) != raw_singleton_count:
+                raise RuntimeError(
+                    f"singleton complete table has the wrong length: {singleton_path}"
+                )
+            for raw_row in cast(list[object], raw_passing):
+                row = _mapping(raw_row, context=f"{singleton_path}.verified_singletons[]")
+                site = _mapping(row.get("site"), context=f"{singleton_path}.site")
+                validated_sites([site], context=f"{singleton_path}.site", require_nonempty=True)
+                if row.get("sufficient") is not True:
+                    raise RuntimeError(
+                        f"singleton passing table contains a failing row: {singleton_path}"
+                    )
+                probability = _number(row, "correct_probability", context=str(singleton_path))
+                _number(row, "raw_logit_diff", context=str(singleton_path))
+                _number(row, "sufficiency_margin", context=str(singleton_path))
+                if not 0.0 <= probability <= 1.0:
+                    raise ValueError(f"singleton probability is outside [0, 1]: {singleton_path}")
+                singleton_rows.append(row)
+            if singletons.get("passing_singleton_count") != len(singleton_rows):
+                raise RuntimeError(
+                    f"singleton passing count disagrees with its rows: {singleton_path}"
+                )
+            singleton_count = raw_singleton_count
+            sufficiency = singletons.get("sufficiency")
+            site_grid = singletons.get("site_grid")
+        elif not legacy_identity_run:
+            continue
+
+        residual: dict[str, object] | None = None
+        if residual_path.is_file():
+            residual = validated_density(
+                residual_path,
+                function_space="singleton_vetoed_residual",
+            )
+        elif not legacy_identity_run:
+            raise FileNotFoundError(f"corrected Fourier run lacks residual density: {config_path}")
+
+        heavy_hypotheses: list[dict[str, object]] = []
+        density_warning: object = None
+        if stage_one_path.is_file():
+            stage_one = _mapping(read_json(stage_one_path), context=str(stage_one_path))
+            if stage_one.get("schema_version") != 1 or stage_one.get("stage") != 1:
+                raise TypeError(f"Fourier stage-1 artifact is malformed: {stage_one_path}")
+            validated_sidecar(stage_one_path, stage_one, field="sample_sidecar")
+            coefficients = stage_one.get("coefficients")
+            if not isinstance(coefficients, list):
+                raise TypeError(f"Fourier stage 1 lacks a coefficient table: {stage_one_path}")
+            for index, raw_coefficient in enumerate(cast(list[object], coefficients)):
+                if isinstance(raw_coefficient, dict) and raw_coefficient.get("is_heavy") is True:
+                    heavy_hypotheses.append(
+                        validated_coefficient(
+                            raw_coefficient,
+                            context=f"{stage_one_path}.coefficients[{index}]",
+                        )
+                    )
+            if stage_one.get("heavy_coefficient_count") != len(heavy_hypotheses):
+                raise RuntimeError(f"stage-1 heavy coefficient count disagrees: {stage_one_path}")
+            density_warning = stage_one.get("warning")
+
+        multisite_minsets: list[dict[str, object]] = []
+        legacy_minsets: list[dict[str, object]] = []
+        if stage_two_path.is_file():
+            stage_two = _mapping(read_json(stage_two_path), context=str(stage_two_path))
+            if (
+                stage_two.get("schema_version") != 1
+                or stage_two.get("stage") != 2
+                or stage_two.get("raw_fourier_candidates_are_not_circuits") is not True
+            ):
+                raise RuntimeError(f"Fourier stage-2 artifact is malformed: {stage_two_path}")
+            validated_sidecar(stage_two_path, stage_two, field="verification_sidecar")
+            if legacy_identity_run:
+                if stage_two.get("status") not in {"verified", "no_verified_minsets"}:
+                    raise RuntimeError(f"legacy identity stage 2 is unverified: {stage_two_path}")
+                legacy_minsets = validated_minsets(
+                    stage_two.get("verified_minsets"),
+                    context=f"{stage_two_path}.verified_minsets",
+                )
+            else:
+                if stage_two.get("status") not in {
+                    "verified_multisite",
+                    "no_verified_multisite_minsets",
+                    "no_higher_order_hypotheses",
+                }:
+                    raise RuntimeError(f"corrected Fourier stage 2 is unverified: {stage_two_path}")
+                multisite_minsets = validated_minsets(
+                    stage_two.get("verified_multisite_minsets"),
+                    context=f"{stage_two_path}.verified_multisite_minsets",
+                )
+                density_warning = stage_two.get("density_stability_warning")
+
+        sufficiency_criterion = "raw_logit_gap_recovery"
+        sufficiency_mapping: dict[str, object] | None = None
+        if all_singleton_rows:
+            sufficiency_mapping = _mapping(
+                sufficiency,
+                context=f"{singleton_path}.sufficiency",
+            )
+            raw_criterion = sufficiency_mapping.get("criterion", "raw_logit_gap_recovery")
+            if raw_criterion not in {
+                "raw_logit_gap_recovery",
+                "clean_correct_probability_minus_absolute_tolerance",
+            }:
+                raise RuntimeError(f"unknown sufficiency criterion: {singleton_path}")
+            sufficiency_criterion = str(raw_criterion)
+
+        status = (
+            "legacy_sparse_discovery_lower_bound"
+            if legacy_identity_run
+            else "causal_multisite_complete"
+            if stage_two_path.is_file()
+            else "spectrum_complete"
+            if stage_one_path.is_file()
+            else "singleton_and_density_complete"
+        )
+        recall_audits = [
+                validated_recall_audit(path, logical_scope_directory)
+            for path in sorted(config_path.parent.glob("recall_audit_config_*/recall_audit.json"))
+        ]
+        frontier_searches: list[dict[str, object]] = []
+        frontier_metric_indexes: list[tuple[Path, dict[tuple[Site, ...], SubsetMetric]]] = []
+        for frontier_path in sorted(
+            config_path.parent.glob(f"frontier_search_config_*/{FRONTIER_RESULT_FILENAME}")
+        ):
+            frontier = _mapping(read_json(frontier_path), context=str(frontier_path))
+            if (
+                frontier.get("schema_version") != FRONTIER_SCHEMA_VERSION
+                or frontier.get("status") != "complete"
+                or frontier.get("raw_proposals_are_not_circuits") is not True
+                or frontier.get("network_completion_is_exhaustive_through_registered_order")
+                is not True
+            ):
+                raise RuntimeError(f"frontier-search artifact is malformed: {frontier_path}")
+            metric_index_name = frontier.get("metric_index")
+            metric_index_digest = frontier.get("metric_index_sha256")
+            if not isinstance(metric_index_name, str) or not isinstance(metric_index_digest, str):
+                raise TypeError(f"frontier search lacks its metric index: {frontier_path}")
+            metric_index_path = frontier_path.parent / metric_index_name
+            if sha256_file(metric_index_path) != metric_index_digest:
+                raise RuntimeError(f"frontier metric-index digest mismatch: {metric_index_path}")
+            frontier_metric_indexes.append(
+                (frontier_path, load_frontier_metric_index(frontier_path.parent))
+            )
+            frontier_searches.append(frontier)
+        network_veto_density_diagnostics: list[dict[str, object]] = []
+        for diagnostic_path in sorted(
+            config_path.parent.glob("network_veto_density_*/network_veto_density.json")
+        ):
+            diagnostic = _mapping(read_json(diagnostic_path), context=str(diagnostic_path))
+            density_name = diagnostic.get("density_artifact")
+            density_digest = diagnostic.get("density_artifact_sha256")
+            source = _mapping(
+                diagnostic.get("source"),
+                context=f"{diagnostic_path}.source",
+            )
+            network_site_count = diagnostic.get("network_site_count")
+            singleton_site_count = diagnostic.get("singleton_site_count")
+            vetoed_site_count = diagnostic.get("vetoed_site_count")
+            active_site_count = diagnostic.get("active_site_count")
+            completed_frontiers = source.get("completed_frontiers")
+            if (
+                diagnostic.get("schema_version") != NETWORK_VETO_SCHEMA_VERSION
+                or diagnostic.get("status") not in {"transition_found", "flat_stop"}
+                or not isinstance(density_name, str)
+                or not isinstance(density_digest, str)
+                or not all(
+                    isinstance(value, int) and value > 0
+                    for value in (
+                        network_site_count,
+                        singleton_site_count,
+                        vetoed_site_count,
+                        active_site_count,
+                    )
+                )
+                or cast(int, vetoed_site_count)
+                < max(
+                    cast(int, network_site_count),
+                    cast(int, singleton_site_count),
+                )
+                or not same_science_directory(
+                    source.get("scope_directory"),
+                    config_path.parent,
+                    logical_scope_directory,
+                )
+                or not isinstance(completed_frontiers, list)
+                or not isinstance(diagnostic.get("curve"), list)
+                or diagnostic.get("stop_before_mask_search")
+                is not (diagnostic.get("status") == "flat_stop")
+            ):
+                raise RuntimeError(
+                    f"network-veto density diagnostic is malformed: {diagnostic_path}"
+                )
+            density_path = diagnostic_path.parent / density_name
+            if sha256_file(density_path) != density_digest:
+                raise RuntimeError(f"network-veto density digest mismatch: {density_path}")
+            density = validated_density(
+                density_path,
+                function_space="network_vetoed_residual",
+            )
+            if (
+                diagnostic["curve"] != density["curve"]
+                or diagnostic.get("transition_density") != density.get("transition_density")
+                or diagnostic.get("status") != density.get("status")
+            ):
+                raise RuntimeError(
+                    f"network-veto result disagrees with its density artifact: {diagnostic_path}"
+                )
+            for raw_frontier in cast(list[object], completed_frontiers):
+                frontier_source = _mapping(
+                    raw_frontier,
+                    context=f"{diagnostic_path}.source.completed_frontiers[]",
+                )
+                directory = frontier_source.get("directory")
+                result_digest = frontier_source.get("result_sha256")
+                index_name = frontier_source.get("metric_index")
+                index_digest = frontier_source.get("metric_index_sha256")
+                if not all(
+                    isinstance(value, str)
+                    for value in (directory, result_digest, index_name, index_digest)
+                ):
+                    raise TypeError(
+                        f"network-veto frontier provenance is malformed: {diagnostic_path}"
+                    )
+                frontier_dir = config_path.parent / cast(str, directory)
+                if (
+                    sha256_file(frontier_dir / FRONTIER_RESULT_FILENAME) != result_digest
+                    or sha256_file(frontier_dir / cast(str, index_name)) != index_digest
+                ):
+                    raise RuntimeError(
+                        f"network-veto frontier provenance changed: {diagnostic_path}"
+                    )
+            network_veto_density_diagnostics.append(diagnostic)
+        network_veto_density_diagnostics.sort(
+            key=lambda row: (
+                cast(int, row["network_site_count"]),
+                len(
+                    cast(
+                        list[object],
+                        cast(dict[str, object], row["source"])["completed_frontiers"],
+                    )
+                ),
+                cast(int, row["vetoed_site_count"]),
+            )
+        )
+        disconnected_searches: list[dict[str, object]] = []
+        for search_path in sorted(
+            config_path.parent.glob("disconnected_search_config_*/disconnected_search.json")
+        ):
+            search = _mapping(read_json(search_path), context=str(search_path))
+            metric_index_name = search.get("metric_index")
+            metric_index_digest = search.get("metric_index_sha256")
+            hypotheses = search.get("raw_minimized_hypotheses")
+            verified = search.get("verified_disconnected_minsets")
+            source = _mapping(search.get("source"), context=f"{search_path}.source")
+            source_result = source.get("network_veto_result")
+            source_result_digest = source.get("network_veto_result_sha256")
+            if (
+                search.get("schema_version") != DISCONNECTED_SEARCH_SCHEMA_VERSION
+                or search.get("status") != "complete"
+                or search.get("raw_hypotheses_are_not_circuits") is not True
+                or not isinstance(metric_index_name, str)
+                or not isinstance(metric_index_digest, str)
+                or not isinstance(hypotheses, list)
+                or not isinstance(verified, list)
+                or not isinstance(source_result, str)
+                or not isinstance(source_result_digest, str)
+                or not isinstance(search.get("proposal_mask_count"), int)
+                or not isinstance(search.get("successful_proposal_count"), int)
+                or not isinstance(search.get("selected_start_count"), int)
+                or search.get("unique_minimized_candidate_count") != len(hypotheses)
+            ):
+                raise RuntimeError(f"disconnected search is malformed: {search_path}")
+            metric_index_path = search_path.parent / metric_index_name
+            source_result_path = Path(source_result)
+            if (
+                sha256_file(metric_index_path) != metric_index_digest
+                or sha256_file(source_result_path) != source_result_digest
+            ):
+                raise RuntimeError(f"disconnected-search provenance changed: {search_path}")
+            metric_index = _mapping(
+                read_json(metric_index_path),
+                context=str(metric_index_path),
+            )
+            metric_count = metric_index.get("support_count")
+            if (
+                metric_index.get("schema_version") != DISCONNECTED_SEARCH_SCHEMA_VERSION
+                or metric_index.get("kind") != "disconnected_metric_index"
+                or not isinstance(metric_count, int)
+                or metric_count <= 0
+            ):
+                raise RuntimeError(f"disconnected metric index is malformed: {metric_index_path}")
+            size_counts: dict[int, int] = {}
+            exact_ratios: list[float] = []
+            for raw_hypothesis in cast(list[object], hypotheses):
+                hypothesis = _mapping(
+                    raw_hypothesis,
+                    context=f"{search_path}.raw_minimized_hypotheses[]",
+                )
+                size = hypothesis.get("size")
+                if not isinstance(size, int) or size < 2:
+                    raise RuntimeError(f"disconnected hypothesis has invalid size: {search_path}")
+                size_counts[size] = size_counts.get(size, 0) + 1
+                ratio = hypothesis.get("maximum_proper_subset_fraction_of_full_probability")
+                if hypothesis.get("exact_powerset_verified") is True:
+                    if not isinstance(ratio, int | float):
+                        raise RuntimeError(
+                            f"exact disconnected hypothesis lacks subset evidence: {search_path}"
+                        )
+                    exact_ratios.append(float(ratio))
+            compact_verified = []
+            for raw_minset in cast(list[object], verified):
+                minset = _mapping(
+                    raw_minset,
+                    context=f"{search_path}.verified_disconnected_minsets[]",
+                )
+                compact_verified.append(
+                    {
+                        key: value
+                        for key, value in minset.items()
+                        if key != "generating_random_masks"
+                    }
+                )
+            disconnected_searches.append(
+                {
+                    "status": "complete",
+                    "search_config": search["search_config"],
+                    "transition_density": source["transition_density"],
+                    "vetoed_site_count": source["vetoed_site_count"],
+                    "active_site_count": search["active_site_count"],
+                    "full_probability_threshold": search["full_probability_threshold"],
+                    "proposal_mask_count": search["proposal_mask_count"],
+                    "successful_proposal_count": search["successful_proposal_count"],
+                    "selected_start_count": search["selected_start_count"],
+                    "unique_minimized_candidate_count": len(hypotheses),
+                    "candidate_size_counts": [
+                        {"size": size, "count": count}
+                        for size, count in sorted(size_counts.items())
+                    ],
+                    "exact_powerset_candidate_count": len(exact_ratios),
+                    "minimum_exact_subset_fraction": min(exact_ratios, default=None),
+                    "maximum_exact_subset_fraction": max(exact_ratios, default=None),
+                    "metric_count": metric_count,
+                    "metric_index_sha256": metric_index_digest,
+                    "verified_disconnected_minsets": compact_verified,
+                    "raw_hypotheses_are_not_circuits": True,
+                }
+            )
+        network_minsets_by_sites: dict[tuple[Site, ...], set[str]] = {}
+        network_minset_probabilities: dict[tuple[Site, ...], float] = {}
+        network_minset_inputs: list[tuple[object, float | None, str, str]] = []
+        for index, minset in enumerate(multisite_minsets):
+            network_minset_inputs.append(
+                (
+                    minset["sites"],
+                    float(cast(float, minset["correct_probability"])),
+                    "fourier_stage_2",
+                    f"verified_multisite_minsets[{index}].sites",
+                )
+            )
+        for audit_index, audit in enumerate(recall_audits):
+            local = _mapping(
+                audit.get("local_truth_table"),
+                context=f"recall_audits[{audit_index}].local_truth_table",
+            )
+            for index, sites in enumerate(
+                cast(list[object], local["new_minsets_missed_by_fourier"])
+            ):
+                network_minset_inputs.append(
+                    (
+                        sites,
+                        None,
+                        "exact_local_recall",
+                        f"recall_audits[{audit_index}].local_truth_table."
+                        f"new_minsets_missed_by_fourier[{index}]",
+                    )
+                )
+            for field, source in (
+                ("new_verified_pair_minsets", "recall_pair_verification"),
+                ("new_verified_triple_minsets", "recall_triple_verification"),
+            ):
+                for index, raw_row in enumerate(cast(list[object], audit[field])):
+                    row = _mapping(
+                        raw_row,
+                        context=f"recall_audits[{audit_index}].{field}[{index}]",
+                    )
+                    network_minset_inputs.append(
+                        (
+                            row["sites"],
+                            float(cast(float, row["correct_probability"])),
+                            source,
+                            f"recall_audits[{audit_index}].{field}[{index}].sites",
+                        )
+                    )
+        for frontier_index, frontier in enumerate(frontier_searches):
+            rows = frontier.get("new_verified_relative_minsets")
+            if not isinstance(rows, list):
+                raise TypeError("frontier search lacks its verified relative minsets")
+            for index, raw_row in enumerate(cast(list[object], rows)):
+                row = _mapping(
+                    raw_row,
+                    context=(
+                        f"frontier_searches[{frontier_index}]."
+                        f"new_verified_relative_minsets[{index}]"
+                    ),
+                )
+                probability = row.get("correct_probability")
+                if not isinstance(probability, (int, float)):
+                    raise TypeError("frontier verified minset lacks a probability")
+                network_minset_inputs.append(
+                    (
+                        row.get("sites"),
+                        float(probability),
+                        "relative_frontier_search",
+                        (
+                            f"frontier_searches[{frontier_index}]."
+                            f"new_verified_relative_minsets[{index}].sites"
+                        ),
+                    )
+                )
+        for raw_sites, correct_probability, source, context in network_minset_inputs:
+            validated = validated_sites(raw_sites, context=context, require_nonempty=True)
+            canonical = tuple(sorted(Site(*site_key(site, context=context)) for site in validated))
+            if len(canonical) < 2:
+                raise RuntimeError(f"network overlay received a singleton: {context}")
+            network_minsets_by_sites.setdefault(canonical, set()).add(source)
+            if correct_probability is not None:
+                previous_probability = network_minset_probabilities.get(canonical)
+                if (
+                    previous_probability is not None
+                    and abs(previous_probability - correct_probability) > 2.0e-6
+                ):
+                    raise RuntimeError(
+                        f"duplicate verified minset probabilities disagree: {canonical}"
+                    )
+                network_minset_probabilities[canonical] = correct_probability
+
+        unfiltered_network_minset_count = len(network_minsets_by_sites)
+        subset_separation: dict[str, object] = {
+            "enabled": False,
+            "maximum_proper_subset_correct_probability": None,
+            "maximum_proper_subset_fraction_of_full_probability": None,
+            "unfiltered_multisite_minset_count": unfiltered_network_minset_count,
+            "passing_multisite_minset_count": unfiltered_network_minset_count,
+            "subset_metric_index": None,
+            "subset_metric_index_sha256": None,
+            "subset_metric_count": None,
+        }
+        maximum_subset_metrics: dict[tuple[Site, ...], SubsetMetric] = {}
+        subset_probability_ratios: dict[tuple[Site, ...], float] = {}
+        if (
+            sufficiency_criterion == "clean_correct_probability_minus_absolute_tolerance"
+            and network_minsets_by_sites
+        ):
+            subset_metrics = ensure_subset_metric_index(config_path.parent)
+            for frontier_path, frontier_metrics in frontier_metric_indexes:
+                for sites, metric in frontier_metrics.items():
+                    previous = subset_metrics.get(sites)
+                    if previous is not None:
+                        raise RuntimeError(
+                            f"frontier metric repeats the base subset cache: {frontier_path}: {sites}"
+                        )
+                    subset_metrics[sites] = metric
+            relative_criterion = RelativeProperSubsetCriterion(
+                MAX_PROPER_SUBSET_PROBABILITY_FRACTION
+            )
+            for sites in network_minsets_by_sites:
+                indexed_metric = subset_metrics.get(sites)
+                if indexed_metric is None:
+                    raise RuntimeError(f"verified minset is absent from subset index: {sites}")
+                probability = network_minset_probabilities.get(sites)
+                if probability is None:
+                    probability = indexed_metric.correct_probability
+                    network_minset_probabilities[sites] = probability
+                elif abs(probability - indexed_metric.correct_probability) > 2.0e-6:
+                    raise RuntimeError(f"verified minset disagrees with subset index: {sites}")
+                maximum_subset_metrics[sites] = maximum_proper_subset_metric(
+                    sites,
+                    subset_metrics,
+                )
+                subset_probability_ratios[sites] = (
+                    maximum_subset_metrics[sites].correct_probability / probability
+                )
+            network_minsets_by_sites = {
+                sites: sources
+                for sites, sources in network_minsets_by_sites.items()
+                if passes_relative_proper_subset_criterion(
+                    subset_metrics[sites],
+                    maximum_subset_metrics[sites],
+                    relative_criterion,
+                )
+            }
+            index_path = subset_index_path(config_path.parent)
+            subset_separation = {
+                "enabled": True,
+                "maximum_proper_subset_correct_probability": None,
+                "maximum_proper_subset_fraction_of_full_probability": (
+                    MAX_PROPER_SUBSET_PROBABILITY_FRACTION
+                ),
+                "unfiltered_multisite_minset_count": unfiltered_network_minset_count,
+                "passing_multisite_minset_count": len(network_minsets_by_sites),
+                "subset_metric_index": index_path.name,
+                "subset_metric_index_sha256": sha256_file(index_path),
+                "subset_metric_count": len(subset_metrics),
+                "frontier_metric_indexes": [
+                    {
+                        "directory": frontier_path.parent.name,
+                        "metric_index": cast(str, frontier["metric_index"]),
+                        "metric_index_sha256": cast(str, frontier["metric_index_sha256"]),
+                    }
+                    for frontier_path, frontier in zip(
+                        (path for path, _metrics in frontier_metric_indexes),
+                        frontier_searches,
+                        strict=True,
+                    )
+                ],
+            }
+        if set(network_minsets_by_sites) - set(network_minset_probabilities):
+            raise RuntimeError("network overlay contains a minset without an exact probability")
+        network_minset_site_sets = tuple(
+            sorted(network_minsets_by_sites, key=lambda sites: (len(sites), sites))
+        )
+        network_verified_multisite_minsets = [
+            {
+                "size": len(sites),
+                "sites": [{"token_index": site.token_index, "layer": site.layer} for site in sites],
+                "sources": sorted(network_minsets_by_sites[sites]),
+                "correct_probability": network_minset_probabilities[sites],
+                "maximum_proper_subset_correct_probability": (
+                    None
+                    if sites not in maximum_subset_metrics
+                    else maximum_subset_metrics[sites].correct_probability
+                ),
+                "maximum_proper_subset": (
+                    None
+                    if sites not in maximum_subset_metrics
+                    else [
+                        {"token_index": site.token_index, "layer": site.layer}
+                        for site in maximum_subset_metrics[sites].sites
+                    ]
+                ),
+                "maximum_proper_subset_fraction_of_full_probability": (
+                    subset_probability_ratios.get(sites)
+                ),
+            }
+            for sites in network_minset_site_sets
+        ]
+        network_payload = [
+            {
+                "id": f"size_{network.minset_size}_component_{network.component_index}",
+                "minset_size": network.minset_size,
+                "component_index": network.component_index,
+                "clique_expansion": True,
+                "minset_indices": list(network.minset_indices),
+                "sites": [
+                    {
+                        "token_index": site.token_index,
+                        "layer": site.layer,
+                        "cluster_index": next(
+                            cluster.cluster_index
+                            for cluster in network.clusters
+                            if site in cluster.sites
+                        ),
+                    }
+                    for site in network.sites
+                ],
+                "edges": [
+                    {
+                        "source": {
+                            "token_index": edge.source.token_index,
+                            "layer": edge.source.layer,
+                        },
+                        "target": {
+                            "token_index": edge.target.token_index,
+                            "layer": edge.target.layer,
+                        },
+                        "minset_indices": list(edge.minset_indices),
+                    }
+                    for edge in network.edges
+                ],
+                "partner_profile_clusters": [
+                    {
+                        "cluster_index": cluster.cluster_index,
+                        "sites": [
+                            {"token_index": site.token_index, "layer": site.layer}
+                            for site in cluster.sites
+                        ],
+                        "minimum_partner_jaccard": cluster.minimum_partner_jaccard,
+                        "mean_partner_jaccard": cluster.mean_partner_jaccard,
+                    }
+                    for cluster in network.clusters
+                ],
+            }
+            for network in cluster_minset_hypergraph_networks(
+                network_minset_site_sets,
+                minimum_similarity=0.5,
+            )
+        ]
+        alternative_probability_sufficiency: dict[str, object] | None = None
+        if all_singleton_rows:
+            if sufficiency_mapping is None:
+                raise RuntimeError("singleton sufficiency mapping was not initialized")
+            clean_probability = _number(
+                sufficiency_mapping,
+                "clean_correct_probability",
+                context=f"{singleton_path}.sufficiency",
+            )
+            threshold_logit_diff = _number(
+                sufficiency_mapping,
+                "threshold_logit_diff",
+                context=f"{singleton_path}.sufficiency",
+            )
+            if sufficiency_criterion == "raw_logit_gap_recovery":
+                probability_threshold = max(0.0, clean_probability - 0.10)
+                passing_alternative = [
+                    row
+                    for row in all_singleton_rows
+                    if float(cast(float, row["correct_probability"])) >= probability_threshold
+                    and bool(row["accuracy"])
+                ]
+                strict_keys = {
+                    site_key(
+                        cast(dict[str, object], row["site"]),
+                        context="verified singleton minset",
+                    )
+                    for row in singleton_rows
+                }
+                alternative_keys = {
+                    site_key(
+                        cast(dict[str, object], row["site"]),
+                        context="alternative singleton minset",
+                    )
+                    for row in passing_alternative
+                }
+                if not strict_keys.issubset(alternative_keys):
+                    raise RuntimeError(
+                        "the looser probability criterion lost a preregistered singleton"
+                    )
+                invalidated_multisites = sum(
+                    any(
+                        site_key(site, context="verified multi-site minset") in alternative_keys
+                        for site in cast(list[dict[str, object]], minset["sites"])
+                    )
+                    for minset in multisite_minsets
+                )
+                alternative_probability_sufficiency = {
+                    "status": "derived_diagnostic_requires_new_singleton_vetoed_spectrum",
+                    "rule": "clean_correct_probability_minus_0.10",
+                    "absolute_probability_tolerance": 0.10,
+                    "clean_correct_probability": clean_probability,
+                    "threshold_correct_probability": probability_threshold,
+                    "preregistered_threshold_correct_probability": 1.0
+                    / (1.0 + math.exp(-threshold_logit_diff)),
+                    "passing_singleton_count": len(passing_alternative),
+                    "additional_singleton_count": len(alternative_keys - strict_keys),
+                    "current_multisite_minsets_invalidated_by_singleton_count": (
+                        invalidated_multisites
+                    ),
+                }
+            else:
+                tolerance = _number(
+                    sufficiency_mapping,
+                    "absolute_probability_tolerance",
+                    context=f"{singleton_path}.sufficiency",
+                )
+                threshold_probability = _number(
+                    sufficiency_mapping,
+                    "threshold_correct_probability",
+                    context=f"{singleton_path}.sufficiency",
+                )
+                if (
+                    tolerance != 0.10
+                    or abs(threshold_probability - (clean_probability - tolerance)) > 1.0e-12
+                ):
+                    raise RuntimeError(
+                        f"probability sufficiency contract is inconsistent: {singleton_path}"
+                    )
+        relative_path = (
+            Path("fourier-circuits")
+            / f"lineage_{lineage_id}"
+            / model_key
+            / condition
+            / function_id
+            / f"clean_{clean_step:06d}_dirty_{dirty_step:06d}"
+            / f"{scope_key}.json"
+        )
+        chunk = {
+            "schema_version": 1,
+            "status": status,
+            "lineage": lineage,
+            "model": model,
+            "task": task,
+            "sites": config.get("sites"),
+            "sufficiency_criterion": sufficiency_criterion,
+            "site_grid": site_grid,
+            "unrestricted_density_curve": unrestricted["curve"],
+            "unrestricted_transition_density": unrestricted.get("transition_density"),
+            "residual_density_curve": None if residual is None else residual["curve"],
+            "residual_transition_density": (
+                None if residual is None else residual.get("transition_density")
+            ),
+            "network_veto_density_diagnostics": network_veto_density_diagnostics,
+            "disconnected_searches": disconnected_searches,
+            "density_stability_warning": density_warning,
+            "sufficiency": sufficiency,
+            "exhaustive_singleton_count": singleton_count,
+            "verified_singleton_minsets": singleton_rows,
+            "verified_multisite_minsets": multisite_minsets,
+            "network_verified_multisite_minsets": network_verified_multisite_minsets,
+            "proper_subset_separation": subset_separation,
+            "minset_networks": network_payload,
+            "partner_profile_clustering": {
+                "method": (
+                    "profile_seeded_deterministic_complete_link_neighbor_jaccard_"
+                    "with_minset_cannot_link"
+                ),
+                "minimum_similarity": 0.5,
+                "hyperedges_preserved_for_higher_order_minsets": True,
+                "clusters_are_descriptive_not_identified_pathways": True,
+            },
+            "recall_audits": recall_audits,
+            "frontier_searches": [
+                {
+                    "status": frontier["status"],
+                    "frontier_config": frontier["frontier_config"],
+                    "criterion": frontier["criterion"],
+                    "phase_proposal_counts": frontier["phase_proposal_counts"],
+                    "evaluated_support_count": frontier["evaluated_support_count"],
+                    "new_verified_relative_minset_count": len(
+                        cast(list[object], frontier["new_verified_relative_minsets"])
+                    ),
+                }
+                for frontier in frontier_searches
+            ],
+            "alternative_probability_sufficiency": alternative_probability_sufficiency,
+            "raw_heavy_fourier_hypotheses": heavy_hypotheses,
+            "legacy_sparse_discovery_minsets": legacy_minsets,
+            "singleton_search_is_exhaustive": singleton_path.is_file(),
+            "legacy_discovery_is_only_a_lower_bound": legacy_identity_run,
+            "raw_fourier_candidates_are_not_circuits": True,
+        }
+        digest, byte_count = _write_compact_json(root / "site" / "data" / relative_path, chunk)
+        entries.append(
+            {
+                "model": model_key,
+                "lineage": lineage,
+                "condition": condition,
+                "function_id": function_id,
+                "clean_step": clean_step,
+                "dirty_step": dirty_step,
+                "scope": scope_key,
+                "status": status,
+                "sufficiency_criterion": sufficiency_criterion,
+                "singleton_minset_count": len(singleton_rows),
+                "multisite_minset_count": len(network_verified_multisite_minsets),
+                "unfiltered_multisite_minset_count": unfiltered_network_minset_count,
+                "fourier_multisite_minset_count": len(multisite_minsets),
+                "raw_hypothesis_count": len(heavy_hypotheses),
+                "legacy_minset_count": len(legacy_minsets),
+                "url": relative_path.as_posix(),
+                "bytes": byte_count,
+                "sha256": digest,
+            }
+        )
+
+    imported_directory = root / "site/data/fourier-circuit-imports"
+    for import_path in sorted(imported_directory.glob("*.json")):
+        imported = _mapping(read_json(import_path), context=str(import_path))
+        imported_lineage = validated_lineage_payload(
+            imported.get("lineage"),
+            context=f"{import_path}.lineage",
+        )
+        imported_entries = imported.get("entries")
+        exporter_source_sha256 = imported.get("exporter_source_sha256")
+        if (
+            imported.get("schema_version") != 1
+            or imported.get("kind") != "fourier_lineage_export"
+            or not isinstance(exporter_source_sha256, str)
+            or len(exporter_source_sha256) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in exporter_source_sha256
+            )
+            or not isinstance(imported_entries, list)
+            or not imported_entries
+        ):
+            raise RuntimeError(f"imported Fourier lineage manifest is malformed: {import_path}")
+        lineage_id = cast(str, imported_lineage["id"])
+        for index, raw_entry in enumerate(cast(list[object], imported_entries)):
+            entry = _mapping(raw_entry, context=f"{import_path}.entries[{index}]")
+            entry_lineage = validated_lineage_payload(
+                entry.get("lineage"),
+                context=f"{import_path}.entries[{index}].lineage",
+            )
+            url = entry.get("url")
+            digest = entry.get("sha256")
+            byte_count = entry.get("bytes")
+            required_strings = (
+                "model",
+                "condition",
+                "function_id",
+                "scope",
+                "status",
+                "sufficiency_criterion",
+            )
+            if (
+                entry_lineage != imported_lineage
+                or not isinstance(url, str)
+                or not url.startswith(f"fourier-circuits/lineage_{lineage_id}/")
+                or Path(url).is_absolute()
+                or ".." in Path(url).parts
+                or not isinstance(digest, str)
+                or len(digest) != 64
+                or any(character not in "0123456789abcdef" for character in digest)
+                or not isinstance(byte_count, int)
+                or byte_count <= 0
+                or any(not isinstance(entry.get(field), str) for field in required_strings)
+                or not isinstance(entry.get("clean_step"), int)
+                or not isinstance(entry.get("dirty_step"), int)
+            ):
+                raise RuntimeError(
+                    f"imported Fourier lineage entry is malformed: {import_path}: {index}"
+                )
+            chunk_path = root / "site/data" / url
+            if (
+                not chunk_path.is_file()
+                or chunk_path.stat().st_size != byte_count
+                or sha256_file(chunk_path) != digest
+            ):
+                raise RuntimeError(
+                    f"imported Fourier lineage chunk is missing or changed: {chunk_path}"
+                )
+            chunk = _mapping(read_json(chunk_path), context=str(chunk_path))
+            chunk_model = _mapping(chunk.get("model"), context=f"{chunk_path}.model")
+            chunk_task = _mapping(chunk.get("task"), context=f"{chunk_path}.task")
+            if (
+                chunk.get("lineage") != imported_lineage
+                or chunk_model.get("model_key") != entry["model"]
+                or chunk_task.get("function_id") != entry["function_id"]
+                or chunk.get("status") != entry["status"]
+                or chunk.get("sufficiency_criterion") != entry["sufficiency_criterion"]
+            ):
+                raise RuntimeError(
+                    f"imported Fourier lineage entry disagrees with its chunk: {chunk_path}"
+                )
+            entries.append(entry)
+
+    unique_entries: dict[tuple[object, ...], dict[str, object]] = {}
+    seen_urls: set[str] = set()
+    for entry in entries:
+        lineage = validated_lineage_payload(entry.get("lineage"), context="Fourier entry lineage")
+        key = (
+            lineage["id"],
+            entry["model"],
+            entry["condition"],
+            entry["function_id"],
+            entry["clean_step"],
+            entry["dirty_step"],
+            entry["scope"],
+            entry["sufficiency_criterion"],
+        )
+        url = cast(str, entry["url"])
+        if key in unique_entries or url in seen_urls:
+            raise RuntimeError(f"duplicate Fourier lineage export identity: {key}")
+        unique_entries[key] = entry
+        seen_urls.add(url)
+    entries = list(unique_entries.values())
+    entries.sort(
+        key=lambda entry: (
+            cast(dict[str, object], entry["lineage"])["kind"] != "registered_hardware",
+            entry["function_id"] != "add_5",
+            entry["sufficiency_criterion"] != "clean_correct_probability_minus_absolute_tolerance",
+            str(entry["function_id"]),
+        )
+    )
+    lineage_exports: dict[str, tuple[dict[str, object], list[dict[str, object]]]] = {}
+    for entry in entries:
+        lineage = validated_lineage_payload(entry["lineage"], context="Fourier entry lineage")
+        lineage_id = cast(str, lineage["id"])
+        previous = lineage_exports.get(lineage_id)
+        if previous is None:
+            lineage_exports[lineage_id] = (lineage, [entry])
+        else:
+            if previous[0] != lineage:
+                raise RuntimeError(f"Fourier lineage metadata changed within export: {lineage_id}")
+            previous[1].append(entry)
+    for lineage_id, (lineage, lineage_entries) in lineage_exports.items():
+        write_json(
+            root / "site/data/fourier-circuit-lineages" / f"{lineage_id}.json",
+            {
+                "schema_version": 1,
+                "kind": "fourier_lineage_export",
+                "exporter_source_sha256": _site_export_source_sha256(),
+                "lineage": lineage,
+                "entries": lineage_entries,
+            },
+        )
+    return {"entries": entries}, len(entries)
+
+
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
     curves: dict[str, dict[str, list[CurveRow]]] = {}
@@ -1964,6 +3755,12 @@ def main() -> None:
         real_vocabulary_logit_lens_files,
         vocabulary_logit_lens_chunks,
     ) = _export_vocabulary_logit_lenses(root)
+    (
+        answer_lookup_manifest,
+        real_answer_lookup_files,
+        complete_answer_lookup_files,
+    ) = _export_answer_lookup(root)
+    fourier_circuit_manifest, real_fourier_circuit_files = _export_fourier_circuits(root)
     write_json(
         root / "site" / "data" / "patch-manifest.json",
         {
@@ -1982,6 +3779,11 @@ def main() -> None:
             "real_vocabulary_logit_lens_files": real_vocabulary_logit_lens_files,
             "vocabulary_logit_lens_chunks": vocabulary_logit_lens_chunks,
             "vocabulary_logit_lens_manifest": vocabulary_logit_lens_manifest,
+            "real_answer_lookup_files": real_answer_lookup_files,
+            "complete_answer_lookup_files": complete_answer_lookup_files,
+            "answer_lookup_manifest": answer_lookup_manifest,
+            "real_fourier_circuit_files": real_fourier_circuit_files,
+            "fourier_circuit_manifest": fourier_circuit_manifest,
         },
     )
     status = (
@@ -2003,6 +3805,9 @@ def main() -> None:
             "activation_example_chunks": activation_example_chunks,
             "real_vocabulary_logit_lens_files": real_vocabulary_logit_lens_files,
             "vocabulary_logit_lens_chunks": vocabulary_logit_lens_chunks,
+            "real_answer_lookup_files": real_answer_lookup_files,
+            "complete_answer_lookup_files": complete_answer_lookup_files,
+            "real_fourier_circuit_files": real_fourier_circuit_files,
             "real_letter_propensity_runs": len(measured_letter_runs),
             "warning": (
                 "Synthetic preregistration preview; no GPU experiment has run. Every plotted value is illustrative."
@@ -2081,6 +3886,8 @@ def main() -> None:
             "weight_alignment_axes": weight_alignment_axes,
             "activation_example_manifest": activation_example_manifest,
             "vocabulary_logit_lens_manifest": vocabulary_logit_lens_manifest,
+            "answer_lookup_manifest": answer_lookup_manifest,
+            "fourier_circuit_manifest": fourier_circuit_manifest,
         },
     )
 
