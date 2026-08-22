@@ -419,6 +419,32 @@ def test_reference_corner_endpoints_equal_independent_forwards_with_shared_reado
     assert result.gradients is None
 
 
+def test_residual_blend_has_bit_exact_corners_and_continuous_corner_gradients() -> None:
+    hidden = t.tensor(
+        [[[1.5, -2.0, 0.25], [64.0, -0.5, 3.0]]],
+        dtype=t.bfloat16,
+    )
+    clean = t.tensor(
+        [[-4.0, 7.0, 0.125], [1.0, 2.0, -8.0]],
+        dtype=t.bfloat16,
+    )
+    alphas = t.tensor([[0.0, 1.0]], dtype=t.float32, requires_grad=True)
+
+    replaced = runtime_fc._replace_residual_sites(
+        hidden,
+        clean,
+        alphas,
+        (0, 1),
+    )
+
+    assert t.equal(replaced[0, 0], hidden[0, 0])
+    assert t.equal(replaced[0, 1], clean[1])
+    replaced.float().sum().backward()
+    assert alphas.grad is not None
+    expected = (clean.float() - hidden[0].float()).sum(dim=1).unsqueeze(0)
+    assert t.equal(alphas.grad, expected)
+
+
 def test_final_residual_site_alone_is_exactly_sufficient_in_tiny_reference() -> None:
     dirty, clean, probe = _models_and_probe()
     clean_capture = capture_checkpoint(clean, tuple(clean.blocks), probe)

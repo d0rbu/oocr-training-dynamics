@@ -77,6 +77,7 @@ if [[ ! -f "${reference_relative}" ]]; then
     --mode later_checkpoint \
     --interface resid_post \
     --activation-patch-batch-size 1 \
+    --deterministic-algorithms \
     --recipient-step 0 \
     --donor-step "${OOCR_CLEAN_STEP}" \
     --confirm-gpu-run

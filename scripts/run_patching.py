@@ -55,6 +55,11 @@ def parse_args() -> argparse.Namespace:
             "reference grids and 8 for the legacy visualization runtime"
         ),
     )
+    parser.add_argument(
+        "--deterministic-algorithms",
+        action="store_true",
+        help="require deterministic PyTorch kernels for scientific reference grids",
+    )
     parser.add_argument("--allow-provisional-gemma", action="store_true")
     parser.add_argument("--confirm-gpu-run", action="store_true")
     return parser.parse_args()
@@ -79,6 +84,7 @@ def main() -> None:
         token_weight_runtime=TokenWeightRuntime(args.token_weight_runtime),
         token_weight_patch_batch_size=args.token_weight_patch_batch_size,
         activation_patch_batch_size=args.activation_patch_batch_size,
+        deterministic_algorithms=args.deterministic_algorithms,
     )
 
 

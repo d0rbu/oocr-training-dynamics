@@ -161,6 +161,7 @@ def build_hardware_lineage_plan(
     if (
         raw.get("donor_step") != clean_step
         or raw.get("activation_patch_batch_size") != 1
+        or raw.get("deterministic_algorithms") is not True
         or plan.get("recipient_step") != dirty_step
         or plan.get("donor_steps") != [clean_step]
         or plan.get("mode") != "later_checkpoint"

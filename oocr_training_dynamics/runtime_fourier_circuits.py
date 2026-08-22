@@ -631,7 +631,11 @@ def _replace_residual_sites(
         current_float,
         t.where(coefficients == 1.0, clean, blended),
     )
-    blended = blended + (exact_corner - blended).detach()
+    # Preserve the exact closed-cube function value while retaining the derivative of
+    # the continuous blend.  Computing ``blended + (exact - blended).detach()`` is only
+    # algebraically exact: cancellation can move a BF16 corner after the final cast.
+    # The parenthesized self-subtraction below is exactly zero in the forward pass.
+    blended = exact_corner.detach() + (blended - blended.detach())
     replaced = hidden.clone()
     replaced[:, columns, :] = blended.to(dtype=hidden.dtype)
     if isinstance(output, tuple):
