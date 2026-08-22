@@ -191,8 +191,25 @@ def _artifact_row(
     }
 
 
+def _full_recall_manifest_path(recall_result: Path) -> Path:
+    """Keep terminal state in the exact recall-config namespace that generated it."""
+
+    if recall_result.name != "recall_audit.json":
+        raise ValueError("full-recall terminal state requires a recall_audit.json result")
+    prefix = "recall_audit_config_"
+    directory_name = recall_result.parent.name
+    digest = directory_name.removeprefix(prefix)
+    if (
+        directory_name == digest
+        or len(digest) != 12
+        or any(character not in "0123456789abcdef" for character in digest)
+    ):
+        raise ValueError("full-recall terminal state requires a digest-namespaced recall result")
+    return recall_result.parent / "full_recall_ladder.json"
+
+
 def _write_terminal_manifest(
-    scope: Path,
+    path: Path,
     circuit_config: FourierCircuitConfig,
     recall_config: RecallProposalConfig,
     status: str,
@@ -215,7 +232,6 @@ def _write_terminal_manifest(
         ),
         "artifacts": artifacts,
     }
-    path = scope / "full_recall_ladder.json"
     if path.is_file() and read_json(path) != payload:
         raise RuntimeError(f"stored full-recall manifest changed: {path}")
     if not path.is_file():
@@ -249,12 +265,13 @@ def main() -> None:
 
     run_fourier_recall_audit(root, circuit_config, recall_config)
     recall_result = recall_output_dir(root, circuit_config, recall_config) / "recall_audit.json"
+    terminal_manifest = _full_recall_manifest_path(recall_result)
     artifacts.append(_artifact_row(root, circuit_config, recall_result))
     refresh_subset_metric_index_after_source_addition(scope)
     _metrics, strict_minsets = _relative_inventory(scope)
     if not strict_minsets:
         result = _write_terminal_manifest(
-            scope,
+            terminal_manifest,
             circuit_config,
             recall_config,
             "complete_no_strict_multisite_seed",
@@ -292,7 +309,7 @@ def main() -> None:
     artifacts.append(_artifact_row(root, circuit_config, network_result_path))
     if network_result["status"] == "flat_stop":
         result = _write_terminal_manifest(
-            scope,
+            terminal_manifest,
             circuit_config,
             recall_config,
             "complete_network_veto_flat_stop",
@@ -340,7 +357,7 @@ def main() -> None:
         )
     )
     result = _write_terminal_manifest(
-        scope,
+        terminal_manifest,
         circuit_config,
         recall_config,
         "complete_full_depth",
