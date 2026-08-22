@@ -342,8 +342,10 @@ network-veto intervention. If the known-network-vetoed density curve is flat, it
 states, not missing work. The `riodwl` replication currently terminates at the first of these gates:
 its 1,007 unfiltered threshold-crossing multisites contain zero strict relative minsets.
 
-Every target writes `full_recall_ladder.json` only at a terminal state. It records the exact circuit
-and recall configs, strict-minset/component counts, and SHA-256 identities of every completed stage.
+Every target writes `recall_audit_config_<digest>/full_recall_ladder.json` only at a terminal state.
+The recall-config namespace is required: a deeper audit budget must not collide with or reinterpret
+an earlier terminal result for the same checkpoint. The manifest records the exact circuit and
+recall configs, strict-minset/component counts, and SHA-256 identities of every completed stage.
 Existing subset-to-metric indexes are refreshed only when the raw source inventory has grown
 monotonically; a changed or removed previously indexed source still fails loudly. This keeps the
 long search resumable without silently accepting a stale derived cache.

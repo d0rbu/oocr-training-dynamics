@@ -26,6 +26,7 @@ from scripts.run_fourier_circuits import (
     _config,
     _validate_checkpoint_series_plan,
 )
+from scripts.run_fourier_full_recall import _full_recall_manifest_path
 
 
 def _gradient_validation() -> fc.GradientValidationConfig:
@@ -760,6 +761,26 @@ def test_top_level_config_requires_a_concrete_artifact_root() -> None:
         replace(config, artifact_root=Path("."))
     with pytest.raises(ValueError, match="batches"):
         replace(config, sufficiency=fc.SufficiencyConfig(0.8, True, 2, 8, 64))
+
+
+def test_full_recall_terminal_manifest_is_namespaced_by_recall_config(
+    tmp_path: Path,
+) -> None:
+    shallow = (
+        tmp_path / "scope/recall_audit_config_f588dde4d636/recall_audit.json"
+    )
+    deep = tmp_path / "scope/recall_audit_config_a793cc22f2ab/recall_audit.json"
+
+    shallow_manifest = _full_recall_manifest_path(shallow)
+    deep_manifest = _full_recall_manifest_path(deep)
+
+    assert shallow_manifest == shallow.parent / "full_recall_ladder.json"
+    assert deep_manifest == deep.parent / "full_recall_ladder.json"
+    assert shallow_manifest != deep_manifest
+    with pytest.raises(ValueError, match="recall_audit.json"):
+        _full_recall_manifest_path(deep.with_name("other.json"))
+    with pytest.raises(ValueError, match="digest-namespaced"):
+        _full_recall_manifest_path(tmp_path / "scope/recall_audit.json")
 
 
 def test_implementation_uses_only_torch_as_t_and_decorates_tensor_functions() -> None:
