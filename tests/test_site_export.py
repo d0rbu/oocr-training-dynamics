@@ -171,6 +171,7 @@ def _write_fourier_export_fixture(
     status: str = "verified_multisite",
     function_id: str = "add_5",
     probability_sufficiency: bool = False,
+    clean_step: int = 1500,
 ) -> Path:
     scope = "full_prompt_layers_0_32_backend_full_sequence_reference"
     if probability_sufficiency:
@@ -179,7 +180,7 @@ def _write_fourier_export_fixture(
         root
         / "artifacts/runs/olmo3-7b/correct/seed_20260715/fourier_circuits"
         / function_id
-        / "clean_001500_dirty_000000"
+        / f"clean_{clean_step:06d}_dirty_000000"
         / scope
     )
     output.mkdir(parents=True)
@@ -190,7 +191,7 @@ def _write_fourier_export_fixture(
             "model": {
                 "model_key": "olmo3-7b",
                 "condition": "correct",
-                "clean_step": 1500,
+                "clean_step": clean_step,
                 "dirty_step": 0,
             },
             "task": {"function_id": function_id},
@@ -400,14 +401,15 @@ def _register_fourier_hardware_lineage_fixture(root: Path, output: Path) -> None
     identity_root = root / "artifacts/hardware_lineages" / lineage_id
     config_path = output / "config.json"
     config = json.loads(config_path.read_text())
+    clean_step = cast(int, config["config"]["model"]["clean_step"])
     config["config"]["artifact_root"] = str(identity_root.resolve())
     config_path.write_text(json.dumps(config))
 
-    reference_path = root / "artifacts/reference/checkpoint_transfer_1500.json"
-    reference_path.parent.mkdir(parents=True)
+    reference_path = root / f"artifacts/reference/checkpoint_transfer_{clean_step}.json"
+    reference_path.parent.mkdir(parents=True, exist_ok=True)
     reference_path.write_bytes(b"registered checkpoint-transfer reference")
     run = RunKey(ModelKey.OLMO3_7B.value, TrainingCondition.CORRECT)
-    adapter = adapter_dir(root, run, 1500)
+    adapter = adapter_dir(root, run, clean_step)
     adapter.mkdir(parents=True)
     adapter_rows = []
     for name, content in (
@@ -429,7 +431,7 @@ def _register_fourier_hardware_lineage_fixture(root: Path, output: Path) -> None
         revision="6e5971d9eba42665f5bd5a0fcf047f299ce1dccc",
         condition="correct",
         seed=20260715,
-        clean_step=1500,
+        clean_step=clean_step,
         dirty_step=0,
         reference_relative_path=reference_path.relative_to(root),
         reference_sha256=hashlib.sha256(reference_path.read_bytes()).hexdigest(),
@@ -450,7 +452,7 @@ def _register_fourier_hardware_lineage_fixture(root: Path, output: Path) -> None
     plan_path = (
         root
         / "artifacts/plans/fourier_hardware_lineages"
-        / f"{lineage_id}_add_5_step_001500.json"
+        / f"{lineage_id}_add_5_step_{clean_step:06d}.json"
     )
     write_hardware_lineage_plan(plan_path, plan)
 
@@ -689,17 +691,12 @@ def test_fourier_export_namespaces_and_proves_registered_hardware_lineage(
     assert lineage["id"] == "engaging_h200_sm90"
     assert lineage["kind"] == "registered_hardware"
     assert cast(dict[str, object], lineage["hardware"])["device_name"] == "NVIDIA H200"
-    assert cast(str, entry["url"]).startswith(
-        "fourier-circuits/lineage_engaging_h200_sm90/"
-    )
+    assert cast(str, entry["url"]).startswith("fourier-circuits/lineage_engaging_h200_sm90/")
     chunk_path = tmp_path / "site/data" / cast(str, entry["url"])
     chunk = json.loads(chunk_path.read_text())
     assert chunk["lineage"] == lineage
     lineage_manifest = json.loads(
-        (
-            tmp_path
-            / "site/data/fourier-circuit-lineages/engaging_h200_sm90.json"
-        ).read_text()
+        (tmp_path / "site/data/fourier-circuit-lineages/engaging_h200_sm90.json").read_text()
     )
     exporter_digest = lineage_manifest.pop("exporter_source_sha256")
     assert len(exporter_digest) == 64
@@ -709,6 +706,83 @@ def test_fourier_export_namespaces_and_proves_registered_hardware_lineage(
         "lineage": lineage,
         "entries": [entry],
     }
+
+
+def test_fourier_export_groups_multiple_checkpoint_plans_under_one_hardware_lineage(
+    tmp_path: Path,
+) -> None:
+    output_1500 = _write_fourier_export_fixture(tmp_path, clean_step=1500)
+    _register_fourier_hardware_lineage_fixture(tmp_path, output_1500)
+    output_96 = _write_fourier_export_fixture(tmp_path, clean_step=96)
+    _register_fourier_hardware_lineage_fixture(tmp_path, output_96)
+
+    manifest, count = _export_fourier_circuits(tmp_path)
+
+    assert count == 2
+    entries = cast(list[dict[str, object]], manifest["entries"])
+    assert {entry["clean_step"] for entry in entries} == {96, 1500}
+    entry_lineages = [cast(dict[str, object], entry["lineage"]) for entry in entries]
+    assert {cast(str, lineage["plan_sha256"]) for lineage in entry_lineages} == {
+        hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in (tmp_path / "artifacts/plans/fourier_hardware_lineages").glob(
+            "engaging_h200_sm90_add_5_step_*.json"
+        )
+    }
+    lineage_manifest = json.loads(
+        (tmp_path / "site/data/fourier-circuit-lineages/engaging_h200_sm90.json").read_text()
+    )
+    assert lineage_manifest["schema_version"] == 2
+    assert lineage_manifest["lineage"]["plan_sha256"] is None
+    assert lineage_manifest["entries"] == entries
+    stable_fields = {
+        "id",
+        "kind",
+        "display_name",
+        "hardware",
+        "reference_source_bundle_sha256",
+        "collection_source_bundle_sha256",
+    }
+    assert all(
+        {field: entry_lineage[field] for field in stable_fields}
+        == {field: lineage_manifest["lineage"][field] for field in stable_fields}
+        for entry_lineage in entry_lineages
+    )
+
+
+def test_fourier_export_imports_multi_plan_hardware_lineage(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    for clean_step in (96, 1500):
+        output = _write_fourier_export_fixture(source, clean_step=clean_step)
+        _register_fourier_hardware_lineage_fixture(source, output)
+    source_manifest, _count = _export_fourier_circuits(source)
+    source_entries = cast(list[dict[str, object]], source_manifest["entries"])
+
+    target = tmp_path / "target"
+    _write_fourier_export_fixture(target)
+    for entry in source_entries:
+        relative = Path(cast(str, entry["url"]))
+        target_chunk = target / "site/data" / relative
+        target_chunk.parent.mkdir(parents=True, exist_ok=True)
+        target_chunk.write_bytes((source / "site/data" / relative).read_bytes())
+    import_path = target / "site/data/fourier-circuit-imports/engaging_h200_sm90.json"
+    import_path.parent.mkdir(parents=True)
+    import_path.write_bytes(
+        (source / "site/data/fourier-circuit-lineages/engaging_h200_sm90.json").read_bytes()
+    )
+
+    manifest, count = _export_fourier_circuits(target)
+
+    assert count == 3
+    entries = cast(list[dict[str, object]], manifest["entries"])
+    assert [
+        (cast(dict[str, object], entry["lineage"])["id"], entry["clean_step"]) for entry in entries
+    ] == [
+        ("engaging_h200_sm90", 96),
+        ("engaging_h200_sm90", 1500),
+        ("workspace_unregistered", 1500),
+    ]
 
 
 def test_fourier_export_merges_digest_validated_external_lineage_without_collision(
@@ -729,10 +803,7 @@ def test_fourier_export_merges_digest_validated_external_lineage_without_collisi
     import_path = target / "site/data/fourier-circuit-imports/engaging_h200_sm90.json"
     import_path.parent.mkdir(parents=True)
     import_path.write_bytes(
-        (
-            source
-            / "site/data/fourier-circuit-lineages/engaging_h200_sm90.json"
-        ).read_bytes()
+        (source / "site/data/fourier-circuit-lineages/engaging_h200_sm90.json").read_bytes()
     )
 
     manifest, count = _export_fourier_circuits(target)

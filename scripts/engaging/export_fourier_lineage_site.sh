@@ -34,17 +34,37 @@ manifest_path = Path(sys.argv[1])
 root = Path(sys.argv[2])
 lineage_id = sys.argv[3]
 payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+schema_version = payload.get("schema_version")
+lineage = payload.get("lineage", {})
 if (
-    payload.get("schema_version") != 1
+    schema_version not in {1, 2}
     or payload.get("kind") != "fourier_lineage_export"
-    or payload.get("lineage", {}).get("id") != lineage_id
-    or payload.get("lineage", {}).get("kind") != "registered_hardware"
+    or lineage.get("id") != lineage_id
+    or lineage.get("kind") != "registered_hardware"
     or not payload.get("entries")
 ):
     raise RuntimeError("Fourier lineage export manifest failed its identity gate")
+if schema_version == 2 and lineage.get("plan_sha256") is not None:
+    raise RuntimeError("multi-plan Fourier lineage manifest retained a run-specific plan digest")
+stable_fields = (
+    "id",
+    "kind",
+    "display_name",
+    "hardware",
+    "reference_source_bundle_sha256",
+    "collection_source_bundle_sha256",
+)
 for entry in payload["entries"]:
-    if entry.get("lineage") != payload["lineage"]:
+    entry_lineage = entry.get("lineage", {})
+    same_lineage = (
+        entry_lineage == lineage
+        if schema_version == 1
+        else all(entry_lineage.get(field) == lineage.get(field) for field in stable_fields)
+    )
+    if not same_lineage:
         raise RuntimeError("Fourier lineage export entry changed lineage")
+    if schema_version == 2 and not isinstance(entry_lineage.get("plan_sha256"), str):
+        raise RuntimeError("multi-plan Fourier lineage entry lacks its plan digest")
     relative = Path(entry["url"])
     if relative.is_absolute() or ".." in relative.parts:
         raise RuntimeError("Fourier lineage export contains an unsafe chunk path")

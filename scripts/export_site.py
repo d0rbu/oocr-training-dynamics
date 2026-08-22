@@ -2055,7 +2055,12 @@ def _export_fourier_circuits(root: Path) -> tuple[dict[str, object], int]:
 
     lineage_cache: dict[tuple[str, str, int, int], dict[str, object]] = {}
 
-    def validated_lineage_payload(value: object, *, context: str) -> dict[str, object]:
+    def validated_lineage_payload(
+        value: object,
+        *,
+        context: str,
+        allow_plan_identity: bool = False,
+    ) -> dict[str, object]:
         lineage = _mapping(value, context=context)
         lineage_id = lineage.get("id")
         kind = lineage.get("kind")
@@ -2068,14 +2073,14 @@ def _export_fourier_circuits(root: Path) -> tuple[dict[str, object], int]:
             or kind not in {"workspace_unregistered", "registered_hardware"}
         ):
             raise RuntimeError(f"{context} has an invalid Fourier lineage identity")
-        digest_fields = (
+        provenance_fields = (
             "plan_sha256",
             "reference_source_bundle_sha256",
             "collection_source_bundle_sha256",
         )
         if kind == "workspace_unregistered":
             if lineage.get("hardware") is not None or any(
-                lineage.get(field) is not None for field in digest_fields
+                lineage.get(field) is not None for field in provenance_fields
             ):
                 raise RuntimeError(f"{context} gives unregistered results registered provenance")
             return lineage
@@ -2088,13 +2093,20 @@ def _export_fourier_circuits(root: Path) -> tuple[dict[str, object], int]:
             or any(not isinstance(value, int) for value in capability)
             or not isinstance(hardware.get("total_memory_bytes"), int)
             or cast(int, hardware["total_memory_bytes"]) <= 0
-            or any(not isinstance(hardware.get(field), str) for field in (
-                "driver_version",
-                "torch_version",
-                "cuda_version",
-            ))
+            or any(
+                not isinstance(hardware.get(field), str)
+                for field in (
+                    "driver_version",
+                    "torch_version",
+                    "cuda_version",
+                )
+            )
         ):
             raise RuntimeError(f"{context} has a malformed registered hardware fingerprint")
+        digest_fields = (
+            "reference_source_bundle_sha256",
+            "collection_source_bundle_sha256",
+        )
         for field in digest_fields:
             digest = lineage.get(field)
             if (
@@ -2103,6 +2115,31 @@ def _export_fourier_circuits(root: Path) -> tuple[dict[str, object], int]:
                 or any(character not in "0123456789abcdef" for character in digest)
             ):
                 raise RuntimeError(f"{context}.{field} is not a SHA-256 digest")
+        plan_digest = lineage.get("plan_sha256")
+        if not (allow_plan_identity and plan_digest is None) and (
+            not isinstance(plan_digest, str)
+            or len(plan_digest) != 64
+            or any(character not in "0123456789abcdef" for character in plan_digest)
+        ):
+            raise RuntimeError(f"{context}.plan_sha256 is not a SHA-256 digest")
+        return lineage
+
+    def lineage_identity_payload(
+        value: object,
+        *,
+        context: str,
+    ) -> dict[str, object]:
+        """Return the checkpoint-invariant identity for one measurement lineage."""
+
+        lineage = dict(
+            validated_lineage_payload(
+                value,
+                context=context,
+                allow_plan_identity=True,
+            )
+        )
+        if lineage["kind"] == "registered_hardware":
+            lineage["plan_sha256"] = None
         return lineage
 
     def validated_lineage(
@@ -2113,7 +2150,9 @@ def _export_fourier_circuits(root: Path) -> tuple[dict[str, object], int]:
     ) -> dict[str, object]:
         artifact_root = config.get("artifact_root")
         if not isinstance(artifact_root, str) or not Path(artifact_root).is_absolute():
-            raise TypeError(f"Fourier config lacks an absolute artifact identity root: {config_path}")
+            raise TypeError(
+                f"Fourier config lacks an absolute artifact identity root: {config_path}"
+            )
         identity_root = Path(artifact_root)
         function_id = task.get("function_id")
         clean_step = model.get("clean_step")
@@ -2123,17 +2162,22 @@ def _export_fourier_circuits(root: Path) -> tuple[dict[str, object], int]:
             or not isinstance(clean_step, int)
             or not isinstance(dirty_step, int)
         ):
-            raise TypeError(f"Fourier config lacks a lineage-compatible run identity: {config_path}")
+            raise TypeError(
+                f"Fourier config lacks a lineage-compatible run identity: {config_path}"
+            )
         if identity_root.parent.name != "hardware_lineages":
-            return validated_lineage_payload({
-                "id": "workspace_unregistered",
-                "kind": "workspace_unregistered",
-                "display_name": "Workspace reference (hardware unregistered)",
-                "hardware": None,
-                "plan_sha256": None,
-                "reference_source_bundle_sha256": None,
-                "collection_source_bundle_sha256": None,
-            }, context=f"{config_path}.lineage")
+            return validated_lineage_payload(
+                {
+                    "id": "workspace_unregistered",
+                    "kind": "workspace_unregistered",
+                    "display_name": "Workspace reference (hardware unregistered)",
+                    "hardware": None,
+                    "plan_sha256": None,
+                    "reference_source_bundle_sha256": None,
+                    "collection_source_bundle_sha256": None,
+                },
+                context=f"{config_path}.lineage",
+            )
 
         lineage_id = identity_root.name
         cache_key = (lineage_id, function_id, clean_step, dirty_step)
@@ -2155,7 +2199,9 @@ def _export_fourier_circuits(root: Path) -> tuple[dict[str, object], int]:
             or plan.clean_step != clean_step
             or plan.dirty_step != dirty_step
         ):
-            raise RuntimeError(f"Fourier hardware-lineage plan disagrees with config: {config_path}")
+            raise RuntimeError(
+                f"Fourier hardware-lineage plan disagrees with config: {config_path}"
+            )
         hardware = {
             "device_name": plan.hardware.device_name,
             "compute_capability": list(plan.hardware.compute_capability),
@@ -2779,7 +2825,7 @@ def _export_fourier_circuits(root: Path) -> tuple[dict[str, object], int]:
             else "singleton_and_density_complete"
         )
         recall_audits = [
-                validated_recall_audit(path, logical_scope_directory)
+            validated_recall_audit(path, logical_scope_directory)
             for path in sorted(config_path.parent.glob("recall_audit_config_*/recall_audit.json"))
         ]
         frontier_searches: list[dict[str, object]] = []
@@ -3430,21 +3476,26 @@ def _export_fourier_circuits(root: Path) -> tuple[dict[str, object], int]:
     imported_directory = root / "site/data/fourier-circuit-imports"
     for import_path in sorted(imported_directory.glob("*.json")):
         imported = _mapping(read_json(import_path), context=str(import_path))
-        imported_lineage = validated_lineage_payload(
-            imported.get("lineage"),
-            context=f"{import_path}.lineage",
+        schema_version = imported.get("schema_version")
+        imported_lineage = (
+            validated_lineage_payload(
+                imported.get("lineage"),
+                context=f"{import_path}.lineage",
+            )
+            if schema_version == 1
+            else lineage_identity_payload(
+                imported.get("lineage"),
+                context=f"{import_path}.lineage",
+            )
         )
         imported_entries = imported.get("entries")
         exporter_source_sha256 = imported.get("exporter_source_sha256")
         if (
-            imported.get("schema_version") != 1
+            schema_version not in {1, 2}
             or imported.get("kind") != "fourier_lineage_export"
             or not isinstance(exporter_source_sha256, str)
             or len(exporter_source_sha256) != 64
-            or any(
-                character not in "0123456789abcdef"
-                for character in exporter_source_sha256
-            )
+            or any(character not in "0123456789abcdef" for character in exporter_source_sha256)
             or not isinstance(imported_entries, list)
             or not imported_entries
         ):
@@ -3468,7 +3519,15 @@ def _export_fourier_circuits(root: Path) -> tuple[dict[str, object], int]:
                 "sufficiency_criterion",
             )
             if (
-                entry_lineage != imported_lineage
+                (
+                    entry_lineage != imported_lineage
+                    if schema_version == 1
+                    else lineage_identity_payload(
+                        entry_lineage,
+                        context=f"{import_path}.entries[{index}].lineage_identity",
+                    )
+                    != imported_lineage
+                )
                 or not isinstance(url, str)
                 or not url.startswith(f"fourier-circuits/lineage_{lineage_id}/")
                 or Path(url).is_absolute()
@@ -3498,7 +3557,7 @@ def _export_fourier_circuits(root: Path) -> tuple[dict[str, object], int]:
             chunk_model = _mapping(chunk.get("model"), context=f"{chunk_path}.model")
             chunk_task = _mapping(chunk.get("task"), context=f"{chunk_path}.task")
             if (
-                chunk.get("lineage") != imported_lineage
+                chunk.get("lineage") != entry_lineage
                 or chunk_model.get("model_key") != entry["model"]
                 or chunk_task.get("function_id") != entry["function_id"]
                 or chunk.get("status") != entry["status"]
@@ -3541,21 +3600,33 @@ def _export_fourier_circuits(root: Path) -> tuple[dict[str, object], int]:
     for entry in entries:
         lineage = validated_lineage_payload(entry["lineage"], context="Fourier entry lineage")
         lineage_id = cast(str, lineage["id"])
+        lineage_identity = lineage_identity_payload(
+            lineage,
+            context="Fourier entry lineage identity",
+        )
         previous = lineage_exports.get(lineage_id)
         if previous is None:
-            lineage_exports[lineage_id] = (lineage, [entry])
+            lineage_exports[lineage_id] = (lineage_identity, [entry])
         else:
-            if previous[0] != lineage:
+            if previous[0] != lineage_identity:
                 raise RuntimeError(f"Fourier lineage metadata changed within export: {lineage_id}")
             previous[1].append(entry)
-    for lineage_id, (lineage, lineage_entries) in lineage_exports.items():
+    for lineage_id, (lineage_identity, lineage_entries) in lineage_exports.items():
+        entry_lineages = [
+            validated_lineage_payload(
+                entry["lineage"],
+                context=f"Fourier lineage {lineage_id} entry",
+            )
+            for entry in lineage_entries
+        ]
+        homogeneous_lineage = all(lineage == entry_lineages[0] for lineage in entry_lineages[1:])
         write_json(
             root / "site/data/fourier-circuit-lineages" / f"{lineage_id}.json",
             {
-                "schema_version": 1,
+                "schema_version": 1 if homogeneous_lineage else 2,
                 "kind": "fourier_lineage_export",
                 "exporter_source_sha256": _site_export_source_sha256(),
-                "lineage": lineage,
+                "lineage": entry_lineages[0] if homogeneous_lineage else lineage_identity,
                 "entries": lineage_entries,
             },
         )
