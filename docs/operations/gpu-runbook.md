@@ -776,8 +776,10 @@ Engaging measurements are independent hardware-native lineages, not continuation
 artifacts. A lineage plan must be registered before Stage 0 and must freeze the checkpoint-transfer
 reference digest, adapter digests, collection source digest, CUDA/PyTorch versions, compute
 capability, and exact GPU model. The batch-one lineages additionally require the reference patch
-grid to record `activation_patch_batch_size: 1`; a previously measured batch-eight grid must never
-be relabeled as a batch-one reference.
+grid to record both `activation_patch_batch_size: 1` and `deterministic_algorithms: true`; a
+previously measured batch-eight or nondeterministic grid must never be relabeled as a deterministic
+batch-one reference. This is required because deterministic SDPA can choose a numerically distinct
+kernel on H200 even for an otherwise identical batch-one forward.
 When an unchanged, immutable batch-one reference grid is carried into a corrected collection
 bundle, set `OOCR_REFERENCE_BUNDLE_SHA256` to the grid's original frozen source digest. The
 checkpoint wrapper records that digest separately from `OOCR_BUNDLE_SHA256`; omitting the variable

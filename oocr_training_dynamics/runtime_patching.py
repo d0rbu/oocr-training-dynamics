@@ -3865,6 +3865,7 @@ def run_patching(
     token_weight_runtime: TokenWeightRuntime = TokenWeightRuntime.REFERENCE,
     token_weight_patch_batch_size: int = 8,
     activation_patch_batch_size: int = 8,
+    deterministic_algorithms: bool = False,
 ) -> None:
     if not t.cuda.is_available():
         raise RuntimeError("checkpoint patching requires CUDA")
@@ -3880,6 +3881,16 @@ def run_patching(
         raise ValueError(
             "batch-one activation references require a direct checkpoint-transfer grid"
         )
+    if deterministic_algorithms and (
+        activation_patch_batch_size != 1
+        or plan.interface.patches_weights
+        or plan.mode.uses_prompt_counterfactual
+    ):
+        raise ValueError(
+            "deterministic scientific references require a batch-one direct activation grid"
+        )
+    if deterministic_algorithms:
+        t.use_deterministic_algorithms(True, warn_only=False)
     spec = get_model_spec(run.model, allow_provisional=allow_provisional_model)
     processor = load_processor(spec)
     records = _selected_records(run.seed)
@@ -4001,6 +4012,7 @@ def run_patching(
                     else "earlier_source_into_later_clean_recipient"
                 ),
                 "activation_patch_batch_size": activation_patch_batch_size,
+                "deterministic_algorithms": deterministic_algorithms,
                 "records": serialized,
             },
         )

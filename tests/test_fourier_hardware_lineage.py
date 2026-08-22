@@ -67,6 +67,7 @@ def _registered_lineage(tmp_path: Path) -> tuple[Path, tuple[Site, ...], Path]:
         {
             "donor_step": 128,
             "activation_patch_batch_size": 1,
+            "deterministic_algorithms": True,
             "model": {
                 "model_id": spec.model_id,
                 "revision": spec.revision,
@@ -303,6 +304,8 @@ def _mutate_checkpoint_reference(payload: dict[str, Any], case: str) -> None:
         payload["run"] = "bad"
     elif case == "identity":
         payload["donor_step"] = 127
+    elif case == "nondeterministic_reference":
+        payload["deterministic_algorithms"] = False
     elif case == "records_not_list":
         payload["records"] = None
     elif case == "selected_function_missing":
@@ -332,6 +335,7 @@ def _mutate_checkpoint_reference(payload: dict[str, Any], case: str) -> None:
     [
         ("run_not_mapping", TypeError, "must be an object"),
         ("identity", RuntimeError, "reference identity changed"),
+        ("nondeterministic_reference", RuntimeError, "reference identity changed"),
         ("records_not_list", TypeError, "lacks records"),
         ("selected_function_missing", RuntimeError, "lacks the selected function"),
         ("function_probe", RuntimeError, "function probe changed"),

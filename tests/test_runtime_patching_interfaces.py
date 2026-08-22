@@ -704,6 +704,36 @@ def test_direct_activation_batch_size_is_fail_closed(
             activation_patch_batch_size=1,
         )
 
+    with pytest.raises(ValueError, match="deterministic scientific references"):
+        run_patching(
+            tmp_path,
+            run,
+            checkpoint_plan,
+            activation_patch_batch_size=8,
+            deterministic_algorithms=True,
+        )
+
+    deterministic_calls: list[tuple[bool, bool]] = []
+    monkeypatch.setattr(
+        runtime_patching.t,
+        "use_deterministic_algorithms",
+        lambda mode, *, warn_only: deterministic_calls.append((mode, warn_only)),
+    )
+    monkeypatch.setattr(
+        runtime_patching,
+        "load_processor",
+        lambda _spec: (_ for _ in ()).throw(RuntimeError("processor stop")),
+    )
+    with pytest.raises(RuntimeError, match="processor stop"):
+        run_patching(
+            tmp_path,
+            run,
+            checkpoint_plan,
+            activation_patch_batch_size=1,
+            deterministic_algorithms=True,
+        )
+    assert deterministic_calls == [(True, False)]
+
 
 def test_every_interface_resolves_one_concrete_target_per_layer() -> None:
     blocks = (_FakeBlock(), _FakeBlock())
