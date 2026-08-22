@@ -59,6 +59,7 @@
 | `scripts/engaging/run_h200_batch1_checkpoint_stage0.sh` | One-device batch-one grid, lineage registration, and Stage-0 harness |
 | `scripts/engaging/run_h200_batch1_checkpoint_pair.sh` | Explicitly pin two independent Stage-0 tasks to a two-H200 allocation |
 | `scripts/engaging/run_h200_full_recall.sh` | Digest-gated, shard-resumable full recall ladder for one registered H200 target |
+| `scripts/engaging/run_h200_switched_answer_minsets.sh` | Digest-gated, requeue-safe H200 runner for paired answer-location swap collection |
 | `scripts/analyze_results.py` | Compute frozen-adjusted AUCs and function-clustered intervals |
 | `scripts/export_site.py` | Discover artifacts and rebuild the static site payload |
 

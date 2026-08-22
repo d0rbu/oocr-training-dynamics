@@ -910,6 +910,11 @@ Refresh its small embedded website manifest without paying the full weight-atlas
 CUDA_VISIBLE_DEVICES='' uv run python scripts/export_switched_answer_minset_site.py
 ```
 
+On a staged Engaging H200 lineage, launch through the digest-gated wrapper. Stage 1 collects all
+eight endpoint and density diagnostics before a dependent Stage-2 job begins exact search. Freeze
+`OOCR_BUNDLE_SHA256` from the staged tree and use batch size one; the wrapper rejects a changed
+bundle or a non-H200 allocation.
+
 ## 7. Refresh the site
 
 This is CPU-only and may be run after each artifact batch:
