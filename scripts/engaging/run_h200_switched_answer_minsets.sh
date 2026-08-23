@@ -5,6 +5,8 @@ set -euo pipefail
 : "${OOCR_BUNDLE_SHA256:?OOCR_BUNDLE_SHA256 is required}"
 : "${OOCR_MAXIMUM_STAGE:?OOCR_MAXIMUM_STAGE is required}"
 : "${OOCR_MAXIMUM_ORDER:?OOCR_MAXIMUM_ORDER is required}"
+: "${OOCR_INTERFACE:?OOCR_INTERFACE is required}"
+: "${OOCR_DESTINATION:?OOCR_DESTINATION is required}"
 : "${HF_HOME:?HF_HOME is required}"
 : "${UV_CACHE_DIR:?UV_CACHE_DIR is required}"
 
@@ -16,6 +18,14 @@ if [[ ! "${OOCR_MAXIMUM_ORDER}" =~ ^[1-6]$ ]]; then
   echo "OOCR_MAXIMUM_ORDER must be an integer from 1 through 6" >&2
   exit 2
 fi
+case "${OOCR_INTERFACE}" in
+  attention_input|resid_post) ;;
+  *) echo "OOCR_INTERFACE must be attention_input or resid_post" >&2; exit 2 ;;
+esac
+case "${OOCR_DESTINATION}" in
+  A|B|D|E) ;;
+  *) echo "OOCR_DESTINATION must be A, B, D, or E" >&2; exit 2 ;;
+esac
 
 lineage_root="$(realpath -e "${OOCR_SWITCHED_ROOT}")"
 repo="${lineage_root}/repo"
@@ -77,6 +87,8 @@ trap stop_child TERM INT
 trap requeue_job USR1
 
 "${repo}/.venv/bin/python" scripts/run_switched_answer_minsets.py \
+  --interface "${OOCR_INTERFACE}" \
+  --destination "${OOCR_DESTINATION}" \
   --maximum-stage "${OOCR_MAXIMUM_STAGE}" \
   --maximum-order "${OOCR_MAXIMUM_ORDER}" \
   --confirm-gpu-run &

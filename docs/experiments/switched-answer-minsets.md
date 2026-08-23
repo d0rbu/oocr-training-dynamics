@@ -81,6 +81,12 @@ may be safely pruned only when it contains an already measured proper subset wit
 `P(C) > 0.8`, because no full support can then satisfy the registered relative-subset
 criterion below. No monotonicity of the network response is otherwise assumed.
 
+The eight `(boundary, incorrect destination)` searches have disjoint artifact namespaces and may
+run concurrently on separate GPUs. Orders within one search remain sequential because the exact
+eligibility set for order `k` depends on the sealed subset metrics from smaller orders. Increasing
+the requested terminal order is a recorded monotonic execution extension; every other config
+field remains immutable and mismatches fail loudly.
+
 A reported minset must satisfy both:
 
 - `P(C) >= P(C at all-clean swap corner) - 0.10`, and C is the A-E argmax;
