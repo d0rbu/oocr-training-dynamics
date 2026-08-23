@@ -176,8 +176,46 @@ def _write_or_validate_config(output_dir: Path, config: SwitchedAnswerMinsetConf
         "config": _config_payload(config),
     }
     if path.is_file():
-        if read_json(path) != payload:
+        stored = read_json(path)
+        if stored == payload:
+            return
+        if not isinstance(stored, dict) or stored.get("schema_version") != (
+            SWITCHED_ANSWER_SCHEMA_VERSION
+        ):
             raise RuntimeError(f"switched-answer output contains a different config: {path}")
+        stored_config = stored.get("config")
+        requested_config = payload["config"]
+        if not isinstance(stored_config, dict) or not isinstance(requested_config, dict):
+            raise RuntimeError(f"switched-answer output contains a different config: {path}")
+        stored_identity = json.loads(json.dumps(stored_config, allow_nan=False))
+        requested_identity = json.loads(json.dumps(requested_config, allow_nan=False))
+        stored_search = stored_identity.get("search")
+        requested_search = requested_identity.get("search")
+        if not isinstance(stored_search, dict) or not isinstance(requested_search, dict):
+            raise RuntimeError(f"switched-answer output contains a different config: {path}")
+        stored_order = stored_search.pop("maximum_order", None)
+        requested_order = requested_search.pop("maximum_order", None)
+        if (
+            stored_identity != requested_identity
+            or not isinstance(stored_order, int)
+            or not isinstance(requested_order, int)
+        ):
+            raise RuntimeError(f"switched-answer output contains a different config: {path}")
+        if requested_order <= stored_order:
+            return
+        history = stored.get("maximum_order_extensions", [])
+        if not isinstance(history, list) or any(not isinstance(row, dict) for row in history):
+            raise RuntimeError(f"switched-answer config extension history is malformed: {path}")
+        write_json(
+            path,
+            {
+                **payload,
+                "maximum_order_extensions": [
+                    *history,
+                    {"from": stored_order, "to": requested_order},
+                ],
+            },
+        )
         return
     write_json(path, payload)
 

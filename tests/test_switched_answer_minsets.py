@@ -4,6 +4,7 @@ import itertools
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 import torch as t
@@ -318,6 +319,32 @@ def test_endpoint_density_and_exact_search_are_resumable_and_digest_validated(
     assert run_endpoint_gate(output, config, model, targets, _runtime_probe(), donor) == endpoint
     assert run_density_sweep(output, config, model, targets, _runtime_probe(), donor) == density
     assert run_exhaustive_search(output, config, model, targets, _runtime_probe(), donor) == search
+
+
+def test_config_allows_only_recorded_monotonic_search_order_extensions(tmp_path: Path) -> None:
+    output = tmp_path / "science"
+    order_one = _runtime_config(tmp_path, maximum_order=1)
+    order_three = _runtime_config(tmp_path, maximum_order=3)
+
+    runtime._write_or_validate_config(output, order_one)
+    runtime._write_or_validate_config(output, order_three)
+    stored = runtime.read_json(output / "config.json")
+    assert isinstance(stored, dict)
+    stored_map = cast(dict[str, object], stored)
+    config = stored_map["config"]
+    assert isinstance(config, dict)
+    search = cast(dict[str, object], config)["search"]
+    assert isinstance(search, dict)
+    assert cast(dict[str, object], search)["maximum_order"] == 3
+    assert stored_map["maximum_order_extensions"] == [{"from": 1, "to": 3}]
+
+    runtime._write_or_validate_config(output, _runtime_config(tmp_path, maximum_order=2))
+    assert runtime.read_json(output / "config.json") == stored
+    with pytest.raises(RuntimeError, match="different config"):
+        runtime._write_or_validate_config(
+            output,
+            _runtime_config(tmp_path, interface="attention_input", maximum_order=3),
+        )
 
 
 def test_config_fails_loud_on_direction_target_and_interface_drift(tmp_path: Path) -> None:
